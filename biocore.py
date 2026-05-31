@@ -205,6 +205,17 @@ _IS_PROTEIN_CHAR: np.ndarray = np.zeros(256, dtype=np.bool_)
 for _ch in "EFILPQefilpq*":
     _IS_PROTEIN_CHAR[ord(_ch)] = True
 
+# ── Vectorised decode LUTs  (BioCode index → ASCII byte) ────────────────────────
+# Pre-built once at module load.  to_string() indexes into these arrays with a
+# single fancy-index op, then calls .tobytes().decode('ascii') — no Python loop.
+_NUC_DECODE_ARR: np.ndarray = np.full(32, ord('?'), dtype=np.uint8)
+for _code, _char in _NUC_DECODE.items():
+    _NUC_DECODE_ARR[int(_code)] = ord(_char)
+
+_AA_DECODE_ARR: np.ndarray = np.full(32, ord('?'), dtype=np.uint8)
+for _code, _char in _AA_DECODE.items():
+    _AA_DECODE_ARR[int(_code)] = ord(_char)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §3  BIT PACKER  —  compact 5-bit ↔ uint8 array conversion
@@ -459,12 +470,12 @@ class PackedSequence:
         -------
         str — canonical IUPAC single-letter sequence.
         """
-        decode_map = (
-            _NUC_DECODE
+        lut = (
+            _NUC_DECODE_ARR
             if self.seq_type == SeqType.NUCLEOTIDE
-            else _AA_DECODE
+            else _AA_DECODE_ARR
         )
-        return "".join(decode_map.get(int(c), "?") for c in self.decode())
+        return lut[self.decode()].tobytes().decode("ascii")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

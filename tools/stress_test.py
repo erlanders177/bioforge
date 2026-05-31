@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import time
 import numpy as np
-from biocore import SeqType, BitPacker, PackedSequence
+from biocore import SeqType, BitPacker, PackedSequence, NUC_LUT
 from smart_translator import SmartTranslator
 
 
@@ -33,10 +33,7 @@ def stress_test():
     t0 = time.perf_counter()
 
     texto_bytes = np.frombuffer(secuencia_masiva.encode('ascii'), dtype=np.uint8)
-    lut = np.zeros(256, dtype=np.uint8)
-    lut[ord('A')] = 0; lut[ord('C')] = 1; lut[ord('G')] = 2
-    lut[ord('T')] = 3; lut[ord('U')] = 3
-    codigos_nuc = lut[texto_bytes]
+    codigos_nuc = NUC_LUT[texto_bytes]
 
     adn_empaquetado = PackedSequence(
         header="Cromosoma_Titan",

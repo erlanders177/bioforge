@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from biocore import BioCode, BitPacker, PackedSequence, SeqType
+from biocore import BioCode, BitPacker, PackedSequence, SeqType, NUC_LUT
 from smart_translator import SmartTranslator
 
 
@@ -41,11 +41,7 @@ def analizar_mi_adn(secuencia_texto):
     secuencia_limpia = secuencia_texto.upper().replace(" ", "").replace("\n", "")
 
     texto_bytes = np.frombuffer(secuencia_limpia.encode('ascii'), dtype=np.uint8)
-    lut = np.zeros(256, dtype=np.uint8)
-    lut[ord('A')] = 0; lut[ord('C')] = 1; lut[ord('G')] = 2
-    lut[ord('T')] = 3; lut[ord('U')] = 3
-
-    codigos_nuc  = lut[texto_bytes]
+    codigos_nuc  = NUC_LUT[texto_bytes]
     adn_empaquetado = PackedSequence(
         header="Mi_ADN_Manual",
         seq_type=SeqType.NUCLEOTIDE,

@@ -306,7 +306,7 @@ class SequenceAligner:
             if i > 0 and j > 0:
                 step = cls.MATCH if codes_a[i-1] == codes_b[j-1] else cls.MISMATCH
 
-                if int(H[i, j]) == int(H[i-1, j-1]) + int(step):
+                if H[i, j] == H[i-1, j-1] + step:
                     # Diagonal — match or mismatch
                     sa = decode.get(int(codes_a[i-1]), '?')
                     sb = decode.get(int(codes_b[j-1]), '?')
@@ -321,7 +321,7 @@ class SequenceAligner:
                         )
                     i -= 1; j -= 1
 
-                elif int(H[i, j]) == int(H[i-1, j]) + int(cls.GAP):
+                elif H[i, j] == H[i-1, j] + cls.GAP:
                     # Up — gap in seq_b (deletion in query vs reference)
                     sa = decode.get(int(codes_a[i-1]), '?')
                     aln_a.append(sa)
@@ -390,14 +390,18 @@ def format_alignment(result: AlignmentResult, width: int = 60) -> str:
     Return a human-readable block alignment string.
 
     Symbol legend: '|' match · 'X' mismatch · ' ' gap.
+    Vectorised: builds the midline with NumPy, no Python character loop.
     """
-    a, b   = result.aligned_a, result.aligned_b
-    midline = ''.join(
-        '|' if ca == cb and ca != '-' else
-        'X' if ca != '-' and cb != '-' else
-        ' '
-        for ca, cb in zip(a, b)
-    )
+    a, b = result.aligned_a, result.aligned_b
+    a_arr = np.frombuffer(a.encode(), dtype=np.uint8)
+    b_arr = np.frombuffer(b.encode(), dtype=np.uint8)
+    gap   = np.uint8(ord('-'))
+    mid   = np.full(len(a_arr), ord(' '), dtype=np.uint8)
+    match = (a_arr == b_arr) & (a_arr != gap)
+    mism  = (a_arr != b_arr) & (a_arr != gap) & (b_arr != gap)
+    mid[match] = ord('|')
+    mid[mism]  = ord('X')
+    midline = mid.tobytes().decode('ascii')
     lines: list[str] = []
     for s in range(0, len(a), width):
         e = s + width
