@@ -266,9 +266,10 @@ class BitPacker:
         Memory: O(n) — peak ≈ 5n bits for the intermediate bit matrix.
         """
         # ①  Expand each 5-bit code → one row of a (n, 5) bit matrix, MSB first.
+        #    Right-shift + mask already produces uint8; .astype() would copy for nothing.
         bits: np.ndarray = (
             (codes[:, np.newaxis] >> BitPacker._SHIFTS) & np.uint8(1)
-        ).astype(np.uint8)                              # shape: (n, 5)
+        )                                               # shape: (n, 5), dtype uint8
 
         # ②  Flatten to a 1-D bit stream; numpy packs every 8 bits → 1 byte.
         #    The final byte is automatically zero-padded if n×5 % 8 ≠ 0.
@@ -671,9 +672,11 @@ class SmartImporter:
         -------
         PackedSequence
         """
-        # ① String → ASCII ordinal array (frombuffer avoids a full copy)
+        # ① String → ASCII ordinal array (frombuffer avoids a full copy).
+        #    NUC_LUT and AA_LUT already map both upper and lower case, so
+        #    .upper() would waste one full string copy — skip it.
         ascii_bytes: np.ndarray = np.frombuffer(
-            raw_seq.upper().encode("ascii", errors="replace"),
+            raw_seq.encode("ascii", errors="replace"),
             dtype=np.uint8,
         )
 

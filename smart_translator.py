@@ -282,10 +282,12 @@ class SmartTranslator:
             np.uint8(BioCode.UNK),
         ).astype(np.uint8)                                         # shape (N,) uint8
 
-        # ⑥ Truncate at first in-frame STOP codon (BioCode.STOP = 24)
-        stop_hits: np.ndarray = np.nonzero(aa_codes == np.uint8(BioCode.STOP))[0]
-        if stop_hits.size:
-            aa_codes = aa_codes[: stop_hits[0]]                   # exclude STOP itself
+        # ⑥ Truncate at first in-frame STOP codon (BioCode.STOP = 24).
+        #    np.argmax on a bool mask returns the first True index in one C-level pass
+        #    without allocating an index array (unlike np.nonzero).
+        stop_mask: np.ndarray = aa_codes == np.uint8(BioCode.STOP)
+        if stop_mask.any():
+            aa_codes = aa_codes[: int(np.argmax(stop_mask))]      # exclude STOP itself
 
         # ⑦ Biological plausibility check
         n_aa: int = int(len(aa_codes))

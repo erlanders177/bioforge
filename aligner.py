@@ -237,14 +237,22 @@ class SequenceAligner:
             H[:, 0] = np.arange(m + 1, dtype=np.int32) * cls.GAP
         # semi-global: borders stay at 0 (free terminal gaps on the query)
 
+        # Pre-allocate index buffers once outside the loop.
+        # i_full[k] = k+1 → i_full[i_lo-1 : i_hi] is a zero-copy slice [i_lo…i_hi].
+        # j_buf receives d − i_arr in-place, eliminating one allocation per diagonal.
+        i_full = np.arange(1, max(m, n) + 1, dtype=np.int32)
+        j_buf  = np.empty(min(m, n) + 1,     dtype=np.int32)
+
         for d in range(2, m + n + 1):
             i_lo = max(1, d - n)
             i_hi = min(m, d - 1)   # j = d−i ≥ 1  ⟹  i ≤ d−1
             if i_lo > i_hi:
                 continue
 
-            i_arr = np.arange(i_lo, i_hi + 1, dtype=np.int32)
-            j_arr = d - i_arr                                    # shape (w,)
+            w     = i_hi - i_lo + 1
+            i_arr = i_full[i_lo - 1: i_hi]          # zero-copy slice — no allocation
+            np.subtract(d, i_arr, out=j_buf[:w])    # in-place: avoids j = d - i_arr copy
+            j_arr = j_buf[:w]
 
             # ① Match/mismatch score per cell
             match_mask = codes_a[i_arr - 1] == codes_b[j_arr - 1]
