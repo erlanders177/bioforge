@@ -201,6 +201,15 @@ pytest tests/ --benchmark-only
 
 ---
 
+## Author
+
+**Aarón Aranda Torrijos** — [github.com/erlanders177](https://github.com/erlanders177)
+
+---
+
 ## License
 
-MIT License — see [LICENSE](LICENSE)
+PolyForm Noncommercial 1.0.0 — free for personal, academic and research use.
+Commercial use requires explicit permission from the author.
+
+See [LICENSE](LICENSE) for full terms.
