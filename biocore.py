@@ -1,8 +1,8 @@
 """
 biocore.py
 ══════════════════════════════════════════════════════════════════════
-Core engine for a bioinformatics library built on a unified 5-bit
-biological alphabet.
+BioForge — high-performance bioinformatics engine built on a unified
+5-bit biological alphabet.
 
 Design principles
 ─────────────────
@@ -66,7 +66,7 @@ except ImportError:
 
 __all__: list[str] = [
     # Excepciones — importar para capturar errores del motor
-    "BioEngineError",
+    "BioForgeError",
     "SequenceTypeError",
     "SequenceValueError",
     "TranslationError",
@@ -85,20 +85,20 @@ __all__: list[str] = [
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §0  EXCEPTIONS  —  jerarquía de errores del motor bioinformático
+# §0  EXCEPTIONS  —  jerarquía de errores de BioForge
 # ══════════════════════════════════════════════════════════════════════════════
 
-class BioEngineError(Exception):
-    """Base para todos los errores propios del motor bioinformático.
+class BioForgeError(Exception):
+    """Base para todos los errores propios de BioForge.
 
     Úsala en bloques ``except`` para capturar cualquier error del motor
     sin interferir con el resto de Python::
 
-        from biocore import BioEngineError
+        from biocore import BioForgeError
         try:
             prot = SmartTranslator.translate(seq)
-        except BioEngineError as e:
-            print(f"Error del motor: {e}")
+        except BioForgeError as e:
+            print(f"Error de BioForge: {e}")
 
     Las subclases también heredan de ``TypeError`` o ``ValueError`` según
     corresponda, por lo que el código existente que ya atrapa esos tipos
@@ -106,7 +106,7 @@ class BioEngineError(Exception):
     """
 
 
-class SequenceTypeError(BioEngineError, TypeError):
+class SequenceTypeError(BioForgeError, TypeError):
     """Tipo incorrecto al llamar a una función del motor.
 
     Se lanza cuando:
@@ -118,7 +118,7 @@ class SequenceTypeError(BioEngineError, TypeError):
     """
 
 
-class SequenceValueError(BioEngineError, ValueError):
+class SequenceValueError(BioForgeError, ValueError):
     """Valor inválido en una secuencia o en sus metadatos.
 
     Se lanza cuando:
@@ -130,7 +130,7 @@ class SequenceValueError(BioEngineError, ValueError):
     """
 
 
-class TranslationError(BioEngineError, ValueError):
+class TranslationError(BioForgeError, ValueError):
     """Error durante la traducción ADN→Proteína.
 
     Se lanza cuando:
@@ -141,7 +141,7 @@ class TranslationError(BioEngineError, ValueError):
     """
 
 
-class AlignmentError(BioEngineError, ValueError):
+class AlignmentError(BioForgeError, ValueError):
     """Error durante el alineamiento o en sus parámetros.
 
     Se lanza cuando:
@@ -882,7 +882,7 @@ TVLTSKYR*
 
     W = 65
     print("═" * W)
-    print("  biocore.py — Unified 5-bit bioinformatics library demo")
+    print("  BioForge — biocore.py — Unified 5-bit bioinformatics engine demo")
     print("═" * W)
 
     records = SmartImporter.from_string(_DEMO_FASTA)

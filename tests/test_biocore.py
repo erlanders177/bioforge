@@ -16,7 +16,7 @@ from hypothesis.extra.numpy import arrays as np_arrays
 from biocore import (
     BitPacker, BioCode, PackedSequence, SeqType,
     SmartImporter, compute_stats, NUC_LUT, AA_LUT,
-    BioEngineError, SequenceTypeError, SequenceValueError,
+    BioForgeError, SequenceTypeError, SequenceValueError,
 )
 
 
@@ -350,17 +350,17 @@ def test_getitem_tipo_invalido():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §7  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# §7  JERARQUÍA DE EXCEPCIONES — BioForgeError como base común
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_bioengine_error_es_base_de_sequence_type_error():
-    """SequenceTypeError debe ser instancia de BioEngineError."""
-    assert issubclass(SequenceTypeError, BioEngineError)
+    """SequenceTypeError debe ser instancia de BioForgeError."""
+    assert issubclass(SequenceTypeError, BioForgeError)
 
 
 def test_bioengine_error_es_base_de_sequence_value_error():
-    """SequenceValueError debe ser instancia de BioEngineError."""
-    assert issubclass(SequenceValueError, BioEngineError)
+    """SequenceValueError debe ser instancia de BioForgeError."""
+    assert issubclass(SequenceValueError, BioForgeError)
 
 
 def test_sequence_type_error_es_type_error():
@@ -374,15 +374,15 @@ def test_sequence_value_error_es_value_error():
 
 
 def test_pack_error_capturado_como_bioengine_error():
-    """BitPacker.pack con array 2-D debe poder capturarse con BioEngineError."""
+    """BitPacker.pack con array 2-D debe poder capturarse con BioForgeError."""
     codes_2d = np.array([[0, 1], [2, 3]], dtype=np.uint8)
-    with pytest.raises(BioEngineError):
+    with pytest.raises(BioForgeError):
         BitPacker.pack(codes_2d)
 
 
 def test_packed_sequence_type_error_capturado_como_bioengine_error():
-    """PackedSequence con seq_type inválido debe capturarse con BioEngineError."""
-    with pytest.raises(BioEngineError):
+    """PackedSequence con seq_type inválido debe capturarse con BioForgeError."""
+    with pytest.raises(BioForgeError):
         PackedSequence(
             header="bad", seq_type="PROTEIN",
             n_symbols=0, data=np.array([], dtype=np.uint8),

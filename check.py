@@ -1,5 +1,5 @@
 """
-check.py — Verificador del motor bioinformático
+check.py — Verificador de BioForge
 
 Comprueba que todo el proyecto funciona correctamente.
 No necesitas saber programación para usarlo.
@@ -122,7 +122,7 @@ def main() -> int:
     W = 62
     print()
     print(_n("  ╔" + "═" * W + "╗"))
-    print(_n("  ║") + "  VERIFICACIÓN DEL MOTOR BIOINFORMÁTICO" + " " * (W - 39) + _n("║"))
+    print(_n("  ║") + "  BIOFORGE — VERIFICACIÓN DEL SISTEMA" + " " * (W - 37) + _n("║"))
     print(_n("  ║") + "  Aarón Aranda Torrijos · github.com/erlanders177" + " " * (W - 49) + _n("║"))
     print(_n("  ╚" + "═" * W + "╝"))
     print()

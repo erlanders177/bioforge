@@ -22,7 +22,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from biocore import BitPacker, PackedSequence, SeqType, SmartImporter
-from biocore import BioEngineError, SequenceTypeError, SequenceValueError, AlignmentError
+from biocore import BioForgeError, SequenceTypeError, SequenceValueError, AlignmentError
 from aligner import AlignmentResult, Mutation, SequenceAligner, format_alignment
 
 
@@ -387,25 +387,25 @@ def test_benchmark_align_1000x1000(benchmark):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §8  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# §8  JERARQUÍA DE EXCEPCIONES — BioForgeError como base común
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_alignment_error_es_subclase_correcta():
-    """AlignmentError debe ser subclase de BioEngineError y ValueError."""
-    assert issubclass(AlignmentError, BioEngineError)
+    """AlignmentError debe ser subclase de BioForgeError y ValueError."""
+    assert issubclass(AlignmentError, BioForgeError)
     assert issubclass(AlignmentError, ValueError)
 
 
 def test_sequence_type_error_en_align_capturado_como_bioengine_error():
-    """Pasar un str a align debe capturarse con BioEngineError."""
-    with pytest.raises(BioEngineError):
+    """Pasar un str a align debe capturarse con BioForgeError."""
+    with pytest.raises(BioForgeError):
         SequenceAligner.align("ACGT", _nuc("ACGT"))
 
 
 def test_alignment_mode_error_capturado_como_bioengine_error():
-    """Modo inválido debe capturarse con BioEngineError."""
+    """Modo inválido debe capturarse con BioForgeError."""
     a = _nuc("ACGT")
-    with pytest.raises(BioEngineError):
+    with pytest.raises(BioForgeError):
         SequenceAligner.align(a, a, mode="bad_mode")
 
 
@@ -417,7 +417,7 @@ def test_alignment_mode_error_tambien_es_value_error():
 
 
 def test_format_alignment_error_capturado_como_bioengine_error():
-    """format_alignment con width=0 debe capturarse con BioEngineError."""
+    """format_alignment con width=0 debe capturarse con BioForgeError."""
     r = SequenceAligner.align(_nuc("ACGT"), _nuc("ACGT"))
-    with pytest.raises(BioEngineError):
+    with pytest.raises(BioForgeError):
         format_alignment(r, width=0)

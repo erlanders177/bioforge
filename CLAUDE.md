@@ -1,8 +1,8 @@
-# Motor Bioinformático 5-bit — Contexto para Claude Code
+# BioForge — Contexto para Claude Code
 
 ## Qué es este proyecto
 
-Motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
+BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. Basado exclusivamente en NumPy. Python 3.13, Windows 10.
 
 Tres niveles implementados y validados:

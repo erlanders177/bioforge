@@ -1,4 +1,4 @@
-# API Reference — Motor Bioinformático 5-bit
+# BioForge — API Reference
 
 ## biocore.py
 

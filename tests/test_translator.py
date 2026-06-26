@@ -23,7 +23,7 @@ from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays as np_arrays
 
 from biocore import BitPacker, PackedSequence, SeqType, SmartImporter
-from biocore import BioEngineError, SequenceTypeError, TranslationError
+from biocore import BioForgeError, SequenceTypeError, TranslationError
 from smart_translator import SmartTranslator
 
 
@@ -351,26 +351,26 @@ def test_benchmark_translate_10k_codons(benchmark):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §5  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# §5  JERARQUÍA DE EXCEPCIONES — BioForgeError como base común
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_translation_error_capturado_como_bioengine_error():
-    """Un error de traducción (sin ATG) debe poder capturarse con BioEngineError."""
+    """Un error de traducción (sin ATG) debe poder capturarse con BioForgeError."""
     seq = SmartImporter.from_string(">no_atg\nCCCCCCCCCCCC\n",
                                     force_type=SeqType.NUCLEOTIDE)[0]
-    with pytest.raises(BioEngineError):
+    with pytest.raises(BioForgeError):
         SmartTranslator.translate(seq)
 
 
 def test_translation_error_es_subclase_correcta():
-    """TranslationError debe ser subclase de BioEngineError y ValueError."""
-    assert issubclass(TranslationError, BioEngineError)
+    """TranslationError debe ser subclase de BioForgeError y ValueError."""
+    assert issubclass(TranslationError, BioForgeError)
     assert issubclass(TranslationError, ValueError)
 
 
 def test_sequence_type_error_capturado_como_bioengine_error():
-    """Pasar un str a translate debe capturarse tanto con TypeError como BioEngineError."""
-    with pytest.raises(BioEngineError):
+    """Pasar un str a translate debe capturarse tanto con TypeError como BioForgeError."""
+    with pytest.raises(BioForgeError):
         SmartTranslator.translate("ATGAAATAA")
     with pytest.raises(TypeError):
         SmartTranslator.translate("ATGAAATAA")

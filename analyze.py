@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from biocore import SeqType, SmartImporter, PackedSequence
-from biocore import BioEngineError, SequenceTypeError, SequenceValueError
+from biocore import BioForgeError, SequenceTypeError, SequenceValueError
 from smart_translator import SmartTranslator
 from aligner import AlignmentResult, SequenceAligner, format_alignment
 
@@ -342,7 +342,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         result = run(args.reference, args.query, mode=args.mode)
-    except BioEngineError as exc:
+    except BioForgeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except (ValueError, TypeError) as exc:

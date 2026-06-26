@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 import pytest
 
-from biocore import SeqType, BioEngineError, SequenceTypeError, SequenceValueError
+from biocore import SeqType, BioForgeError, SequenceTypeError, SequenceValueError
 from analyze import run, build_report, AnalysisResult, _change_type, main
 
 
@@ -371,24 +371,24 @@ def test_cli_error_devuelve_codigo_1(tmp_path):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §9  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# §9  JERARQUÍA DE EXCEPCIONES — BioForgeError como base común
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_sequence_value_error_fasta_vacio_capturado_como_bioengine_error(tmp_path):
-    """FASTA vacío debe lanzar SequenceValueError capturable como BioEngineError."""
+    """FASTA vacío debe lanzar SequenceValueError capturable como BioForgeError."""
     empty = tmp_path / "empty.fa"
     empty.write_text("")
     ref = tmp_path / "ref.fa"
     ref.write_text(">r\nACGT\n")
-    with pytest.raises(BioEngineError):
+    with pytest.raises(BioForgeError):
         run(str(ref), str(empty))
     with pytest.raises(SequenceValueError):
         run(str(ref), str(empty))
 
 
 def test_sequence_type_error_capturado_como_bioengine_error(hbb_normal, insulin_ref):
-    """Tipos incompatibles deben lanzar SequenceTypeError capturable como BioEngineError."""
-    with pytest.raises(BioEngineError):
+    """Tipos incompatibles deben lanzar SequenceTypeError capturable como BioForgeError."""
+    with pytest.raises(BioForgeError):
         run(hbb_normal, insulin_ref)
     with pytest.raises(SequenceTypeError):
         run(hbb_normal, insulin_ref)

@@ -1,8 +1,8 @@
-# Arquitectura del Motor Bioinformático 5-bit
+# BioForge — Arquitectura
 
 ## Resumen ejecutivo
 
-Motor bioinformático de alto rendimiento para Edge Computing, sin Biopython.
+BioForge: motor bioinformático de alto rendimiento para Edge Computing, sin Biopython.
 Basado exclusivamente en NumPy. Diseñado para ejecutarse en hardware de
 recursos limitados (i5-U, dispositivos embebidos).
 

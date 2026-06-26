@@ -1,4 +1,4 @@
-# BioCore — High-Performance Bioinformatics Engine
+# BioForge — High-Performance Bioinformatics Engine
 
 A NumPy-only bioinformatics engine designed for **Edge Computing**.  
 No Biopython. No heavy dependencies. Just NumPy and fast math.
@@ -62,14 +62,9 @@ State  Symbol          State  Symbol
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/biocore-engine.git
-cd biocore-engine
+git clone https://github.com/erlanders177/bioforge.git
+cd bioforge
 pip install numpy
-```
-
-Optional (for faster alignment on large sequences):
-```bash
-pip install numba
 ```
 
 For development and testing:
