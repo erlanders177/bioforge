@@ -48,7 +48,7 @@ def stress_test():
     print(f"Ahorro      : {(1 - adn_empaquetado.memory_ratio) * 100:.1f}% vs ASCII")
 
     # Traduccion
-    print("\nArrancando motor de traduccion NumPy...")
+    print("\nArrancando motor de traduccion C...")
     t2 = time.perf_counter()
     proteina = SmartTranslator.translate(adn_empaquetado)
     t3 = time.perf_counter()
