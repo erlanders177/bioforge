@@ -51,11 +51,11 @@ from typing import Literal
 
 import numpy as np
 
-from biocore import BioCode, BitPacker, PackedSequence, SeqType
-from biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
-from biocore import SequenceTypeError, SequenceValueError, AlignmentError
+from .biocore import BioCode, BitPacker, PackedSequence, SeqType
+from .biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
+from .biocore import SequenceTypeError, SequenceValueError, AlignmentError
 
-from engine._loader import C_AVAILABLE, c_nw_align as _c_nw_align
+from .engine._loader import C_AVAILABLE, c_nw_align as _c_nw_align
 
 # Bytes de decodificación para el motor C (32 bytes: BioCode -> ASCII)
 _NUC_DECODE_BYTES: bytes = bytes(_NUC_DECODE_ARR)

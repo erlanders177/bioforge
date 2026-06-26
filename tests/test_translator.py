@@ -22,9 +22,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays as np_arrays
 
-from biocore import BitPacker, PackedSequence, SeqType, SmartImporter
-from biocore import BioForgeError, SequenceTypeError, TranslationError
-from smart_translator import SmartTranslator
+from bioforge import BitPacker, PackedSequence, SeqType, SmartImporter
+from bioforge import BioForgeError, SequenceTypeError, TranslationError
+from bioforge import SmartTranslator
 
 
 # ── Estrategias Hypothesis ─────────────────────────────────────────────────────

@@ -16,10 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from biocore import SeqType, BitPacker, PackedSequence, NUC_LUT, AA_LUT
-from smart_translator import SmartTranslator
-from aligner import SequenceAligner, format_alignment
-from analyze import _AA_NAMES, _NUC_NAMES, _change_type
+from bioforge import SeqType, BitPacker, PackedSequence, NUC_LUT, AA_LUT
+from bioforge import SmartTranslator, SequenceAligner, format_alignment
+from bioforge.analyze import _AA_NAMES, _NUC_NAMES, _change_type
 
 
 # ── Colores ANSI ───────────────────────────────────────────────────────────────

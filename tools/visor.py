@@ -14,8 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from biocore import BioCode, BitPacker, PackedSequence, SeqType, NUC_LUT
-from smart_translator import SmartTranslator
+from bioforge import BioCode, BitPacker, PackedSequence, SeqType, NUC_LUT
+from bioforge import SmartTranslator
 
 
 NUC_CHARS = {0: 'A', 1: 'C', 2: 'G', 3: 'T'}

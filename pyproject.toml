@@ -39,8 +39,8 @@ Source   = "https://github.com/erlanders177/bioforge"
 Issues   = "https://github.com/erlanders177/bioforge/issues"
 
 [project.scripts]
-bioforge-analyze = "analyze:main"
+bioforge-analyze = "bioforge.analyze:main"
 
-[tool.setuptools]
-py-modules = ["biocore", "smart_translator", "aligner", "analyze", "check"]
-packages   = ["engine"]
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["bioforge*"]

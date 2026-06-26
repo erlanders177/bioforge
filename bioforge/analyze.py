@@ -39,10 +39,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from biocore import SeqType, SmartImporter, PackedSequence
-from biocore import BioForgeError, SequenceTypeError, SequenceValueError
-from smart_translator import SmartTranslator
-from aligner import AlignmentResult, SequenceAligner, format_alignment
+from .biocore import SeqType, SmartImporter, PackedSequence
+from .biocore import BioForgeError, SequenceTypeError, SequenceValueError
+from .smart_translator import SmartTranslator
+from .aligner import AlignmentResult, SequenceAligner, format_alignment
 
 
 # ── Amino acid full names ──────────────────────────────────────────────────────

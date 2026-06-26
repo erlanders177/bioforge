@@ -49,14 +49,14 @@ from numpy.lib.stride_tricks import sliding_window_view
 import numpy as np
 
 # ── biocore integration ────────────────────────────────────────────────────────
-from biocore import BioCode, BitPacker, PackedSequence, SeqType
-from biocore import SequenceTypeError, SequenceValueError, TranslationError
+from .biocore import BioCode, BitPacker, PackedSequence, SeqType
+from .biocore import SequenceTypeError, SequenceValueError, TranslationError
 
 # ── motor C (opcional) ────────────────────────────────────────────────────────
 try:
-    from engine._loader import C_AVAILABLE as _C_AVAILABLE
-    from engine._loader import c_find_atg  as _c_find_atg
-    from engine._loader import c_translate  as _c_translate
+    from .engine._loader import C_AVAILABLE as _C_AVAILABLE
+    from .engine._loader import c_find_atg  as _c_find_atg
+    from .engine._loader import c_translate  as _c_translate
 except ImportError:
     _C_AVAILABLE = False
 

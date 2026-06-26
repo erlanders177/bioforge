@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 import pytest
 
-from biocore import SeqType, BioForgeError, SequenceTypeError, SequenceValueError
-from analyze import run, build_report, AnalysisResult, _change_type, main
+from bioforge import SeqType, BioForgeError, SequenceTypeError, SequenceValueError
+from bioforge.analyze import run, build_report, AnalysisResult, _change_type, main
 
 
 # ══════════════════════════════════════════════════════════════════════════════

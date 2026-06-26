@@ -56,10 +56,10 @@ from typing import Iterator, Optional
 import numpy as np
 
 try:
-    from engine._loader import C_AVAILABLE as _C_AVAILABLE
-    from engine._loader import c_getitem5 as _c_getitem5
-    from engine._loader import c_pack5    as _c_pack5
-    from engine._loader import c_unpack5  as _c_unpack5
+    from .engine._loader import C_AVAILABLE as _C_AVAILABLE
+    from .engine._loader import c_getitem5 as _c_getitem5
+    from .engine._loader import c_pack5    as _c_pack5
+    from .engine._loader import c_unpack5  as _c_unpack5
 except ImportError:
     _C_AVAILABLE = False
 

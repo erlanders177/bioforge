@@ -94,7 +94,7 @@ pip install hypothesis pytest pytest-benchmark
 ### Import and encode a FASTA sequence
 
 ```python
-from biocore import SmartImporter, SeqType
+from bioforge import SmartImporter, SeqType
 
 records = SmartImporter.from_string(""">gene_1
 ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
@@ -109,7 +109,7 @@ print(seq.to_string())    # ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
 ### Translate DNA to protein
 
 ```python
-from smart_translator import SmartTranslator
+from bioforge import SmartTranslator
 
 protein = SmartTranslator.translate(seq)
 print(protein.to_string())   # MVHLTPEEKSA
@@ -118,7 +118,7 @@ print(protein.to_string())   # MVHLTPEEKSA
 ### Detect mutations between two sequences
 
 ```python
-from aligner import SequenceAligner, format_alignment
+from bioforge import SequenceAligner, format_alignment
 
 result = SequenceAligner.align(seq_ref, seq_query)
 
@@ -142,7 +142,7 @@ print(build_report(result))
 ### Error handling
 
 ```python
-from biocore import BioForgeError, TranslationError
+from bioforge import BioForgeError, TranslationError, SmartTranslator
 
 try:
     protein = SmartTranslator.translate(my_seq)

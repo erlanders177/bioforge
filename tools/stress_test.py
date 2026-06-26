@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import time
 import numpy as np
-from biocore import SeqType, BitPacker, PackedSequence, NUC_LUT
-from smart_translator import SmartTranslator
+from bioforge import SeqType, BitPacker, PackedSequence, NUC_LUT
+from bioforge import SmartTranslator
 
 
 def stress_test():
