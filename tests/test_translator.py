@@ -266,6 +266,50 @@ def test_error_sequence_too_short():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# §3b  TESTS OPCIONALES — comportamientos adicionales
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_multiples_atg_usa_el_primero():
+    """Si hay varios ATG, la traducción empieza en el primero."""
+    # ATG en pos 0 y otro en pos 9. Debe usar el de pos 0.
+    fasta = ">test\nATGAAAGGGATGCCCTAA\n"
+    nuc  = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        prot = SmartTranslator.translate(nuc, warn_short=False)
+    assert prot.to_string().startswith("MKG")
+
+
+def test_traduccion_sin_stop_va_hasta_el_final():
+    """Sin codón STOP, la traducción debe llegar al último codón completo."""
+    # Secuencia sin STOP — debe traducir todos los codones disponibles
+    fasta = ">test\nATGAAAGGGCCCTTT\n"   # 15 nt = 5 codones: ATG AAA GGG CCC TTT
+    nuc  = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        prot = SmartTranslator.translate(nuc, warn_short=False)
+    assert "*" not in prot.to_string()
+    assert len(prot.to_string()) == 5
+
+
+def test_cabecera_proteina_contiene_posicion_orf():
+    """La cabecera de la proteína debe incluir la posición donde empieza el ORF."""
+    fasta = ">mi_gen\nGGGATGAAAGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA\n"
+    nuc  = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    prot = SmartTranslator.translate(nuc)
+    assert "ORF@3" in prot.header   # ATG empieza en posición 3
+
+
+def test_resultado_es_packed_sequence_proteina():
+    """El resultado siempre debe ser un PackedSequence de tipo PROTEIN."""
+    fasta = ">test\nATGAAAGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGTAA\n"
+    nuc  = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    prot = SmartTranslator.translate(nuc)
+    assert isinstance(prot, PackedSequence)
+    assert prot.seq_type == SeqType.PROTEIN
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # §4  BENCHMARKS
 # ══════════════════════════════════════════════════════════════════════════════
 

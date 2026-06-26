@@ -193,6 +193,82 @@ def _make_random_codes(n: int, max_val: int = 3) -> np.ndarray:
     return rng.integers(0, max_val + 1, size=n, dtype=np.uint8)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# §5  TESTS OPCIONALES — casos límite y características adicionales
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_to_string_nucleotide():
+    """to_string() debe devolver la secuencia IUPAC correcta para nucleótidos."""
+    fasta = ">test\nACGT\n"
+    seq = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    assert seq.to_string() == "ACGT"
+
+
+def test_to_string_protein():
+    """to_string() debe devolver la secuencia correcta para proteínas."""
+    fasta = ">test\nMVHL*\n"
+    seq = SmartImporter.from_string(fasta, force_type=SeqType.PROTEIN)[0]
+    assert seq.to_string() == "MVHL*"
+
+
+def test_negative_index():
+    """Indexación negativa debe funcionar igual que en listas de Python."""
+    fasta = ">test\nACGT\n"
+    seq = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    assert seq[-1] == seq[3]   # última base
+    assert seq[-4] == seq[0]   # primera base
+
+
+def test_slice_devuelve_packed_sequence():
+    """Un slice de PackedSequence debe devolver otro PackedSequence."""
+    fasta = ">test\nATGCATGCATGC\n"
+    seq = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    sub = seq[4:8]
+    assert isinstance(sub, PackedSequence)
+    assert sub.n_symbols == 4
+    assert sub.to_string() == "ATGC"
+
+
+def test_igualdad_secuencias_identicas():
+    """Dos secuencias con el mismo contenido deben ser iguales."""
+    fasta = ">test\nATGC\n"
+    s1 = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    s2 = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    assert s1 == s2
+
+
+def test_igualdad_secuencias_distintas():
+    """Dos secuencias distintas no deben ser iguales."""
+    s1 = SmartImporter.from_string(">a\nACGT\n", force_type=SeqType.NUCLEOTIDE)[0]
+    s2 = SmartImporter.from_string(">a\nTGCA\n", force_type=SeqType.NUCLEOTIDE)[0]
+    assert s1 != s2
+
+
+def test_compute_stats_composicion():
+    """compute_stats debe contar correctamente la composición de bases."""
+    from biocore import compute_stats
+    fasta = ">test\nAAAACCGT\n"
+    seq   = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    stats = compute_stats(seq)
+    assert stats.composition["A"] == 4
+    assert stats.composition["C"] == 2
+    assert stats.composition["G"] == 1
+    assert stats.composition["T"] == 1
+
+
+def test_from_string_vacia_no_registros():
+    """Un FASTA vacío debe devolver lista vacía."""
+    records = SmartImporter.from_string("")
+    assert records == []
+
+
+def test_minusculas_se_codifican_igual_que_mayusculas():
+    """La secuencia en minúsculas debe producir el mismo resultado que en mayúsculas."""
+    s_upper = SmartImporter.from_string(">a\nACGT\n", force_type=SeqType.NUCLEOTIDE)[0]
+    s_lower = SmartImporter.from_string(">a\nacgt\n", force_type=SeqType.NUCLEOTIDE)[0]
+    assert np.array_equal(s_upper.decode(), s_lower.decode())
+
+
 def test_benchmark_pack_1m(benchmark):
     """Benchmark: empaquetar 1M códigos nucleotídicos."""
     codes = _make_random_codes(1_000_000)

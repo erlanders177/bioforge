@@ -241,6 +241,52 @@ def test_counts_sum_equals_alignment_length(a, b):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# §5b  TESTS OPCIONALES — modo semi-global y casos límite
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_semiglobal_fragmento_vs_referencia():
+    """Semi-global: un fragmento corto alineado contra una referencia larga."""
+    ref      = _nuc("ATGGTGCACCTGACTCCTGAGGAGAAGTCT")  # 30 nt
+    fragment = _nuc("CCTGAGGAG")                         # 9 nt (subconjunto)
+    r = SequenceAligner.align(ref, fragment, mode="semi-global")
+    # La identidad del fragmento contra su región correspondiente debe ser alta
+    assert r.identity > 0.0
+
+
+def test_score_nunca_supera_el_maximo_posible():
+    """El score siempre debe ser ≤ len(secuencia_mas_corta) × MATCH."""
+    a = _nuc("ATGCATGCATGC")
+    b = _nuc("ATGCATGC")
+    r = SequenceAligner.align(a, b)
+    max_possible = min(a.n_symbols, b.n_symbols) * int(SequenceAligner.MATCH)
+    assert r.score <= max_possible
+
+
+def test_resultado_tiene_tipo_secuencia_correcto():
+    """El campo seq_type del resultado debe coincidir con el input."""
+    r_nuc  = SequenceAligner.align(_nuc("ACGT"), _nuc("ACGT"))
+    r_prot = SequenceAligner.align(_prot("MVHL"), _prot("MVHL"))
+    assert r_nuc.seq_type  == SeqType.NUCLEOTIDE
+    assert r_prot.seq_type == SeqType.PROTEIN
+
+
+def test_mutaciones_en_orden_de_posicion():
+    """La lista de mutaciones debe estar ordenada por posición ascendente."""
+    a = _nuc("AAAAAAAAAA")
+    b = _nuc("AATAAATAAA")   # cambios en posiciones 2 y 6
+    r = SequenceAligner.align(a, b)
+    subs = [m for m in r.mutations if m.kind == "substitution"]
+    posiciones = [m.pos_a for m in subs]
+    assert posiciones == sorted(posiciones)
+
+
+def test_sin_mutaciones_lista_vacia():
+    """Sin diferencias, la lista de mutaciones debe estar vacía."""
+    r = SequenceAligner.align(_nuc("ATGCATGC"), _nuc("ATGCATGC"))
+    assert r.mutations == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # §6  RUTAS DE ERROR
 # ══════════════════════════════════════════════════════════════════════════════
 
