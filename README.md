@@ -1,18 +1,19 @@
 # BioForge — High-Performance Bioinformatics Engine
 
-A NumPy-only bioinformatics engine designed for **Edge Computing**.  
-No Biopython. No heavy dependencies. Just NumPy and fast math.
+A bioinformatics engine built for **Edge Computing**.  
+No Biopython. No heavy dependencies. NumPy core + optional C engine for maximum speed.
 
 ---
 
 ## Why this exists
 
 Most bioinformatics tools are built for servers with gigabytes of RAM.  
-This engine was built for the opposite: low-power hardware, minimal footprint,
+BioForge was built for the opposite: low-power hardware, minimal footprint,
 maximum speed — running genetic analysis **offline and locally**.
 
-The core design rule: **zero Python loops in the hot path**.  
-Every operation is vectorised with NumPy.
+Two core rules:
+- **Zero Python loops** in the hot path — every operation is vectorised with NumPy.
+- **5-bit encoding** — every biological symbol fits in 5 bits, saving 37.5% memory vs ASCII.
 
 ---
 
@@ -20,41 +21,44 @@ Every operation is vectorised with NumPy.
 
 | Operation | Result |
 |-----------|--------|
-| Memory usage (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
-| Translation throughput | **~5 million amino acids / second** |
-| NW alignment (1000 × 1000 nt) | **~165 ms** |
-| Dependencies | **NumPy only** (+ optional Numba) |
+| Memory (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
+| Translation throughput | **~5 M amino acids / second** (NumPy) · **~27× faster** with C engine |
+| NW alignment 1000×1000 nt | **~165 ms** (NumPy) · **~29× faster** with C engine |
+| Dependencies | **NumPy** (C engine included, pre-compiled) |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Level 3 — aligner.py        Mutation detection         │
-│  Needleman-Wunsch, anti-diagonal wavefront O(m+n)        │
-├─────────────────────────────────────────────────────────┤
-│  Level 2 — smart_translator.py   DNA → Protein          │
-│  sliding_window_view + base-4 CODON_LUT, zero loops      │
-├─────────────────────────────────────────────────────────┤
-│  Level 1 — biocore.py        5-bit storage engine       │
-│  BitPacker · PackedSequence · SmartImporter · LUTs       │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Level 3 — aligner.py          Needleman-Wunsch alignment    │
+│  Anti-diagonal wavefront O(m+n) · mutation detection         │
+├──────────────────────────────────────────────────────────────┤
+│  Level 2 — smart_translator.py  DNA → Protein translation    │
+│  CODON_LUT + sliding_window_view · first-ATG ORF detection   │
+├──────────────────────────────────────────────────────────────┤
+│  Level 1 — biocore.py           5-bit storage engine         │
+│  BitPacker · PackedSequence · SmartImporter · LUTs           │
+├──────────────────────────────────────────────────────────────┤
+│  C engine — engine/engine.c     Optional compiled backend     │
+│  GCC -O3 -march=native -fopenmp · auto-loaded via ctypes     │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### The 5-bit unified alphabet
 
 Every biological symbol — nucleotides, amino acids, gaps, stop codons and
-ambiguous bases — fits in a single 5-bit encoding (32 states).  
-One scheme covers DNA, RNA, and proteins in the same pipeline.
+ambiguous bases — fits in a single 5-bit scheme (32 states).  
+One encoding covers DNA, RNA, and proteins in the same pipeline.
 
 ```
-State  Symbol          State  Symbol
-  0    Adenine (A)      14    Methionine (M)
-  1    Cytosine (C)     ...
-  2    Guanine (G)      24    STOP codon (*)
-  3    Thymine/Uracil   25    Alignment gap (-)
- 4–23  Amino acids      31    Unknown / ambiguous
+State  Symbol            State  Symbol
+  0    Adenine   (A)      14    Methionine    (M)
+  1    Cytosine  (C)      ...   (all 20 amino acids: 4–23)
+  2    Guanine   (G)      24    STOP codon    (*)
+  3    Thymine / Uracil   25    Alignment gap (-)
+ 4–23  Amino acids        31    Unknown / ambiguous
 ```
 
 ---
@@ -87,7 +91,7 @@ ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
 
 seq = records[0]
 print(seq.n_symbols)      # 33
-print(seq.packed_bytes)   # 21  (37.5% smaller than ASCII)
+print(len(seq.data))      # 21  (37.5% smaller than ASCII)
 print(seq.to_string())    # ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
 ```
 
@@ -97,7 +101,7 @@ print(seq.to_string())    # ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
 from smart_translator import SmartTranslator
 
 protein = SmartTranslator.translate(seq)
-print(protein.to_string())   # MVHLTPEEKS...
+print(protein.to_string())   # MVHLTPEEKSA
 ```
 
 ### Detect mutations between two sequences
@@ -105,21 +109,42 @@ print(protein.to_string())   # MVHLTPEEKS...
 ```python
 from aligner import SequenceAligner, format_alignment
 
-# seq_a = reference allele, seq_b = variant
-result = SequenceAligner.align(seq_a, seq_b)
+result = SequenceAligner.align(seq_ref, seq_query)
 
 print(f"Identity: {result.identity:.1%}")
 print(format_alignment(result))
 
 for mut in result.mutations:
     print(mut)
-# SUB  a[19]='A' → b[19]='T'   ← sickle cell mutation
+# Mutation(kind='substitution', pos_a=18, pos_b=18, sym_a='A', sym_b='T')
 ```
 
-### Run a full benchmark (30M bases)
+### Full mutation analysis pipeline (DNA + protein)
+
+```python
+from analyze import run, build_report
+
+result = run("reference.fa", "query.fa", mode="both")
+print(build_report(result))
+```
+
+### Error handling
+
+```python
+from biocore import BioForgeError, TranslationError
+
+try:
+    protein = SmartTranslator.translate(my_seq)
+except TranslationError as e:
+    print(f"Translation failed: {e}")   # e.g. no ATG found
+except BioForgeError as e:
+    print(f"BioForge error: {e}")       # any other engine error
+```
+
+### Run the verifier (no coding knowledge required)
 
 ```bash
-python tools/stress_test.py
+python check.py
 ```
 
 ---
@@ -130,19 +155,31 @@ python tools/stress_test.py
 biocore.py              Level 1 — 5-bit storage engine
 smart_translator.py     Level 2 — DNA → protein translation
 aligner.py              Level 3 — pairwise alignment + mutation detection
+analyze.py              Full pipeline: DNA + protein analysis, report generation
+check.py                Non-programmer verifier (runs all checks automatically)
+conftest.py             Pytest fixtures shared across all tests
+
+engine/
+  engine.c              C source — pack, unpack, NW align, translate (GCC -O3)
+  engine.dll            Compiled C backend (Windows)
+  _loader.py            ctypes wrapper with automatic NumPy fallback
 
 tools/
-  visor.py              interactive step-by-step translator
+  visor.py              Interactive step-by-step translator (CLI)
+  comparador.py         Sequence comparator tool (CLI)
   stress_test.py        30M-base performance benchmark
 
 tests/
-  test_biocore.py       property-based tests (Hypothesis)
+  test_biocore.py       L1: property-based tests (Hypothesis) + benchmarks
+  test_translator.py    L2: genetic code correctness + error paths
+  test_aligner.py       L3: alignment properties + mutation detection
+  test_analyze.py       Pipeline: full integration tests + CLI tests
 
 docs/
-  architecture.md       full design notes and rules
-  api_reference.md      code examples for every module
-  benchmarks.md         measured numbers and corrections
-  roadmap.md            status and planned extensions
+  architecture.md       Design rules, levels, encoding details
+  api_reference.md      Code examples for every module
+  benchmarks.md         Measured numbers and methodology
+  roadmap.md            Status and planned extensions
 ```
 
 ---
@@ -151,45 +188,62 @@ docs/
 
 ### Translation (Level 2)
 
-Instead of looping over every codon:
-
 ```
-① Decode PackedSequence  →  uint8 array
-② sliding_window_view    →  find first ATG (no loop)
-③ reshape to (N, 3)      →  codon matrix
-④ idx = n1×16 + n2×4 + n3  →  base-4 index (vectorised)
-⑤ CODON_LUT[idx]         →  amino acid array (single fancy-index)
-⑥ argmax on STOP hits    →  truncate at stop codon
+① decode PackedSequence → uint8 array  [0–3 per nucleotide]
+② find first ATG        → C engine scan / NumPy sliding_window_view
+③ extract ORF, reshape  → (N, 3) codon matrix
+④ base-4 index          → idx = n₁×16 + n₂×4 + n₃  (vectorised)
+⑤ CODON_LUT[idx]        → amino acid array  (single fancy-index)
+⑥ argmax on STOP mask   → truncate at stop codon
 ```
 
 ### Alignment (Level 3)
 
-Needleman-Wunsch has a data dependency that prevents full 2D vectorisation.
-The solution: **anti-diagonal wavefront**.
+Needleman-Wunsch has a cell-level data dependency that prevents full 2D
+vectorisation. The solution: **anti-diagonal wavefront**.
 
-Cells on the same anti-diagonal (`i + j = d`) are independent of each other,
-so each diagonal is computed as a single NumPy operation.  
-This reduces Python-level iterations from O(m·n) to **O(m+n)**.
+Cells on the same anti-diagonal (`i + j = d`) are mutually independent,
+so each diagonal is a single vectorised operation.  
+Python-level iterations: **O(m+n)** instead of O(m·n).
+
+When the C engine is available, the entire DP matrix is computed in C
+with OpenMP, giving **~29× speedup** over the NumPy wavefront.
+
+### C engine
+
+`engine/engine.c` provides optimised implementations of all hot-path
+operations. Loaded automatically via `ctypes` at import time.  
+If `engine.dll` is missing, all code falls back to NumPy silently.
+
+```python
+from engine._loader import C_AVAILABLE
+print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
+```
 
 ---
 
 ## Running the tests
 
 ```bash
-# Full test suite
+# Full test suite (209 tests)
 pytest tests/ -v
 
 # Benchmarks only
 pytest tests/ --benchmark-only
+
+# Quick smoke check (no coding knowledge required)
+python check.py
 ```
 
 ---
 
 ## Roadmap
 
-- [x] Level 1 — 5-bit storage, FASTA parser
-- [x] Level 2 — vectorised genetic code translation
-- [x] Level 3 — Needleman-Wunsch alignment + mutation detection
+- [x] Level 1 — 5-bit storage, FASTA parser, SmartImporter
+- [x] Level 2 — vectorised genetic code translation (C + NumPy)
+- [x] Level 3 — Needleman-Wunsch alignment + mutation detection (C + NumPy)
+- [x] Full mutation analysis pipeline (DNA + protein, 3 modes)
+- [x] BioForgeError exception hierarchy for library users
 - [ ] Reverse complement (vectorised)
 - [ ] 6-frame translation
 - [ ] Banded NW for sequences > 15 000 bp
@@ -204,7 +258,7 @@ pytest tests/ --benchmark-only
 
 ## License
 
-PolyForm Noncommercial 1.0.0 — free for personal, academic and research use.
+PolyForm Noncommercial 1.0.0 — free for personal, academic and research use.  
 Commercial use requires explicit permission from the author.
 
 See [LICENSE](LICENSE) for full terms.
