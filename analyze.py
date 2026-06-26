@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from biocore import SeqType, SmartImporter, PackedSequence
+from biocore import BioEngineError, SequenceTypeError, SequenceValueError
 from smart_translator import SmartTranslator
 from aligner import AlignmentResult, SequenceAligner, format_alignment
 
@@ -121,17 +122,24 @@ def run(
     query_seqs = SmartImporter.from_file(query_path)
 
     if not ref_seqs:
-        raise ValueError(f"No se encontraron secuencias en: {ref_path}")
+        raise SequenceValueError(
+            f"No se encontraron secuencias en: {ref_path}. "
+            "Comprueba que el archivo FASTA tenga al menos un registro con '>'."
+        )
     if not query_seqs:
-        raise ValueError(f"No se encontraron secuencias en: {query_path}")
+        raise SequenceValueError(
+            f"No se encontraron secuencias en: {query_path}. "
+            "Comprueba que el archivo FASTA tenga al menos un registro con '>'."
+        )
 
     ref_seq   = ref_seqs[0]
     query_seq = query_seqs[0]
 
     if ref_seq.seq_type != query_seq.seq_type:
-        raise TypeError(
-            f"Tipos incompatibles: referencia es {ref_seq.seq_type.name}, "
-            f"query es {query_seq.seq_type.name}."
+        raise SequenceTypeError(
+            f"Tipos incompatibles: referencia es {ref_seq.seq_type.name} "
+            f"pero query es {query_seq.seq_type.name}. "
+            "Ambos archivos deben contener el mismo tipo de secuencia."
         )
 
     was_dna = ref_seq.seq_type == SeqType.NUCLEOTIDE
@@ -334,6 +342,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         result = run(args.reference, args.query, mode=args.mode)
+    except BioEngineError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     except (ValueError, TypeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

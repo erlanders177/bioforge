@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 import pytest
 
-from biocore import SeqType
+from biocore import SeqType, BioEngineError, SequenceTypeError, SequenceValueError
 from analyze import run, build_report, AnalysisResult, _change_type, main
 
 
@@ -368,3 +368,27 @@ def test_cli_error_devuelve_codigo_1(tmp_path):
     """CLI con archivo inexistente debe devolver código 1."""
     ret = main(["no_existe.fa", "tampoco.fa"])
     assert ret == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §9  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_sequence_value_error_fasta_vacio_capturado_como_bioengine_error(tmp_path):
+    """FASTA vacío debe lanzar SequenceValueError capturable como BioEngineError."""
+    empty = tmp_path / "empty.fa"
+    empty.write_text("")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">r\nACGT\n")
+    with pytest.raises(BioEngineError):
+        run(str(ref), str(empty))
+    with pytest.raises(SequenceValueError):
+        run(str(ref), str(empty))
+
+
+def test_sequence_type_error_capturado_como_bioengine_error(hbb_normal, insulin_ref):
+    """Tipos incompatibles deben lanzar SequenceTypeError capturable como BioEngineError."""
+    with pytest.raises(BioEngineError):
+        run(hbb_normal, insulin_ref)
+    with pytest.raises(SequenceTypeError):
+        run(hbb_normal, insulin_ref)

@@ -65,6 +65,13 @@ except ImportError:
 
 
 __all__: list[str] = [
+    # Excepciones — importar para capturar errores del motor
+    "BioEngineError",
+    "SequenceTypeError",
+    "SequenceValueError",
+    "TranslationError",
+    "AlignmentError",
+    # Núcleo
     "BioCode",
     "SeqType",
     "NUC_LUT",
@@ -75,6 +82,74 @@ __all__: list[str] = [
     "SequenceStats",
     "compute_stats",
 ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §0  EXCEPTIONS  —  jerarquía de errores del motor bioinformático
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BioEngineError(Exception):
+    """Base para todos los errores propios del motor bioinformático.
+
+    Úsala en bloques ``except`` para capturar cualquier error del motor
+    sin interferir con el resto de Python::
+
+        from biocore import BioEngineError
+        try:
+            prot = SmartTranslator.translate(seq)
+        except BioEngineError as e:
+            print(f"Error del motor: {e}")
+
+    Las subclases también heredan de ``TypeError`` o ``ValueError`` según
+    corresponda, por lo que el código existente que ya atrapa esos tipos
+    estándar sigue funcionando sin cambios.
+    """
+
+
+class SequenceTypeError(BioEngineError, TypeError):
+    """Tipo incorrecto al llamar a una función del motor.
+
+    Se lanza cuando:
+
+    - Se pasa un ``str``, ``list`` u otro objeto donde se esperaba
+      ``PackedSequence``.
+    - Se mezclan tipos biológicos incompatibles (NUCLEOTIDE con PROTEIN).
+    - El ``seq_type`` de un ``PackedSequence`` no es un valor ``SeqType``.
+    """
+
+
+class SequenceValueError(BioEngineError, ValueError):
+    """Valor inválido en una secuencia o en sus metadatos.
+
+    Se lanza cuando:
+
+    - ``n_symbols`` es negativo.
+    - El buffer ``packed`` es demasiado pequeño para ``n`` símbolos.
+    - La secuencia está vacía donde se requiere contenido.
+    - ``codes`` no es un array 1-D.
+    """
+
+
+class TranslationError(BioEngineError, ValueError):
+    """Error durante la traducción ADN→Proteína.
+
+    Se lanza cuando:
+
+    - La secuencia no contiene ningún codón ATG/AUG.
+    - El ORF no tiene ningún codón completo tras el ATG.
+    - La secuencia es demasiado corta para contener un codón.
+    """
+
+
+class AlignmentError(BioEngineError, ValueError):
+    """Error durante el alineamiento o en sus parámetros.
+
+    Se lanza cuando:
+
+    - El modo no es ``'global'`` ni ``'semi-global'``.
+    - ``width`` es ≤ 0 en ``format_alignment``.
+    - Las cadenas alineadas tienen longitudes incongruentes.
+    """
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -275,8 +350,9 @@ class BitPacker:
         """
         codes = np.asarray(codes, dtype=np.uint8)
         if codes.ndim != 1:
-            raise ValueError(
-                f"codes debe ser un array 1-D, se recibió shape {codes.shape}."
+            raise SequenceValueError(
+                f"codes debe ser un array 1-D, se recibió shape {codes.shape}. "
+                "Pasa un array plano, p.ej. np.array([0, 1, 2], dtype=np.uint8)."
             )
         if _C_AVAILABLE:
             return _c_pack5(codes)
@@ -308,15 +384,16 @@ class BitPacker:
         np.ndarray, dtype uint8, shape (n,), values in [0, 31]
         """
         if not isinstance(n, (int, np.integer)) or int(n) < 0:
-            raise ValueError(
+            raise SequenceValueError(
                 f"n debe ser un entero no negativo, se recibió {n!r}."
             )
         n = int(n)
         min_bytes = BitPacker.packed_size(n)
         if len(packed) < min_bytes:
-            raise ValueError(
+            raise SequenceValueError(
                 f"packed tiene {len(packed)} byte(s) pero se necesitan "
-                f"al menos {min_bytes} para desempaquetar {n} símbolo(s)."
+                f"al menos {min_bytes} para desempaquetar {n} símbolo(s). "
+                "¿El buffer procede de BitPacker.pack() con los mismos datos?"
             )
         if _C_AVAILABLE:
             return _c_unpack5(packed, n)
@@ -365,12 +442,13 @@ class PackedSequence:
     def __post_init__(self) -> None:
         """Normalise *data* to a write-locked uint8 array and validate length."""
         if not isinstance(self.n_symbols, (int, np.integer)) or int(self.n_symbols) < 0:
-            raise ValueError(
+            raise SequenceValueError(
                 f"n_symbols debe ser un entero no negativo, se recibió {self.n_symbols!r}."
             )
         if not isinstance(self.seq_type, SeqType):
-            raise TypeError(
-                f"seq_type debe ser SeqType, se recibió {type(self.seq_type).__name__}."
+            raise SequenceTypeError(
+                f"seq_type debe ser SeqType.NUCLEOTIDE o SeqType.PROTEIN, "
+                f"se recibió {type(self.seq_type).__name__!r}."
             )
         arr = np.asarray(self.data, dtype=np.uint8)
         arr.flags.writeable = False          # seal the buffer against mutations
@@ -378,9 +456,10 @@ class PackedSequence:
 
         min_bytes = BitPacker.packed_size(self.n_symbols)
         if len(arr) < min_bytes:
-            raise ValueError(
-                f"data has {len(arr)} byte(s); "
-                f"need ≥ {min_bytes} to hold {self.n_symbols} symbols."
+            raise SequenceValueError(
+                f"data tiene {len(arr)} byte(s) pero se necesitan "
+                f"≥ {min_bytes} para almacenar {self.n_symbols} símbolo(s). "
+                "Usa BitPacker.pack(codes) para generar el buffer correcto."
             )
 
     # ── Equality & hashing ────────────────────────────────────────────────────

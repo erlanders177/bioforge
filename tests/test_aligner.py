@@ -22,6 +22,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from biocore import BitPacker, PackedSequence, SeqType, SmartImporter
+from biocore import BioEngineError, SequenceTypeError, SequenceValueError, AlignmentError
 from aligner import AlignmentResult, Mutation, SequenceAligner, format_alignment
 
 
@@ -383,3 +384,40 @@ def test_benchmark_align_1000x1000(benchmark):
     """Benchmark: alineamiento 1 000 × 1 000 nt."""
     a, b = _make_pair(1_000)
     benchmark(SequenceAligner.align, a, b)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §8  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_alignment_error_es_subclase_correcta():
+    """AlignmentError debe ser subclase de BioEngineError y ValueError."""
+    assert issubclass(AlignmentError, BioEngineError)
+    assert issubclass(AlignmentError, ValueError)
+
+
+def test_sequence_type_error_en_align_capturado_como_bioengine_error():
+    """Pasar un str a align debe capturarse con BioEngineError."""
+    with pytest.raises(BioEngineError):
+        SequenceAligner.align("ACGT", _nuc("ACGT"))
+
+
+def test_alignment_mode_error_capturado_como_bioengine_error():
+    """Modo inválido debe capturarse con BioEngineError."""
+    a = _nuc("ACGT")
+    with pytest.raises(BioEngineError):
+        SequenceAligner.align(a, a, mode="bad_mode")
+
+
+def test_alignment_mode_error_tambien_es_value_error():
+    """Modo inválido debe poder capturarse también con ValueError (retrocompat)."""
+    a = _nuc("ACGT")
+    with pytest.raises(ValueError):
+        SequenceAligner.align(a, a, mode="bad_mode")
+
+
+def test_format_alignment_error_capturado_como_bioengine_error():
+    """format_alignment con width=0 debe capturarse con BioEngineError."""
+    r = SequenceAligner.align(_nuc("ACGT"), _nuc("ACGT"))
+    with pytest.raises(BioEngineError):
+        format_alignment(r, width=0)

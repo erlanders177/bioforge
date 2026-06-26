@@ -16,6 +16,7 @@ from hypothesis.extra.numpy import arrays as np_arrays
 from biocore import (
     BitPacker, BioCode, PackedSequence, SeqType,
     SmartImporter, compute_stats, NUC_LUT, AA_LUT,
+    BioEngineError, SequenceTypeError, SequenceValueError,
 )
 
 
@@ -346,3 +347,43 @@ def test_getitem_tipo_invalido():
     seq = SmartImporter.from_string(">t\nACGT\n", force_type=SeqType.NUCLEOTIDE)[0]
     with pytest.raises(TypeError):
         _ = seq[1.5]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §7  JERARQUÍA DE EXCEPCIONES — BioEngineError como base común
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_bioengine_error_es_base_de_sequence_type_error():
+    """SequenceTypeError debe ser instancia de BioEngineError."""
+    assert issubclass(SequenceTypeError, BioEngineError)
+
+
+def test_bioengine_error_es_base_de_sequence_value_error():
+    """SequenceValueError debe ser instancia de BioEngineError."""
+    assert issubclass(SequenceValueError, BioEngineError)
+
+
+def test_sequence_type_error_es_type_error():
+    """SequenceTypeError también debe ser TypeError (retrocompatibilidad)."""
+    assert issubclass(SequenceTypeError, TypeError)
+
+
+def test_sequence_value_error_es_value_error():
+    """SequenceValueError también debe ser ValueError (retrocompatibilidad)."""
+    assert issubclass(SequenceValueError, ValueError)
+
+
+def test_pack_error_capturado_como_bioengine_error():
+    """BitPacker.pack con array 2-D debe poder capturarse con BioEngineError."""
+    codes_2d = np.array([[0, 1], [2, 3]], dtype=np.uint8)
+    with pytest.raises(BioEngineError):
+        BitPacker.pack(codes_2d)
+
+
+def test_packed_sequence_type_error_capturado_como_bioengine_error():
+    """PackedSequence con seq_type inválido debe capturarse con BioEngineError."""
+    with pytest.raises(BioEngineError):
+        PackedSequence(
+            header="bad", seq_type="PROTEIN",
+            n_symbols=0, data=np.array([], dtype=np.uint8),
+        )

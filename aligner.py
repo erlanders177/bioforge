@@ -53,6 +53,7 @@ import numpy as np
 
 from biocore import BioCode, BitPacker, PackedSequence, SeqType
 from biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
+from biocore import SequenceTypeError, SequenceValueError, AlignmentError
 
 from engine._loader import C_AVAILABLE, c_nw_align as _c_nw_align
 
@@ -186,24 +187,27 @@ class SequenceAligner:
         ValueError — either sequence is empty.
         """
         if not isinstance(seq_a, PackedSequence):
-            raise TypeError(
-                f"seq_a debe ser PackedSequence, se recibió {type(seq_a).__name__}."
+            raise SequenceTypeError(
+                f"seq_a debe ser PackedSequence, se recibió {type(seq_a).__name__!r}. "
+                "Crea la secuencia con SmartImporter.from_string() o SmartImporter.from_file()."
             )
         if not isinstance(seq_b, PackedSequence):
-            raise TypeError(
-                f"seq_b debe ser PackedSequence, se recibió {type(seq_b).__name__}."
+            raise SequenceTypeError(
+                f"seq_b debe ser PackedSequence, se recibió {type(seq_b).__name__!r}. "
+                "Crea la secuencia con SmartImporter.from_string() o SmartImporter.from_file()."
             )
         if mode not in ('global', 'semi-global'):
-            raise ValueError(
+            raise AlignmentError(
                 f"mode debe ser 'global' o 'semi-global', se recibió {mode!r}."
             )
         if seq_a.seq_type != seq_b.seq_type:
-            raise TypeError(
+            raise SequenceTypeError(
                 f"Los tipos no coinciden: "
-                f"{seq_a.seq_type.name} ≠ {seq_b.seq_type.name}."
+                f"{seq_a.seq_type.name} ≠ {seq_b.seq_type.name}. "
+                "Ambas secuencias deben ser del mismo tipo (NUCLEOTIDE o PROTEIN)."
             )
         if seq_a.n_symbols == 0 or seq_b.n_symbols == 0:
-            raise ValueError("Las secuencias no pueden estar vacías.")
+            raise SequenceValueError("Las secuencias no pueden estar vacías.")
 
         m, n = seq_a.n_symbols, seq_b.n_symbols
         if m > cls._MAX_SAFE_LEN or n > cls._MAX_SAFE_LEN:
@@ -476,10 +480,10 @@ def format_alignment(result: AlignmentResult, width: int = 60) -> str:
     Vectorised: builds the midline with NumPy, no Python character loop.
     """
     if width <= 0:
-        raise ValueError(f"width debe ser > 0, se recibió {width}.")
+        raise AlignmentError(f"width debe ser > 0, se recibió {width}.")
     a, b = result.aligned_a, result.aligned_b
     if len(a) != len(b):
-        raise ValueError(
+        raise AlignmentError(
             f"aligned_a y aligned_b tienen longitudes distintas: {len(a)} ≠ {len(b)}."
         )
     a_arr = np.frombuffer(a.encode(), dtype=np.uint8)

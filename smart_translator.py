@@ -50,6 +50,7 @@ import numpy as np
 
 # ── biocore integration ────────────────────────────────────────────────────────
 from biocore import BioCode, BitPacker, PackedSequence, SeqType
+from biocore import SequenceTypeError, SequenceValueError, TranslationError
 
 # ── motor C (opcional) ────────────────────────────────────────────────────────
 try:
@@ -238,16 +239,18 @@ class SmartTranslator:
 
         # ── Guard clauses ─────────────────────────────────────────────────────
         if not isinstance(seq, PackedSequence):
-            raise TypeError(
-                f"seq debe ser PackedSequence, se recibió {type(seq).__name__}."
+            raise SequenceTypeError(
+                f"seq debe ser PackedSequence, se recibió {type(seq).__name__!r}. "
+                "Crea la secuencia con SmartImporter.from_string() o SmartImporter.from_file()."
             )
         if seq.seq_type != SeqType.NUCLEOTIDE:
-            raise TypeError(
+            raise SequenceTypeError(
                 f"Se esperaba SeqType.NUCLEOTIDE, se recibió {seq.seq_type.name}. "
-                "SmartTranslator sólo traduce secuencias nucleotídicas."
+                "SmartTranslator solo traduce ADN/ARN. "
+                "Para alinear proteínas usa SequenceAligner directamente."
             )
         if seq.n_symbols < 3:
-            raise ValueError(
+            raise SequenceValueError(
                 f"Secuencia demasiado corta ({seq.n_symbols} nt): "
                 "se necesitan al menos 3 nucleótidos para un codón."
             )
@@ -262,9 +265,10 @@ class SmartTranslator:
         orf: np.ndarray = nuc_codes[orf_start:]
         n_codons: int   = len(orf) // 3
         if n_codons == 0:
-            raise ValueError(
+            raise TranslationError(
                 f"El ORF en la posición {orf_start} no tiene ningún codón "
-                "completo tras el ATG de inicio."
+                "completo tras el ATG de inicio. "
+                "La secuencia termina justo en el ATG sin residuos posteriores."
             )
 
         # ④+⑤ Traducir codones → AAs  (C si disponible, NumPy si no)
@@ -338,9 +342,10 @@ class SmartTranslator:
         if _C_AVAILABLE:
             pos = _c_find_atg(codes)
             if pos == -1:
-                raise ValueError(
+                raise TranslationError(
                     "No se encontró ningún codón de inicio ATG/AUG en la secuencia. "
-                    "Asegúrate de que sea una secuencia codificante (CDS) válida."
+                    "Comprueba que sea una secuencia codificante (CDS) completa. "
+                    "Si la auto-detección de tipo falla, importa con force_type=SeqType.NUCLEOTIDE."
                 )
             return pos
 
