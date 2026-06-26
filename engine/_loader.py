@@ -1,0 +1,156 @@
+"""
+engine/_loader.py — Carga el motor C y expone funciones Python.
+
+Si el DLL no está compilado, C_AVAILABLE = False y los módulos
+usan el fallback NumPy automáticamente.
+"""
+
+import ctypes
+import sys
+from pathlib import Path
+
+import numpy as np
+
+_ENGINE_DIR = Path(__file__).parent
+_DLL_PATH   = _ENGINE_DIR / ("engine.dll" if sys.platform == "win32" else "engine.so")
+
+# ── Tipos ctypes frecuentes ────────────────────────────────────────────────────
+_U8P  = ctypes.POINTER(ctypes.c_uint8)
+_I32P = ctypes.POINTER(ctypes.c_int32)
+_I32  = ctypes.c_int32
+_CHARP = ctypes.c_char_p
+
+# ── Carga del DLL ──────────────────────────────────────────────────────────────
+_lib: ctypes.CDLL | None = None
+C_AVAILABLE: bool = False
+
+def _load() -> bool:
+    global _lib, C_AVAILABLE
+    if not _DLL_PATH.exists():
+        return False
+    try:
+        _lib = ctypes.CDLL(str(_DLL_PATH))
+        _setup_signatures()
+        C_AVAILABLE = True
+        return True
+    except Exception:
+        return False
+
+
+def _setup_signatures() -> None:
+    assert _lib is not None
+
+    # ── bio_getitem5 ───────────────────────────────────────────────────────────
+    _lib.bio_getitem5.restype  = ctypes.c_uint8
+    _lib.bio_getitem5.argtypes = [_U8P, _I32]
+
+    # ── bio_pack5 ─────────────────────────────────────────────────────────────
+    _lib.bio_pack5.restype  = None
+    _lib.bio_pack5.argtypes = [_U8P, _I32, _U8P]
+
+    # ── bio_unpack5 ───────────────────────────────────────────────────────────
+    _lib.bio_unpack5.restype  = None
+    _lib.bio_unpack5.argtypes = [_U8P, _I32, _U8P]
+
+    # ── nw_global / nw_semiglobal (misma firma) ────────────────────────────────
+    _nw_args = [
+        _U8P, _I32,     # codes_a, m
+        _U8P, _I32,     # codes_b, n
+        _CHARP,         # decode (32 bytes)
+        _I32, _I32, _I32,  # match, mismatch, gap
+        _CHARP, _CHARP, # out_a, out_b
+        _I32P, _I32P, _I32P, _I32P,  # score, matches, mismatches, gaps
+    ]
+    _lib.nw_global.restype     = _I32
+    _lib.nw_global.argtypes    = _nw_args
+    _lib.nw_semiglobal.restype  = _I32
+    _lib.nw_semiglobal.argtypes = _nw_args
+
+
+_load()
+
+
+# ── Wrappers Python ────────────────────────────────────────────────────────────
+
+def c_getitem5(packed: np.ndarray, i: int) -> int:
+    return int(_lib.bio_getitem5(
+        packed.ctypes.data_as(_U8P),
+        _I32(i),
+    ))
+
+
+def c_pack5(codes: np.ndarray) -> np.ndarray:
+    n       = len(codes)
+    out_len = (n * 5 + 7) // 8 + 1   # +1 para lecturas seguras
+    out     = np.zeros(out_len, dtype=np.uint8)
+    _lib.bio_pack5(
+        codes.ctypes.data_as(_U8P),
+        _I32(n),
+        out.ctypes.data_as(_U8P),
+    )
+    return out[:out_len - 1]   # recortar el byte extra
+
+
+def c_unpack5(packed: np.ndarray, n: int) -> np.ndarray:
+    # Asegurar byte extra para lecturas seguras
+    safe = np.zeros(len(packed) + 1, dtype=np.uint8)
+    safe[:len(packed)] = packed
+    out = np.empty(n, dtype=np.uint8)
+    _lib.bio_unpack5(
+        safe.ctypes.data_as(_U8P),
+        _I32(n),
+        out.ctypes.data_as(_U8P),
+    )
+    return out
+
+
+def c_nw_align(
+    codes_a: np.ndarray,
+    codes_b: np.ndarray,
+    decode_bytes: bytes,
+    match: int, mismatch: int, gap: int,
+    mode: str,
+) -> tuple[str, str, int, int, int, int]:
+    """
+    Alineamiento NW completo en C.
+    Devuelve (aligned_a, aligned_b, score, n_matches, n_mismatches, n_gaps).
+    """
+    m, n     = len(codes_a), len(codes_b)
+    buf_size = m + n + 2
+
+    out_a = ctypes.create_string_buffer(buf_size)
+    out_b = ctypes.create_string_buffer(buf_size)
+    score = _I32(0)
+    nm    = _I32(0)
+    nmi   = _I32(0)
+    ng    = _I32(0)
+
+    # Asegurar que los arrays son C-contiguos uint8
+    ca = np.ascontiguousarray(codes_a, dtype=np.uint8)
+    cb = np.ascontiguousarray(codes_b, dtype=np.uint8)
+
+    fn = _lib.nw_semiglobal if mode == "semi-global" else _lib.nw_global
+
+    aln_len = fn(
+        ca.ctypes.data_as(_U8P), _I32(m),
+        cb.ctypes.data_as(_U8P), _I32(n),
+        decode_bytes,
+        _I32(match), _I32(mismatch), _I32(gap),
+        out_a, out_b,
+        ctypes.byref(score),
+        ctypes.byref(nm),
+        ctypes.byref(nmi),
+        ctypes.byref(ng),
+    )
+
+    if aln_len < 0:
+        raise MemoryError("Motor C: fallo de asignación de memoria en NW")
+
+    return (
+        out_a.value.decode("ascii"),
+        out_b.value.decode("ascii"),
+        score.value,
+        nm.value,
+        nmi.value,
+        ng.value,
+    )

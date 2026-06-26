@@ -52,7 +52,13 @@ from typing import Literal
 import numpy as np
 
 from biocore import BioCode, BitPacker, PackedSequence, SeqType
-from biocore import _NUC_DECODE, _AA_DECODE   # within-project private dicts
+from biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
+
+from engine._loader import C_AVAILABLE, c_nw_align as _c_nw_align
+
+# Bytes de decodificación para el motor C (32 bytes: BioCode -> ASCII)
+_NUC_DECODE_BYTES: bytes = bytes(_NUC_DECODE_ARR)
+_AA_DECODE_BYTES:  bytes = bytes(_AA_DECODE_ARR)
 
 
 __all__: list[str] = [
@@ -202,8 +208,65 @@ class SequenceAligner:
         codes_a = seq_a.decode()   # (m,) uint8
         codes_b = seq_b.decode()   # (n,) uint8
 
+        if C_AVAILABLE:
+            return cls._align_c(codes_a, codes_b, m, n, mode, seq_a.seq_type)
+
         H = cls._fill_matrix(codes_a, codes_b, m, n, mode)
         return cls._traceback(H, codes_a, codes_b, m, n, mode, seq_a.seq_type)
+
+    # ── Ruta C (motor nativo) ──────────────────────────────────────────────────
+
+    @classmethod
+    def _align_c(
+        cls,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+        mode: str,
+        seq_type: SeqType,
+    ) -> AlignmentResult:
+        decode_bytes = (
+            _NUC_DECODE_BYTES if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE_BYTES
+        )
+        aligned_a, aligned_b, score, n_matches, n_mismatches, n_gaps = _c_nw_align(
+            codes_a, codes_b, decode_bytes,
+            int(cls.MATCH), int(cls.MISMATCH), int(cls.GAP),
+            mode,
+        )
+        mutations = cls._detect_mutations(aligned_a, aligned_b)
+        aln_len   = n_matches + n_mismatches + n_gaps
+        identity  = n_matches / aln_len if aln_len else 0.0
+        return AlignmentResult(
+            score        = score,
+            identity     = identity,
+            n_matches    = n_matches,
+            n_mismatches = n_mismatches,
+            n_gaps       = n_gaps,
+            mutations    = mutations,
+            aligned_a    = aligned_a,
+            aligned_b    = aligned_b,
+            seq_type     = seq_type,
+            mode         = mode,
+        )
+
+    @staticmethod
+    def _detect_mutations(aligned_a: str, aligned_b: str) -> list[Mutation]:
+        mutations: list[Mutation] = []
+        pos_a = pos_b = 0
+        for sa, sb in zip(aligned_a, aligned_b):
+            if sa == '-':
+                mutations.append(Mutation('insertion', pos_a, pos_b, '-', sb))
+                pos_b += 1
+            elif sb == '-':
+                mutations.append(Mutation('deletion', pos_a, pos_b, sa, '-'))
+                pos_a += 1
+            else:
+                if sa != sb:
+                    mutations.append(Mutation('substitution', pos_a, pos_b, sa, sb))
+                pos_a += 1
+                pos_b += 1
+        return mutations
 
     # ── Scoring matrix (anti-diagonal wavefront) ──────────────────────────────
 

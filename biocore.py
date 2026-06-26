@@ -55,6 +55,14 @@ from typing import Iterator, Optional
 
 import numpy as np
 
+try:
+    from engine._loader import C_AVAILABLE as _C_AVAILABLE
+    from engine._loader import c_getitem5 as _c_getitem5
+    from engine._loader import c_pack5    as _c_pack5
+    from engine._loader import c_unpack5  as _c_unpack5
+except ImportError:
+    _C_AVAILABLE = False
+
 
 __all__: list[str] = [
     "BioCode",
@@ -265,14 +273,15 @@ class BitPacker:
         Time  : O(n) — two vectorised numpy ops.
         Memory: O(n) — peak ≈ 5n bits for the intermediate bit matrix.
         """
+        if _C_AVAILABLE:
+            return _c_pack5(codes)
+
         # ①  Expand each 5-bit code → one row of a (n, 5) bit matrix, MSB first.
-        #    Right-shift + mask already produces uint8; .astype() would copy for nothing.
         bits: np.ndarray = (
             (codes[:, np.newaxis] >> BitPacker._SHIFTS) & np.uint8(1)
         )                                               # shape: (n, 5), dtype uint8
 
         # ②  Flatten to a 1-D bit stream; numpy packs every 8 bits → 1 byte.
-        #    The final byte is automatically zero-padded if n×5 % 8 ≠ 0.
         return np.packbits(bits.ravel())
 
     # ── Unpack ────────────────────────────────────────────────────────────────
@@ -293,6 +302,9 @@ class BitPacker:
         -------
         np.ndarray, dtype uint8, shape (n,), values in [0, 31]
         """
+        if _C_AVAILABLE:
+            return _c_unpack5(packed, n)
+
         # ①  Expand all bytes → individual bits; keep exactly n×5 of them.
         bits: np.ndarray = np.unpackbits(packed)[: n * 5].reshape(n, 5)
 
@@ -410,17 +422,14 @@ class PackedSequence:
         raise TypeError(f"index must be int or slice, not {type(key).__name__}")
 
     def _code_at(self, idx: int) -> int:
-        """
-        Return the 5-bit BioCode at position *idx* without a full unpack.
+        """Return the 5-bit BioCode at position *idx* sin desempaquetar todo."""
+        if _C_AVAILABLE:
+            return _c_getitem5(self.data, idx)
 
-        A 5-bit window starting at bit ``idx × 5`` spans at most 2
-        consecutive bytes; only those bytes are touched.
-        """
         bit_pos = idx * 5
-        byte_i  = bit_pos >> 3            # floor(bit_pos / 8)
-        bit_off = bit_pos & 7             # bit_pos % 8
+        byte_i  = bit_pos >> 3
+        bit_off = bit_pos & 7
 
-        # Read at most 2 bytes; pad with zero if we are at the last byte.
         buf = np.zeros(2, dtype=np.uint8)
         buf[0] = self.data[byte_i]
         if byte_i + 1 < len(self.data):
