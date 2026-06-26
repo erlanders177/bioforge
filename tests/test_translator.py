@@ -265,6 +265,12 @@ def test_error_sequence_too_short():
         SmartTranslator.translate(nuc)
 
 
+def test_error_seq_no_es_packed_sequence():
+    """Pasar algo que no es PackedSequence debe lanzar TypeError."""
+    with pytest.raises(TypeError, match="PackedSequence"):
+        SmartTranslator.translate("ATGAAATAA")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # §3b  TESTS OPCIONALES — comportamientos adicionales
 # ══════════════════════════════════════════════════════════════════════════════

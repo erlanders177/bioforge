@@ -287,3 +287,62 @@ def test_benchmark_getitem_single(benchmark):
     codes = _make_random_codes(100_000)
     seq   = PackedSequence("b", SeqType.NUCLEOTIDE, 100_000, BitPacker.pack(codes))
     benchmark(seq.__getitem__, 50_000)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §6  RUTAS DE ERROR — validaciones de entrada
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_pack_array_multidimensional():
+    """BitPacker.pack con array 2-D debe lanzar ValueError."""
+    codes_2d = np.array([[0, 1], [2, 3]], dtype=np.uint8)
+    with pytest.raises(ValueError, match="1-D"):
+        BitPacker.pack(codes_2d)
+
+
+def test_unpack_n_negativo():
+    """BitPacker.unpack con n negativo debe lanzar ValueError."""
+    packed = BitPacker.pack(np.array([0, 1, 2], dtype=np.uint8))
+    with pytest.raises(ValueError):
+        BitPacker.unpack(packed, -1)
+
+
+def test_unpack_packed_insuficiente():
+    """BitPacker.unpack con packed demasiado pequeño debe lanzar ValueError."""
+    packed = np.array([0xFF], dtype=np.uint8)   # 1 byte = max 1 símbolo
+    with pytest.raises(ValueError):
+        BitPacker.unpack(packed, 10)
+
+
+def test_packed_sequence_n_symbols_negativo():
+    """PackedSequence con n_symbols < 0 debe lanzar ValueError."""
+    with pytest.raises(ValueError):
+        PackedSequence(
+            header="bad", seq_type=SeqType.NUCLEOTIDE, n_symbols=-1,
+            data=np.array([], dtype=np.uint8),
+        )
+
+
+def test_packed_sequence_seq_type_invalido():
+    """PackedSequence con seq_type que no es SeqType debe lanzar TypeError."""
+    with pytest.raises(TypeError):
+        PackedSequence(
+            header="bad", seq_type="NUCLEOTIDE",
+            n_symbols=0, data=np.array([], dtype=np.uint8),
+        )
+
+
+def test_getitem_out_of_range():
+    """Acceder fuera de rango debe lanzar IndexError."""
+    seq = SmartImporter.from_string(">t\nACGT\n", force_type=SeqType.NUCLEOTIDE)[0]
+    with pytest.raises(IndexError):
+        _ = seq[10]
+    with pytest.raises(IndexError):
+        _ = seq[-10]
+
+
+def test_getitem_tipo_invalido():
+    """Indexar con tipo no válido debe lanzar TypeError."""
+    seq = SmartImporter.from_string(">t\nACGT\n", force_type=SeqType.NUCLEOTIDE)[0]
+    with pytest.raises(TypeError):
+        _ = seq[1.5]

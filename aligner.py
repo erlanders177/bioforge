@@ -185,6 +185,18 @@ class SequenceAligner:
         TypeError  — seq_a.seq_type ≠ seq_b.seq_type.
         ValueError — either sequence is empty.
         """
+        if not isinstance(seq_a, PackedSequence):
+            raise TypeError(
+                f"seq_a debe ser PackedSequence, se recibió {type(seq_a).__name__}."
+            )
+        if not isinstance(seq_b, PackedSequence):
+            raise TypeError(
+                f"seq_b debe ser PackedSequence, se recibió {type(seq_b).__name__}."
+            )
+        if mode not in ('global', 'semi-global'):
+            raise ValueError(
+                f"mode debe ser 'global' o 'semi-global', se recibió {mode!r}."
+            )
         if seq_a.seq_type != seq_b.seq_type:
             raise TypeError(
                 f"Los tipos no coinciden: "
@@ -463,7 +475,13 @@ def format_alignment(result: AlignmentResult, width: int = 60) -> str:
     Symbol legend: '|' match · 'X' mismatch · ' ' gap.
     Vectorised: builds the midline with NumPy, no Python character loop.
     """
+    if width <= 0:
+        raise ValueError(f"width debe ser > 0, se recibió {width}.")
     a, b = result.aligned_a, result.aligned_b
+    if len(a) != len(b):
+        raise ValueError(
+            f"aligned_a y aligned_b tienen longitudes distintas: {len(a)} ≠ {len(b)}."
+        )
     a_arr = np.frombuffer(a.encode(), dtype=np.uint8)
     b_arr = np.frombuffer(b.encode(), dtype=np.uint8)
     gap   = np.uint8(ord('-'))

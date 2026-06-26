@@ -309,6 +309,32 @@ def test_error_empty_sequence():
     assert r.score == int(SequenceAligner.MATCH)
 
 
+def test_error_seq_a_no_es_packed_sequence():
+    """seq_a que no es PackedSequence debe lanzar TypeError."""
+    with pytest.raises(TypeError, match="PackedSequence"):
+        SequenceAligner.align("ACGT", _nuc("ACGT"))
+
+
+def test_error_seq_b_no_es_packed_sequence():
+    """seq_b que no es PackedSequence debe lanzar TypeError."""
+    with pytest.raises(TypeError, match="PackedSequence"):
+        SequenceAligner.align(_nuc("ACGT"), 42)
+
+
+def test_error_mode_invalido():
+    """Un mode no reconocido debe lanzar ValueError."""
+    a = _nuc("ACGT")
+    with pytest.raises(ValueError, match="mode"):
+        SequenceAligner.align(a, a, mode="diagonal")
+
+
+def test_error_format_alignment_width_invalido():
+    """format_alignment con width <= 0 debe lanzar ValueError."""
+    r = SequenceAligner.align(_nuc("ACGT"), _nuc("ACGT"))
+    with pytest.raises(ValueError, match="width"):
+        format_alignment(r, width=0)
+
+
 def test_long_sequence_warning():
     """Secuencias > _MAX_SAFE_LEN deben emitir UserWarning."""
     import warnings

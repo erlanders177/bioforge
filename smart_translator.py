@@ -237,6 +237,10 @@ class SmartTranslator:
         """
 
         # ── Guard clauses ─────────────────────────────────────────────────────
+        if not isinstance(seq, PackedSequence):
+            raise TypeError(
+                f"seq debe ser PackedSequence, se recibió {type(seq).__name__}."
+            )
         if seq.seq_type != SeqType.NUCLEOTIDE:
             raise TypeError(
                 f"Se esperaba SeqType.NUCLEOTIDE, se recibió {seq.seq_type.name}. "

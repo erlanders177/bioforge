@@ -113,6 +113,10 @@ def run(
     -------
     AnalysisResult
     """
+    if mode not in ("dna", "protein", "both"):
+        raise ValueError(
+            f"mode debe ser 'dna', 'protein' o 'both', se recibió {mode!r}."
+        )
     ref_seqs   = SmartImporter.from_file(ref_path)
     query_seqs = SmartImporter.from_file(query_path)
 
@@ -330,8 +334,24 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         result = run(args.reference, args.query, mode=args.mode)
-    except (ValueError, TypeError, FileNotFoundError) as exc:
+    except (ValueError, TypeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        print(f"Archivo no encontrado: {exc.filename}", file=sys.stderr)
+        return 1
+    except PermissionError as exc:
+        print(f"Sin permiso para leer: {exc.filename}", file=sys.stderr)
+        return 1
+    except MemoryError:
+        print(
+            "Error: memoria insuficiente para el alineamiento. "
+            "Las secuencias son demasiado largas para el modo global.",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(f"Error de E/S: {exc}", file=sys.stderr)
         return 1
 
     report = build_report(result)

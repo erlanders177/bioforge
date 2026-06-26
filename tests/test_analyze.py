@@ -315,6 +315,18 @@ def test_error_archivo_vacio(tmp_path):
         run(vacio, normal)
 
 
+def test_error_mode_invalido(hbb_normal, hbb_sickle):
+    """Un mode no reconocido debe lanzar ValueError."""
+    with pytest.raises(ValueError, match="mode"):
+        run(hbb_normal, hbb_sickle, mode="nucleotide")
+
+
+def test_cli_archivo_no_encontrado_devuelve_1():
+    """CLI con archivo inexistente debe devolver código 1 (FileNotFoundError manejado)."""
+    ret = main(["archivo_que_no_existe_jamas.fa", "tampoco_este.fa"])
+    assert ret == 1
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # §8  CLI — main()
 # ══════════════════════════════════════════════════════════════════════════════

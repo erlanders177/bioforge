@@ -273,6 +273,11 @@ class BitPacker:
         Time  : O(n) — two vectorised numpy ops.
         Memory: O(n) — peak ≈ 5n bits for the intermediate bit matrix.
         """
+        codes = np.asarray(codes, dtype=np.uint8)
+        if codes.ndim != 1:
+            raise ValueError(
+                f"codes debe ser un array 1-D, se recibió shape {codes.shape}."
+            )
         if _C_AVAILABLE:
             return _c_pack5(codes)
 
@@ -302,6 +307,17 @@ class BitPacker:
         -------
         np.ndarray, dtype uint8, shape (n,), values in [0, 31]
         """
+        if not isinstance(n, (int, np.integer)) or int(n) < 0:
+            raise ValueError(
+                f"n debe ser un entero no negativo, se recibió {n!r}."
+            )
+        n = int(n)
+        min_bytes = BitPacker.packed_size(n)
+        if len(packed) < min_bytes:
+            raise ValueError(
+                f"packed tiene {len(packed)} byte(s) pero se necesitan "
+                f"al menos {min_bytes} para desempaquetar {n} símbolo(s)."
+            )
         if _C_AVAILABLE:
             return _c_unpack5(packed, n)
 
@@ -348,6 +364,14 @@ class PackedSequence:
 
     def __post_init__(self) -> None:
         """Normalise *data* to a write-locked uint8 array and validate length."""
+        if not isinstance(self.n_symbols, (int, np.integer)) or int(self.n_symbols) < 0:
+            raise ValueError(
+                f"n_symbols debe ser un entero no negativo, se recibió {self.n_symbols!r}."
+            )
+        if not isinstance(self.seq_type, SeqType):
+            raise TypeError(
+                f"seq_type debe ser SeqType, se recibió {type(self.seq_type).__name__}."
+            )
         arr = np.asarray(self.data, dtype=np.uint8)
         arr.flags.writeable = False          # seal the buffer against mutations
         self.data = arr
