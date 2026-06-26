@@ -5,7 +5,7 @@
 ### SmartImporter
 
 ```python
-from biocore import SmartImporter, SeqType
+from bioforge import SmartImporter, SeqType
 
 # Desde string FASTA
 records = SmartImporter.from_string(fasta_text)
@@ -54,7 +54,7 @@ seq_a == seq_b      # compara tipo, longitud, cabecera y datos
 ### BitPacker
 
 ```python
-from biocore import BitPacker
+from bioforge import BitPacker
 import numpy as np
 
 codes  = np.array([0, 1, 2, 3], dtype=np.uint8)  # A C G T
@@ -69,7 +69,7 @@ BitPacker.packed_size(1_000_000)   # → 625000 bytes para 1M símbolos
 ### BioCode
 
 ```python
-from biocore import BioCode
+from bioforge import BioCode
 
 # Nucleótidos
 BioCode.NUC_A   # 0
@@ -93,7 +93,7 @@ BioCode.UNK     # 31  desconocido / ambiguo (N en ADN, X en proteína)
 ### compute_stats
 
 ```python
-from biocore import compute_stats
+from bioforge import compute_stats
 
 stats = compute_stats(seq)
 stats.n_symbols         # longitud de la secuencia
@@ -109,7 +109,7 @@ stats.composition       # dict: {'A': 1234, 'C': 987, 'G': 1100, 'T': 1050}
 ### SmartTranslator
 
 ```python
-from smart_translator import SmartTranslator
+from bioforge import SmartTranslator
 
 # Entrada: PackedSequence de tipo NUCLEOTIDE
 # Salida:  PackedSequence de tipo PROTEIN (desde el primer ATG hasta STOP)
@@ -121,8 +121,8 @@ protein.to_string()   # secuencia de aminoácidos como str
 protein.header        # "[PROT | ORF@<pos>] <header_original>"
 
 # Errores posibles:
-# TypeError  — si la entrada no es SeqType.NUCLEOTIDE
-# ValueError — si la secuencia es < 3 nt, o no hay ATG, o no hay codón completo tras ATG
+# SequenceTypeError  — si la entrada no es SeqType.NUCLEOTIDE
+# TranslationError   — si la secuencia es < 3 nt, o no hay ATG, o no hay codón completo tras ATG
 ```
 
 ---
@@ -132,7 +132,7 @@ protein.header        # "[PROT | ORF@<pos>] <header_original>"
 ### SequenceAligner
 
 ```python
-from aligner import SequenceAligner, format_alignment
+from bioforge import SequenceAligner, format_alignment
 
 # Ambas secuencias deben ser del mismo SeqType
 # seq_a = referencia, seq_b = query (las mutaciones se reportan respecto a seq_a)
@@ -178,8 +178,8 @@ print(format_alignment(result, width=80)) # bloques de 80 chars
 ### Errores posibles
 
 ```python
-# TypeError — los dos tipos de secuencia no coinciden
-SequenceAligner.align(prot_seq, nuc_seq)   # → TypeError
+# SequenceTypeError — los dos tipos de secuencia no coinciden
+SequenceAligner.align(prot_seq, nuc_seq)   # → SequenceTypeError
 
 # UserWarning — secuencias largas (> 15 000 símbolos)
 # La matriz DP supera ~3.4 GB. El alineamiento continúa pero se advierte.
@@ -190,9 +190,7 @@ SequenceAligner.align(prot_seq, nuc_seq)   # → TypeError
 ## Flujo completo de ejemplo
 
 ```python
-from biocore import SmartImporter, SeqType
-from smart_translator import SmartTranslator
-from aligner import SequenceAligner, format_alignment
+from bioforge import SmartImporter, SmartTranslator, SequenceAligner, format_alignment, SeqType
 
 # 1. Importar dos alelos
 fasta = """

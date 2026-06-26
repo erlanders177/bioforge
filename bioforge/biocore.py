@@ -94,7 +94,7 @@ class BioForgeError(Exception):
     Úsala en bloques ``except`` para capturar cualquier error del motor
     sin interferir con el resto de Python::
 
-        from biocore import BioForgeError
+        from bioforge import BioForgeError
         try:
             prot = SmartTranslator.translate(seq)
         except BioForgeError as e:

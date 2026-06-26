@@ -175,7 +175,7 @@ class SmartTranslator:
 
     Quick start
     ───────────
-    >>> from biocore import SmartImporter, SeqType
+    >>> from bioforge import SmartImporter, SeqType
     >>> nuc_seq = SmartImporter.from_string(fasta)[0]
     >>> prot_seq = SmartTranslator.translate(nuc_seq)
     >>> print(prot_seq.to_string())
@@ -366,8 +366,9 @@ class SmartTranslator:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    import time
-    from biocore import SmartImporter, compute_stats
+    import sys, time
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+    from bioforge import SmartImporter, compute_stats
 
     W = 65
     print("═" * W)

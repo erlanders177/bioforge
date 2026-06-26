@@ -34,7 +34,7 @@ would be the correct solution at chromosome scale.
 
 Quick start
 ───────────
->>> from biocore import SmartImporter, SeqType
+>>> from bioforge import SmartImporter, SeqType
 >>> seqs  = SmartImporter.from_string(fasta_a + fasta_b,
 ...                                   force_type=SeqType.NUCLEOTIDE)
 >>> result = SequenceAligner.align(seqs[0], seqs[1])
@@ -515,7 +515,8 @@ if __name__ == "__main__":
     import sys
     import time
     sys.stdout.reconfigure(encoding="utf-8")
-    from biocore import SmartImporter
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+    from bioforge import SmartImporter
 
     W = 65
     print("═" * W)
