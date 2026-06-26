@@ -56,6 +56,8 @@ from .biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
 from .biocore import SequenceTypeError, SequenceValueError, AlignmentError
 
 from .engine._loader import C_AVAILABLE, c_nw_align as _c_nw_align
+from .engine._loader import c_sw_align as _c_sw_align
+from .engine._loader import c_nw_banded as _c_nw_banded
 
 # Bytes de decodificación para el motor C (32 bytes: BioCode -> ASCII)
 _NUC_DECODE_BYTES: bytes = bytes(_NUC_DECODE_ARR)
@@ -160,22 +162,22 @@ class SequenceAligner:
         seq_a: PackedSequence,
         seq_b: PackedSequence,
         mode:  Literal['global', 'semi-global'] = 'global',
+        band:  int | None = None,
     ) -> AlignmentResult:
         """
-        Align seq_a (reference) against seq_b (query).
-
-        Mutations are reported relative to seq_a: a 'deletion' means
-        seq_b is missing a symbol that seq_a has; an 'insertion' means
-        seq_b carries an extra symbol absent from seq_a.
+        Align seq_a (reference) against seq_b (query) — Needleman-Wunsch.
 
         Parameters
         ----------
         seq_a : PackedSequence — reference.
         seq_b : PackedSequence — query.
-        mode  : 'global'      — penalises all terminal gaps (use for
-                                sequences of similar length).
-                'semi-global' — free terminal gaps on the query side;
-                                use when seq_b is a fragment of seq_a.
+        mode  : 'global'      — penalises all terminal gaps.
+                'semi-global' — free terminal gaps on the query side.
+        band  : int, optional
+            Half-width of the alignment band.  When given, only cells
+            with ``|i - j| ≤ band`` are computed (banded NW).
+            Reduces memory from O(m·n) to O(m·band) with the C engine.
+            Required when sequences exceed ``_MAX_SAFE_LEN``.
 
         Returns
         -------
@@ -184,7 +186,7 @@ class SequenceAligner:
         Raises
         ------
         TypeError  — seq_a.seq_type ≠ seq_b.seq_type.
-        ValueError — either sequence is empty.
+        ValueError — either sequence is empty or band is too narrow.
         """
         if not isinstance(seq_a, PackedSequence):
             raise SequenceTypeError(
@@ -210,19 +212,37 @@ class SequenceAligner:
             raise SequenceValueError("Las secuencias no pueden estar vacías.")
 
         m, n = seq_a.n_symbols, seq_b.n_symbols
+
+        codes_a = seq_a.decode()   # (m,) uint8
+        codes_b = seq_b.decode()   # (n,) uint8
+
+        # ── Banded NW path ─────────────────────────────────────────────────────
+        if band is not None:
+            if band < 1:
+                raise AlignmentError(f"band debe ser ≥ 1, se recibió {band}.")
+            if C_AVAILABLE:
+                return cls._align_banded_c(
+                    codes_a, codes_b, m, n, band, mode, seq_a.seq_type
+                )
+            # NumPy fallback: banded fill sobre matriz completa
+            if m > cls._MAX_SAFE_LEN or n > cls._MAX_SAFE_LEN:
+                raise AlignmentError(
+                    f"Secuencias > {cls._MAX_SAFE_LEN:,} síms con band= requieren "
+                    "el motor C. Compila con: python bioforge/engine/build.py"
+                )
+            H = cls._fill_matrix_banded(codes_a, codes_b, m, n, band, mode)
+            return cls._traceback(H, codes_a, codes_b, m, n, mode, seq_a.seq_type)
+
+        # ── NW completo ────────────────────────────────────────────────────────
         if m > cls._MAX_SAFE_LEN or n > cls._MAX_SAFE_LEN:
             mem_mb = (m + 1) * (n + 1) * 4 / 1_000_000
             warnings.warn(
                 f"Secuencia larga ({max(m, n):,} síms → "
                 f"matriz DP ≈ {mem_mb:.0f} MB). "
-                f"Considera alineamiento por bandas para secuencias "
-                f"> {cls._MAX_SAFE_LEN:,} símbolos.",
+                f"Usa band=<valor> para alineamiento por bandas.",
                 UserWarning,
                 stacklevel=2,
             )
-
-        codes_a = seq_a.decode()   # (m,) uint8
-        codes_b = seq_b.decode()   # (n,) uint8
 
         if C_AVAILABLE:
             return cls._align_c(codes_a, codes_b, m, n, mode, seq_a.seq_type)
@@ -230,7 +250,119 @@ class SequenceAligner:
         H = cls._fill_matrix(codes_a, codes_b, m, n, mode)
         return cls._traceback(H, codes_a, codes_b, m, n, mode, seq_a.seq_type)
 
-    # ── Ruta C (motor nativo) ──────────────────────────────────────────────────
+    @classmethod
+    def align_local(
+        cls,
+        seq_a: PackedSequence,
+        seq_b: PackedSequence,
+    ) -> AlignmentResult:
+        """
+        Smith-Waterman local alignment — finds the best-scoring subsequence.
+
+        Unlike ``align()`` (global/semi-global NW), local alignment:
+        • Does not penalise unaligned ends.
+        • Finds the highest-scoring contiguous region.
+        • Returns ``mode='local'`` in the result.
+
+        Use when searching for a short motif inside a longer sequence,
+        or when sequences share only a conserved domain.
+
+        Parameters
+        ----------
+        seq_a : PackedSequence — reference (or the longer sequence).
+        seq_b : PackedSequence — query (or the motif to search for).
+
+        Returns
+        -------
+        AlignmentResult with ``mode='local'``.
+
+        Raises
+        ------
+        SequenceTypeError — seq_a.seq_type ≠ seq_b.seq_type.
+        SequenceValueError — either sequence is empty.
+        """
+        if not isinstance(seq_a, PackedSequence):
+            raise SequenceTypeError(
+                f"seq_a debe ser PackedSequence, se recibió {type(seq_a).__name__!r}."
+            )
+        if not isinstance(seq_b, PackedSequence):
+            raise SequenceTypeError(
+                f"seq_b debe ser PackedSequence, se recibió {type(seq_b).__name__!r}."
+            )
+        if seq_a.seq_type != seq_b.seq_type:
+            raise SequenceTypeError(
+                f"Los tipos no coinciden: "
+                f"{seq_a.seq_type.name} ≠ {seq_b.seq_type.name}."
+            )
+        if seq_a.n_symbols == 0 or seq_b.n_symbols == 0:
+            raise SequenceValueError("Las secuencias no pueden estar vacías.")
+
+        m, n = seq_a.n_symbols, seq_b.n_symbols
+        codes_a = seq_a.decode()
+        codes_b = seq_b.decode()
+
+        if C_AVAILABLE:
+            return cls._align_sw_c(codes_a, codes_b, m, n, seq_a.seq_type)
+
+        H = cls._fill_matrix_sw(codes_a, codes_b, m, n)
+        return cls._traceback_sw(H, codes_a, codes_b, m, n, seq_a.seq_type)
+
+    # ── Rutas C (motor nativo) ─────────────────────────────────────────────────
+
+    @classmethod
+    def _align_sw_c(
+        cls,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+        seq_type: SeqType,
+    ) -> AlignmentResult:
+        decode_bytes = (
+            _NUC_DECODE_BYTES if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE_BYTES
+        )
+        aligned_a, aligned_b, score, n_matches, n_mismatches, n_gaps = _c_sw_align(
+            codes_a, codes_b, decode_bytes,
+            int(cls.MATCH), int(cls.MISMATCH), int(cls.GAP),
+        )
+        mutations = cls._detect_mutations(aligned_a, aligned_b)
+        aln_len   = n_matches + n_mismatches + n_gaps
+        identity  = n_matches / aln_len if aln_len else 0.0
+        return AlignmentResult(
+            score=score, identity=identity,
+            n_matches=n_matches, n_mismatches=n_mismatches, n_gaps=n_gaps,
+            mutations=mutations, aligned_a=aligned_a, aligned_b=aligned_b,
+            seq_type=seq_type, mode='local',
+        )
+
+    @classmethod
+    def _align_banded_c(
+        cls,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+        band: int,
+        mode: str,
+        seq_type: SeqType,
+    ) -> AlignmentResult:
+        decode_bytes = (
+            _NUC_DECODE_BYTES if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE_BYTES
+        )
+        aligned_a, aligned_b, score, n_matches, n_mismatches, n_gaps = _c_nw_banded(
+            codes_a, codes_b, decode_bytes,
+            int(cls.MATCH), int(cls.MISMATCH), int(cls.GAP),
+            band, mode,
+        )
+        mutations = cls._detect_mutations(aligned_a, aligned_b)
+        aln_len   = n_matches + n_mismatches + n_gaps
+        identity  = n_matches / aln_len if aln_len else 0.0
+        return AlignmentResult(
+            score=score, identity=identity,
+            n_matches=n_matches, n_mismatches=n_mismatches, n_gaps=n_gaps,
+            mutations=mutations, aligned_a=aligned_a, aligned_b=aligned_b,
+            seq_type=seq_type, mode=mode,
+        )
 
     @classmethod
     def _align_c(
@@ -346,6 +478,169 @@ class SequenceAligner:
             H[i_arr, j_arr] = np.maximum(np.maximum(diag, up), left)
 
         return H
+
+    @classmethod
+    def _fill_matrix_banded(
+        cls,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+        band: int,
+        mode: str,
+    ) -> np.ndarray:
+        """
+        Fill the NW matrix restricted to the band |i-j| ≤ band.
+
+        Out-of-band cells are initialised to NEG_INF so they can never
+        be chosen as optimal predecessors.  The anti-diagonal wavefront
+        is clipped to the band intersection on each diagonal.
+        """
+        NEG = np.int32(-10 ** 9)
+        H = np.full((m + 1, n + 1), NEG, dtype=np.int32)
+
+        H[0, 0] = np.int32(0)
+        for j in range(1, min(n, band) + 1):
+            H[0, j] = np.int32(0) if mode == 'semi-global' else np.int32(j) * cls.GAP
+        for i in range(1, min(m, band) + 1):
+            H[i, 0] = np.int32(i) * cls.GAP
+
+        i_full = np.arange(1, max(m, n) + 1, dtype=np.int32)
+        j_buf  = np.empty(min(m, n) + 1, dtype=np.int32)
+
+        for d in range(2, m + n + 1):
+            i_lo = max(1, d - n, (d - band + 1) // 2)
+            i_hi = min(m, d - 1, (d + band)     // 2)
+            if i_lo > i_hi:
+                continue
+
+            w     = i_hi - i_lo + 1
+            i_arr = i_full[i_lo - 1: i_hi]
+            np.subtract(d, i_arr, out=j_buf[:w])
+            j_arr = j_buf[:w]
+
+            dv = H[i_arr - 1, j_arr - 1]
+            uv = H[i_arr - 1, j_arr]
+            lv = H[i_arr,     j_arr - 1]
+
+            match_mask = codes_a[i_arr - 1] == codes_b[j_arr - 1]
+            step = np.where(match_mask, cls.MATCH, cls.MISMATCH).astype(np.int32)
+
+            d_score = np.where(dv != NEG, dv + step, NEG)
+            u_score = np.where(uv != NEG, uv + cls.GAP, NEG)
+            l_score = np.where(lv != NEG, lv + cls.GAP, NEG)
+
+            H[i_arr, j_arr] = np.maximum(np.maximum(d_score, u_score), l_score)
+
+        return H
+
+    @classmethod
+    def _fill_matrix_sw(
+        cls,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+    ) -> np.ndarray:
+        """
+        Fill the Smith-Waterman scoring matrix.
+
+        Identical to NW except cells are floored at 0.
+        Uses the same anti-diagonal wavefront strategy (O(m+n) iterations).
+        """
+        H = np.zeros((m + 1, n + 1), dtype=np.int32)
+        # Borders stay 0 (SW boundary condition)
+
+        i_full = np.arange(1, max(m, n) + 1, dtype=np.int32)
+        j_buf  = np.empty(min(m, n) + 1, dtype=np.int32)
+
+        for d in range(2, m + n + 1):
+            i_lo = max(1, d - n)
+            i_hi = min(m, d - 1)
+            if i_lo > i_hi:
+                continue
+
+            w     = i_hi - i_lo + 1
+            i_arr = i_full[i_lo - 1: i_hi]
+            np.subtract(d, i_arr, out=j_buf[:w])
+            j_arr = j_buf[:w]
+
+            match_mask = codes_a[i_arr - 1] == codes_b[j_arr - 1]
+            step = np.where(match_mask, cls.MATCH, cls.MISMATCH).astype(np.int32)
+
+            diag = H[i_arr - 1, j_arr - 1] + step
+            up   = H[i_arr - 1, j_arr    ] + cls.GAP
+            left = H[i_arr,     j_arr - 1] + cls.GAP
+
+            # SW: floor at 0
+            H[i_arr, j_arr] = np.maximum(
+                np.int32(0), np.maximum(np.maximum(diag, up), left)
+            )
+
+        return H
+
+    @classmethod
+    def _traceback_sw(
+        cls,
+        H:       np.ndarray,
+        codes_a: np.ndarray,
+        codes_b: np.ndarray,
+        m: int,
+        n: int,
+        seq_type: SeqType,
+    ) -> AlignmentResult:
+        """Traceback for Smith-Waterman: start at max(H), stop at 0."""
+        decode = _NUC_DECODE if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE
+
+        max_idx   = np.argmax(H)
+        score     = int(H.flat[max_idx])
+        start_i, start_j = divmod(int(max_idx), n + 1)
+
+        i, j = start_i, start_j
+        aln_a:     list[str]      = []
+        aln_b:     list[str]      = []
+        mutations: list[Mutation] = []
+        n_matches = n_mismatches = n_gaps = 0
+
+        while i > 0 and j > 0 and H[i, j] > 0:
+            step = cls.MATCH if codes_a[i-1] == codes_b[j-1] else cls.MISMATCH
+
+            if H[i, j] == H[i-1, j-1] + step:
+                sa = decode.get(int(codes_a[i-1]), '?')
+                sb = decode.get(int(codes_b[j-1]), '?')
+                aln_a.append(sa); aln_b.append(sb)
+                if codes_a[i-1] == codes_b[j-1]:
+                    n_matches += 1
+                else:
+                    n_mismatches += 1
+                    mutations.append(Mutation('substitution', i - 1, j - 1, sa, sb))
+                i -= 1; j -= 1
+
+            elif H[i, j] == H[i-1, j] + cls.GAP:
+                sa = decode.get(int(codes_a[i-1]), '?')
+                aln_a.append(sa); aln_b.append('-')
+                n_gaps += 1
+                mutations.append(Mutation('deletion', i - 1, j, sa, '-'))
+                i -= 1
+
+            else:
+                sb = decode.get(int(codes_b[j-1]), '?')
+                aln_a.append('-'); aln_b.append(sb)
+                n_gaps += 1
+                mutations.append(Mutation('insertion', i, j - 1, '-', sb))
+                j -= 1
+
+        aln_a.reverse(); aln_b.reverse(); mutations.reverse()
+        aln_len  = n_matches + n_mismatches + n_gaps
+        identity = n_matches / aln_len if aln_len else 0.0
+
+        return AlignmentResult(
+            score=score, identity=identity,
+            n_matches=n_matches, n_mismatches=n_mismatches, n_gaps=n_gaps,
+            mutations=mutations,
+            aligned_a=''.join(aln_a), aligned_b=''.join(aln_b),
+            seq_type=seq_type, mode='local',
+        )
 
     # ── Traceback ─────────────────────────────────────────────────────────────
 

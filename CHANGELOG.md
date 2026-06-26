@@ -5,6 +5,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [1.1.0] — 2026-06-27
+
+### Added
+
+**Reverse complement vectorised (`biocore.py`)**
+- `PackedSequence.reverse_complement()` — applies Watson-Crick pairing (A↔T/U, C↔G) and reverses the sequence
+- Implemented as two NumPy ops: `_NUC_COMPLEMENT` LUT + `np.flip`; zero Python loops
+- Result header prefixed with `[RC]`; raises `SequenceTypeError` for protein input
+- RC(RC(x)) == x guaranteed for all nucleotide sequences
+
+**6-frame translation (`smart_translator.py`)**
+- `SmartTranslator.translate_all_frames(seq)` — translates all 6 reading frames (+1/+2/+3/-1/-2/-3)
+- Returns `list[PackedSequence]` — one entry per frame that contains an ATG, frames without ORF skipped silently
+- Header format: `[PROT | frame +1 | ORF@N] <original_header>`
+- Optional `warn_short=False` to suppress short-protein warnings
+
+**Smith-Waterman local alignment (`aligner.py`)**
+- `SequenceAligner.align_local(seq_a, seq_b)` — finds the highest-scoring local sub-region
+- Returns `AlignmentResult` with `mode='local'`
+- Score floored at 0; traceback stops when H cell reaches 0
+- C engine path via `sw_align()` in `engine.c`; NumPy anti-diagonal wavefront fallback
+
+**Banded Needleman-Wunsch (`aligner.py`)**
+- `SequenceAligner.align(seq_a, seq_b, band=N)` — restricts DP to ±N cells around the main diagonal
+- C engine: true banded storage O(m·N) via `nw_banded()` / `nw_banded_semiglobal()` in `engine.c`
+- NumPy fallback: full matrix with NEG_INF masking outside band — same result, standard RAM
+- `band=0` raises `AlignmentError`
+
+**C engine additions (`engine/engine.c`, `engine/_loader.py`)**
+- `sw_align()`: Smith-Waterman with calloc zeros, floor-at-0 fill, max-cell traceback
+- `nw_banded()` / `nw_banded_semiglobal()`: banded NW with macros `_BH(i,k)` / `_BTB(i,k)`, W=2·band+1
+- Python wrappers `c_sw_align()` and `c_nw_banded()` added to `_loader.py`
+
+**Bug fix**
+- `SmartTranslator._find_orf_start()`: was raising bare `ValueError` instead of `TranslationError`; fixed so `BioForgeError` catches it
+
+**Tests**
+- 239 tests passing (up from 172 in v1.0.0)
+- 10 new tests for `reverse_complement()` (correctness, round-trip, palindromes, error paths)
+- 8 new tests for `translate_all_frames()` (all frames, no-ATG, strand detection, error paths)
+- 13 new tests for `align_local()` Smith-Waterman (mode, identity, local region, errors)
+- 6 new tests for banded NW (coherence with full NW, error paths)
+
+---
+
 ## [1.0.0] — 2026-06-26
 
 First stable release.

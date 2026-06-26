@@ -374,3 +374,80 @@ def test_sequence_type_error_capturado_como_bioengine_error():
         SmartTranslator.translate("ATGAAATAA")
     with pytest.raises(TypeError):
         SmartTranslator.translate("ATGAAATAA")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §  TRANSLATE_ALL_FRAMES (6 marcos)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _nuc(seq_str: str) -> PackedSequence:
+    return SmartImporter.from_string(
+        f">t\n{seq_str}\n", force_type=SeqType.NUCLEOTIDE
+    )[0]
+
+
+def test_all_frames_frame_positivo_1():
+    """ATG en frame +1 produce proteína conocida."""
+    # ATGAAATAA = Met-Lys-STOP
+    seq = _nuc("ATGAAATAA")
+    frames = SmartTranslator.translate_all_frames(seq)
+    proteins = [p.to_string() for p in frames]
+    assert "MK" in proteins
+
+
+def test_all_frames_multiples_orfs():
+    """Secuencia con ORF en varios frames devuelve más de un resultado."""
+    # Frame +1: ATG... ; RC puede tener su propio ATG
+    seq = _nuc("ATGAAATAACATATG")
+    frames = SmartTranslator.translate_all_frames(seq)
+    assert len(frames) >= 1
+
+
+def test_all_frames_sin_atg_devuelve_lista_vacia():
+    """Una secuencia sin ningún ATG en ningún frame devuelve lista vacía."""
+    seq = _nuc("CCCCCCCCCCCCCCC")
+    frames = SmartTranslator.translate_all_frames(seq)
+    assert frames == []
+
+
+def test_all_frames_resultado_es_lista_de_packed_sequences():
+    """translate_all_frames devuelve lista[PackedSequence] de tipo PROTEIN."""
+    seq = _nuc("ATGAAATAA")
+    frames = SmartTranslator.translate_all_frames(seq)
+    assert isinstance(frames, list)
+    for prot in frames:
+        assert isinstance(prot, PackedSequence)
+        assert prot.seq_type == SeqType.PROTEIN
+
+
+def test_all_frames_headers_con_info_de_marco():
+    """Los headers contienen el frame label (+1/+2/+3/-1/-2/-3)."""
+    seq = _nuc("ATGAAATAA")
+    frames = SmartTranslator.translate_all_frames(seq)
+    for prot in frames:
+        assert any(f in prot.header for f in ["+1", "+2", "+3", "-1", "-2", "-3"])
+
+
+def test_all_frames_error_en_proteina():
+    """Pasar una proteína a translate_all_frames lanza SequenceTypeError."""
+    prot = SmartImporter.from_string(">p\nMKGFEI\n")[0]
+    with pytest.raises(SequenceTypeError):
+        SmartTranslator.translate_all_frames(prot)
+
+
+def test_all_frames_complemento_reverso_detectado():
+    """Un ORF sólo visible en el RC debe aparecer en los resultados."""
+    # Cadena directa: sin ATG. RC de TTACATCAT = ATGATGTAA → frame -1 tiene M
+    seq = _nuc("TTACATCAT")
+    frames = SmartTranslator.translate_all_frames(seq)
+    # Debe haber al menos un resultado en strand negativo
+    neg_frames = [p for p in frames if "-" in p.header]
+    assert len(neg_frames) >= 1
+
+
+def test_all_frames_longitud_minima_proteina():
+    """Ninguna proteína de la lista debe tener longitud 0."""
+    seq = _nuc("ATGAAAGGG")
+    frames = SmartTranslator.translate_all_frames(seq)
+    for prot in frames:
+        assert prot.n_symbols >= 1

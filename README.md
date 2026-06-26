@@ -254,10 +254,10 @@ python check.py
 
 | Limitation | Detail |
 |------------|--------|
-| Aligner memory | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Banded NW planned for v1.2. |
+| Aligner memory (full NW) | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Use `band=N` for large sequences. |
 | Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
 | C engine | Pre-compiled `.dll`/`.so` not included. Run `python bioforge/engine/build.py` to compile. Requires GCC. |
-| Translation | Single-frame only (forward strand, first ATG). 6-frame translation planned for v1.1. |
+| Banded NW (NumPy fallback) | Without the C engine, banded NW uses the full matrix with NEG_INF masking — same result, standard RAM. |
 
 ---
 
@@ -268,9 +268,10 @@ python check.py
 - [x] Level 3 — Needleman-Wunsch alignment + mutation detection (C + NumPy)
 - [x] Full mutation analysis pipeline (DNA + protein, 3 modes)
 - [x] BioForgeError exception hierarchy for library users
-- [ ] Reverse complement (vectorised)
-- [ ] 6-frame translation
-- [ ] Banded NW for sequences > 15 000 bp
+- [x] Reverse complement vectorised — `PackedSequence.reverse_complement()`
+- [x] 6-frame translation — `SmartTranslator.translate_all_frames()`
+- [x] Banded NW — `SequenceAligner.align(seq_a, seq_b, band=N)`
+- [x] Smith-Waterman local alignment — `SequenceAligner.align_local()`
 
 ---
 

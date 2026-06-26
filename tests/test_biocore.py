@@ -387,3 +387,78 @@ def test_packed_sequence_type_error_capturado_como_bioengine_error():
             header="bad", seq_type="PROTEIN",
             n_symbols=0, data=np.array([], dtype=np.uint8),
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §8  REVERSE COMPLEMENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _nuc(seq_str: str) -> PackedSequence:
+    return SmartImporter.from_string(f">t\n{seq_str}\n", force_type=SeqType.NUCLEOTIDE)[0]
+
+
+def test_reverse_complement_basico():
+    """ATGC → GCAT (complemento invertido)."""
+    seq = _nuc("ATGC")
+    rc  = seq.reverse_complement()
+    assert rc.to_string() == "GCAT"
+
+
+def test_reverse_complement_palindromo():
+    """Un palindromo Watson-Crick es idéntico a su RC."""
+    seq = _nuc("ATAT")
+    rc  = seq.reverse_complement()
+    assert rc.to_string() == "ATAT"
+
+
+def test_reverse_complement_doble_es_identidad():
+    """RC(RC(x)) == x para cualquier secuencia nucleotídica."""
+    seq = _nuc("ATGCGTACNNTTAA")
+    assert seq.reverse_complement().reverse_complement().to_string() == seq.to_string()
+
+
+@given(nuc_codes)
+def test_reverse_complement_doble_es_identidad_property(codes):
+    """RC(RC(x)) == x para cualquier array de códigos nucleotídicos."""
+    packed = PackedSequence(
+        header="t", seq_type=SeqType.NUCLEOTIDE,
+        n_symbols=len(codes), data=BitPacker.pack(codes),
+    )
+    rc2 = packed.reverse_complement().reverse_complement()
+    assert np.array_equal(packed.decode(), rc2.decode())
+
+
+def test_reverse_complement_longitud_preservada():
+    """RC mantiene la longitud de la secuencia."""
+    seq = _nuc("ATGCGTACGT")
+    rc  = seq.reverse_complement()
+    assert rc.n_symbols == seq.n_symbols
+
+
+def test_reverse_complement_preserva_n():
+    """Las bases N (UNK) se mantienen como N en el RC."""
+    seq = _nuc("ATGN")
+    rc  = seq.reverse_complement()
+    assert rc.to_string() == "NCAT"
+
+
+def test_reverse_complement_header_prefijado():
+    """El header del RC tiene el prefijo [RC]."""
+    seq = _nuc("ATGC")
+    rc  = seq.reverse_complement()
+    assert rc.header.startswith("[RC]")
+
+
+def test_reverse_complement_error_en_proteina():
+    """reverse_complement en una proteína lanza SequenceTypeError."""
+    prot = SmartImporter.from_string(">p\nMKGFEI\n")[0]
+    with pytest.raises(SequenceTypeError):
+        prot.reverse_complement()
+
+
+def test_reverse_complement_pares_complementarios():
+    """Cada base mapea al complemento correcto: A↔T, C↔G."""
+    seq = _nuc("ACGT")
+    rc  = seq.reverse_complement()
+    # RC de ACGT: reverse es TGCA → complement es ACGT
+    assert rc.to_string() == "ACGT"

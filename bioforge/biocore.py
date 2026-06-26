@@ -299,6 +299,17 @@ _AA_DECODE_ARR: np.ndarray = np.full(32, ord('?'), dtype=np.uint8)
 for _code, _char in _AA_DECODE.items():
     _AA_DECODE_ARR[int(_code)] = ord(_char)
 
+# ── Watson-Crick complement LUT  (BioCode index → complement BioCode) ───────────
+# A(0)↔T/U(3), C(1)↔G(2).  Gaps and UNK map to themselves.  All other codes
+# (amino acids, reserved) map to UNK — reverse complement of protein is undefined.
+_NUC_COMPLEMENT: np.ndarray = np.full(32, BioCode.UNK, dtype=np.uint8)
+_NUC_COMPLEMENT[int(BioCode.NUC_A )] = np.uint8(BioCode.NUC_TU)
+_NUC_COMPLEMENT[int(BioCode.NUC_C )] = np.uint8(BioCode.NUC_G)
+_NUC_COMPLEMENT[int(BioCode.NUC_G )] = np.uint8(BioCode.NUC_C)
+_NUC_COMPLEMENT[int(BioCode.NUC_TU)] = np.uint8(BioCode.NUC_A)
+_NUC_COMPLEMENT[int(BioCode.UNK   )] = np.uint8(BioCode.UNK)
+_NUC_COMPLEMENT[int(BioCode.GAP   )] = np.uint8(BioCode.GAP)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §3  BIT PACKER  —  compact 5-bit ↔ uint8 array conversion
@@ -589,6 +600,36 @@ class PackedSequence:
             else _AA_DECODE_ARR
         )
         return lut[self.decode()].tobytes().decode("ascii")
+
+    def reverse_complement(self) -> PackedSequence:
+        """
+        Compute the reverse complement (5'→3' antisense strand).
+
+        Watson-Crick pairing: A↔T/U, C↔G.  Unknown bases (N) and gaps (-)
+        map to themselves.  Two fully vectorised NumPy operations: flip + LUT.
+
+        Returns
+        -------
+        PackedSequence (NUCLEOTIDE) with header prefixed ``[RC]``.
+
+        Raises
+        ------
+        SequenceTypeError
+            If the sequence is not ``SeqType.NUCLEOTIDE``.
+        """
+        if self.seq_type != SeqType.NUCLEOTIDE:
+            raise SequenceTypeError(
+                f"reverse_complement() requiere SeqType.NUCLEOTIDE, "
+                f"se recibió {self.seq_type.name}. "
+                "Las proteínas no tienen complemento de Watson-Crick."
+            )
+        rc = _NUC_COMPLEMENT[self.decode()[::-1]]   # flip + complement, two vectorised ops
+        return PackedSequence(
+            header    = f"[RC] {self.header}",
+            seq_type  = SeqType.NUCLEOTIDE,
+            n_symbols = self.n_symbols,
+            data      = BitPacker.pack(rc),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

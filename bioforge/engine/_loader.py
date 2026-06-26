@@ -74,6 +74,24 @@ def _setup_signatures() -> None:
     _lib.nw_semiglobal.restype  = _I32
     _lib.nw_semiglobal.argtypes = _nw_args
 
+    # ── sw_align (Smith-Waterman, misma firma que nw) ──────────────────────────
+    _lib.sw_align.restype  = _I32
+    _lib.sw_align.argtypes = _nw_args
+
+    # ── nw_banded / nw_banded_semiglobal (band extra) ─────────────────────────
+    _nw_banded_args = [
+        _U8P, _I32,     # codes_a, m
+        _U8P, _I32,     # codes_b, n
+        _CHARP,         # decode
+        _I32, _I32, _I32, _I32,  # match, mismatch, gap, band
+        _CHARP, _CHARP,           # out_a, out_b
+        _I32P, _I32P, _I32P, _I32P,
+    ]
+    _lib.nw_banded.restype           = _I32
+    _lib.nw_banded.argtypes          = _nw_banded_args
+    _lib.nw_banded_semiglobal.restype  = _I32
+    _lib.nw_banded_semiglobal.argtypes = _nw_banded_args
+
 
 _load()
 
@@ -130,6 +148,70 @@ def c_translate(codon_lut: np.ndarray, nuc_codes: np.ndarray, n_codons: int) -> 
         out.ctypes.data_as(_U8P),
     )
     return out
+
+
+def c_sw_align(
+    codes_a: np.ndarray,
+    codes_b: np.ndarray,
+    decode_bytes: bytes,
+    match: int, mismatch: int, gap: int,
+) -> tuple[str, str, int, int, int, int]:
+    """Smith-Waterman local alignment en C."""
+    m, n     = len(codes_a), len(codes_b)
+    buf_size = m + n + 2
+    out_a = ctypes.create_string_buffer(buf_size)
+    out_b = ctypes.create_string_buffer(buf_size)
+    score = _I32(0); nm = _I32(0); nmi = _I32(0); ng = _I32(0)
+    ca = np.ascontiguousarray(codes_a, dtype=np.uint8)
+    cb = np.ascontiguousarray(codes_b, dtype=np.uint8)
+    aln_len = _lib.sw_align(
+        ca.ctypes.data_as(_U8P), _I32(m),
+        cb.ctypes.data_as(_U8P), _I32(n),
+        decode_bytes,
+        _I32(match), _I32(mismatch), _I32(gap),
+        out_a, out_b,
+        ctypes.byref(score), ctypes.byref(nm),
+        ctypes.byref(nmi), ctypes.byref(ng),
+    )
+    if aln_len < 0:
+        raise MemoryError("Motor C: fallo de memoria en SW")
+    return (
+        out_a.value.decode("ascii"), out_b.value.decode("ascii"),
+        score.value, nm.value, nmi.value, ng.value,
+    )
+
+
+def c_nw_banded(
+    codes_a: np.ndarray,
+    codes_b: np.ndarray,
+    decode_bytes: bytes,
+    match: int, mismatch: int, gap: int,
+    band: int, mode: str,
+) -> tuple[str, str, int, int, int, int]:
+    """Banded NW en C. Memoria O(m*band)."""
+    m, n     = len(codes_a), len(codes_b)
+    buf_size = m + n + 2
+    out_a = ctypes.create_string_buffer(buf_size)
+    out_b = ctypes.create_string_buffer(buf_size)
+    score = _I32(0); nm = _I32(0); nmi = _I32(0); ng = _I32(0)
+    ca = np.ascontiguousarray(codes_a, dtype=np.uint8)
+    cb = np.ascontiguousarray(codes_b, dtype=np.uint8)
+    fn = _lib.nw_banded_semiglobal if mode == "semi-global" else _lib.nw_banded
+    aln_len = fn(
+        ca.ctypes.data_as(_U8P), _I32(m),
+        cb.ctypes.data_as(_U8P), _I32(n),
+        decode_bytes,
+        _I32(match), _I32(mismatch), _I32(gap), _I32(band),
+        out_a, out_b,
+        ctypes.byref(score), ctypes.byref(nm),
+        ctypes.byref(nmi), ctypes.byref(ng),
+    )
+    if aln_len < 0:
+        raise MemoryError("Motor C: fallo de memoria en NW banded")
+    return (
+        out_a.value.decode("ascii"), out_b.value.decode("ascii"),
+        score.value, nm.value, nmi.value, ng.value,
+    )
 
 
 def c_nw_align(

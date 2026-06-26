@@ -47,6 +47,13 @@ seq[5:20]           # → nuevo PackedSequence con el sub-rango
 
 # Igualdad
 seq_a == seq_b      # compara tipo, longitud, cabecera y datos
+
+# Reverse complement (v1.1) — solo para SeqType.NUCLEOTIDE
+rc = seq.reverse_complement()
+# Aplica emparejamiento Watson-Crick (A↔T, C↔G) e invierte.
+# El header del resultado lleva prefijo "[RC]".
+# Lanza SequenceTypeError si seq es proteína.
+rc2 = rc.reverse_complement()  # RC(RC(x)) == x
 ```
 
 ---
@@ -127,6 +134,39 @@ protein.header        # "[PROT | ORF@<pos>] <header_original>"
 
 ---
 
+### SmartTranslator.translate_all_frames  *(v1.1)*
+
+Traduce los 6 marcos de lectura (3 directos + 3 en reverse complement).
+Devuelve una lista con una `PackedSequence(PROTEIN)` por cada marco que
+contenga al menos un ATG. Los marcos sin ATG se omiten silenciosamente.
+
+```python
+from bioforge import SmartTranslator, SmartImporter, SeqType
+
+seq = SmartImporter.from_string(">gen\nATGAAAGGGTAA\n",
+                                force_type=SeqType.NUCLEOTIDE)[0]
+
+proteinas = SmartTranslator.translate_all_frames(seq)
+# proteinas es una list[PackedSequence]
+
+for prot in proteinas:
+    print(prot.header)      # "[PROT | frame +1 | ORF@0] gen"
+    print(prot.to_string()) # "MKG"
+
+# El header indica:
+#   • strand: + (directo) o - (reverse complement)
+#   • offset: 1, 2 o 3
+#   • ORF@N: posición 0-based del ATG en la secuencia original
+
+# Suprimir aviso de proteína corta (< 50 aa):
+proteinas = SmartTranslator.translate_all_frames(seq, warn_short=False)
+
+# Errores posibles:
+# SequenceTypeError — si la entrada no es SeqType.NUCLEOTIDE
+```
+
+---
+
 ## aligner.py
 
 ### SequenceAligner
@@ -139,6 +179,13 @@ from bioforge import SequenceAligner, format_alignment
 
 result = SequenceAligner.align(seq_a, seq_b)                     # global (recomendado para mutaciones)
 result = SequenceAligner.align(seq_a, seq_b, mode='semi-global') # libre en extremos del query
+
+# Banded NW (v1.1) — para secuencias largas con desviación acotada del diagonal
+result = SequenceAligner.align(seq_a, seq_b, band=50)            # solo rellena ±50 celdas del diagonal
+# band=N reduce memoria a O(m·N) y tiempo a O(m·N).
+# Requiere que las secuencias no difieran en más de N inserciones/deleciones.
+# Con el motor C: usa almacenamiento verdaderamente compacto.
+# Sin motor C: usa la matriz completa con NEG_INF fuera de la banda (mismo resultado, más RAM).
 
 # Métricas
 result.score           # int   — puntuación NW
@@ -175,14 +222,42 @@ print(format_alignment(result, width=80)) # bloques de 80 chars
 #   B: ATGGTGCACCTGACTCCTGTGGAGAAGTCT
 ```
 
+### SequenceAligner.align_local  *(v1.1)*
+
+Alineamiento local Smith-Waterman. Encuentra la sub-región de mayor similitud
+entre dos secuencias, ignorando flancos no homólogos.
+
+```python
+from bioforge import SequenceAligner
+
+# Entrada: dos PackedSequence del mismo SeqType
+result = SequenceAligner.align_local(seq_a, seq_b)
+
+result.mode        # 'local'
+result.score       # int — puntuación SW (siempre ≥ 0)
+result.identity    # float — identidad en la región local alineada
+result.aligned_a   # str — región alineada de seq_a (con gaps)
+result.aligned_b   # str — región alineada de seq_b (con gaps)
+result.mutations   # list[Mutation] — diferencias dentro de la región local
+
+# Cuándo usar SW vs NW:
+#   NW (align)       → comparar alelos o CDS completos (mutación puntual, indels)
+#   SW (align_local) → encontrar un dominio/motivo dentro de una secuencia larga
+#                      o comparar dos secuencias con regiones no homólogas en los extremos
+```
+
 ### Errores posibles
 
 ```python
 # SequenceTypeError — los dos tipos de secuencia no coinciden
-SequenceAligner.align(prot_seq, nuc_seq)   # → SequenceTypeError
+SequenceAligner.align(prot_seq, nuc_seq)    # → SequenceTypeError
+SequenceAligner.align_local(prot_seq, nuc_seq)  # → SequenceTypeError
 
-# UserWarning — secuencias largas (> 15 000 símbolos)
-# La matriz DP supera ~3.4 GB. El alineamiento continúa pero se advierte.
+# UserWarning — secuencias largas (> 15 000 símbolos) sin band=
+# La matriz DP supera ~3.4 GB. Usar band=N para secuencias grandes.
+
+# AlignmentError — band= con valor ≤ 0
+SequenceAligner.align(seq_a, seq_b, band=0)  # → AlignmentError
 ```
 
 ---

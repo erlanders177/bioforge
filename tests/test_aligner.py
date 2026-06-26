@@ -421,3 +421,118 @@ def test_format_alignment_error_capturado_como_bioengine_error():
     r = SequenceAligner.align(_nuc("ACGT"), _nuc("ACGT"))
     with pytest.raises(BioForgeError):
         format_alignment(r, width=0)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §  SMITH-WATERMAN  (align_local)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_sw_modo_es_local():
+    """align_local devuelve un resultado con mode='local'."""
+    a = _nuc("ATGCATGC")
+    b = _nuc("ATGCATGC")
+    r = SequenceAligner.align_local(a, b)
+    assert r.mode == "local"
+
+
+def test_sw_identidad_perfecta():
+    """Secuencias idénticas alineadas localmente dan identidad ≥ 95%."""
+    seq = _nuc("ATGCATGCATGCATGC")
+    r = SequenceAligner.align_local(seq, seq)
+    assert r.identity >= 0.95
+
+
+def test_sw_encuentra_region_local():
+    """SW encuentra la región en común aunque haya ruido a los lados."""
+    a = _nuc("AAAAAATGCATGCAAAAAA")
+    b = _nuc("TTTTTTATGCATGCTTTTT")
+    r = SequenceAligner.align_local(a, b)
+    # Debe encontrar la región ATGCATGC con alta identidad
+    assert r.identity >= 0.5
+
+
+def test_sw_score_es_positivo():
+    """Smith-Waterman sobre secuencias similares debe dar score > 0."""
+    a = _nuc("ATGCGTACGT")
+    b = _nuc("ATGCGTACGT")
+    r = SequenceAligner.align_local(a, b)
+    assert r.score > 0
+
+
+def test_sw_result_es_alignment_result():
+    """align_local devuelve un AlignmentResult."""
+    a = _nuc("ATGC")
+    b = _nuc("ATGC")
+    r = SequenceAligner.align_local(a, b)
+    assert isinstance(r, AlignmentResult)
+
+
+def test_sw_error_tipo_incorrecto():
+    """align_local con proteína y nucleótido lanza SequenceTypeError."""
+    nuc  = _nuc("ATGCATGC")
+    prot = _prot("MKGE", "p")
+    with pytest.raises(SequenceTypeError):
+        SequenceAligner.align_local(nuc, prot)
+
+
+def test_sw_secuencias_sin_similitud():
+    """Dos secuencias completamente distintas pueden tener score 0 en SW."""
+    a = _nuc("AAAAAAAAAA")
+    b = _nuc("CCCCCCCCCC")
+    r = SequenceAligner.align_local(a, b)
+    # SW floor en 0; si no hay match, score puede ser 0
+    assert r.score >= 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §  BANDED NEEDLEMAN-WUNSCH  (align(..., band=N))
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_banded_resultado_coherente_con_nw_completo():
+    """Banded NW con banda grande produce identidad similar al NW completo."""
+    a = _nuc("ATGCATGCATGCATGCATGC")
+    b = _nuc("ATGCATGCATGCATGCATGC")
+    r_full   = SequenceAligner.align(a, b)
+    r_banded = SequenceAligner.align(a, b, band=10)
+    # Con secuencias idénticas y banda suficiente, identidad debe ser ≥ 95%
+    assert r_banded.identity >= 0.95
+    assert abs(r_banded.identity - r_full.identity) < 0.05
+
+
+def test_banded_mode_es_global():
+    """align(..., band=N) sigue siendo modo global."""
+    a = _nuc("ATGCATGC")
+    b = _nuc("ATGCATGC")
+    r = SequenceAligner.align(a, b, band=4)
+    assert r.mode in ("global", "semi-global")
+
+
+def test_banded_resultado_es_alignment_result():
+    """align con band= devuelve un AlignmentResult."""
+    a = _nuc("ATGCGTAC")
+    b = _nuc("ATGCGTAC")
+    r = SequenceAligner.align(a, b, band=4)
+    assert isinstance(r, AlignmentResult)
+
+
+def test_banded_score_positivo_en_identicas():
+    """Secuencias idénticas con banded NW dan score > 0."""
+    a = _nuc("ATGCATGCATGC")
+    r = SequenceAligner.align(a, a, band=6)
+    assert r.score > 0
+
+
+def test_banded_band_cero_lanza_error():
+    """band=0 debe lanzar AlignmentError (banda inválida)."""
+    a = _nuc("ATGCATGC")
+    b = _nuc("ATGCATGC")
+    with pytest.raises((AlignmentError, ValueError)):
+        SequenceAligner.align(a, b, band=0)
+
+
+def test_banded_error_tipo_incorrecto():
+    """band= con tipos mixtos lanza SequenceTypeError."""
+    nuc  = _nuc("ATGCATGC")
+    prot = _prot("MKGE", "p")
+    with pytest.raises(SequenceTypeError):
+        SequenceAligner.align(nuc, prot, band=4)

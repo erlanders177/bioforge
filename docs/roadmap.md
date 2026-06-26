@@ -1,14 +1,33 @@
 # Roadmap del Proyecto
 
-## Estado actual (2026-05-31)
+## Estado actual (2026-06-27) — v1.1.0
 
 | Nivel | Módulo | Descripción | Estado |
 |-------|--------|-------------|--------|
-| L1 | biocore.py | Almacenamiento 5-bit, FASTA parser, LUTs | ✅ Completo |
-| L2 | smart_translator.py | Traducción ADN→Proteína vectorizada | ✅ Completo |
-| L3 | aligner.py | Alineamiento NW + detección de mutaciones | ✅ Completo |
+| L1 | biocore.py | Almacenamiento 5-bit, FASTA parser, LUTs, reverse complement | ✅ Completo |
+| L2 | smart_translator.py | Traducción ADN→Proteína, 6-frame translation | ✅ Completo |
+| L3 | aligner.py | NW global/semi-global, banded NW, Smith-Waterman local | ✅ Completo |
 | — | visor.py | Frontend de display interactivo | ✅ Funcional |
 | — | stress_test.py | Benchmark de rendimiento con 30M bases | ✅ Funcional |
+
+### Completado en v1.1.0
+
+**Reverse complement vectorizado** ✅
+- `PackedSequence.reverse_complement()` — dos ops NumPy: `_NUC_COMPLEMENT` LUT + `np.flip`.
+- Sin loops Python. RC(RC(x)) == x garantizado.
+
+**6-frame translation** ✅
+- `SmartTranslator.translate_all_frames(seq)` — devuelve lista de proteínas por marco.
+- Frames +1/+2/+3 (hebra directa) y -1/-2/-3 (reverse complement).
+- Frames sin ATG omitidos silenciosamente.
+
+**Banded Needleman-Wunsch** ✅
+- `SequenceAligner.align(seq_a, seq_b, band=N)`.
+- Motor C: O(m·N) memoria real. Fallback NumPy: máscara NEG_INF sobre matriz completa.
+
+**Smith-Waterman (alineamiento local)** ✅
+- `SequenceAligner.align_local(seq_a, seq_b)`.
+- Para dominios/motivos o secuencias con flancos no homólogos.
 
 ---
 
@@ -16,21 +35,9 @@
 
 ### Alta prioridad
 
-**Banded Needleman-Wunsch**
-- Problema: el alineador actual requiere O(m·n) RAM → inviable para secuencias largas.
-- Solución: solo rellenar una banda de anchura `k` alrededor de la diagonal principal.
-- Beneficio: memoria O((m+n)·k), tiempo O((m+n)·k).
-- Cuándo implementar: cuando haya necesidad de comparar secuencias > 15 000 bp.
-
-**Reverse complement vectorizado**
-- Función `reverse_complement(seq: PackedSequence) → PackedSequence` en biocore.
-- Implementación: flip del array + LUT de complemento (A↔T, C↔G).
-- Sin loops Python. Prerequisito para 6-frame translation.
-
-**6-frame translation**
-- Traducir los 6 marcos de lectura (3 directos + 3 en reverse complement).
-- Depende del reverse complement implementado.
-- Útil para anotar genes en secuencias genómicas.
+**FASTA export**
+- `to_fasta(seq, line_width=60) → str` — genera texto FASTA bien formateado.
+- Trivial de implementar, útil para interoperabilidad con otras herramientas.
 
 ### Media prioridad
 

@@ -312,6 +312,124 @@ class SmartTranslator:
             data      = BitPacker.pack(aa_codes),
         )
 
+    @classmethod
+    def translate_all_frames(
+        cls,
+        seq:        PackedSequence,
+        warn_short: bool = False,
+    ) -> list[PackedSequence]:
+        """
+        Translate all 6 reading frames of a nucleotide sequence.
+
+        The 6 frames are:
+        +1, +2, +3 — forward strand, offsets 0, 1, 2.
+        -1, -2, -3 — reverse complement strand, offsets 0, 1, 2.
+
+        Only frames that contain at least one ATG codon are included.
+        Frames with no ATG are silently skipped, so the result may have
+        fewer than 6 entries (or be empty for non-coding sequences).
+
+        Parameters
+        ----------
+        seq : PackedSequence
+            A nucleotide-type packed sequence (``SeqType.NUCLEOTIDE``).
+        warn_short : bool, default False
+            If ``True``, emit a ``UserWarning`` for proteins shorter than
+            50 amino acids.  Off by default because short ORFs are common
+            in non-primary frames.
+
+        Returns
+        -------
+        list[PackedSequence]
+            Up to 6 protein PackedSequences, one per frame with an ORF.
+            Each header: ``[PROT | frame +/-N | ORF@<pos>] <original>``.
+            Empty list if no ORF is found in any frame.
+
+        Raises
+        ------
+        SequenceTypeError
+            If *seq* is not a ``NUCLEOTIDE`` sequence.
+        SequenceValueError
+            If the sequence is shorter than 3 nucleotides.
+        """
+        if not isinstance(seq, PackedSequence):
+            raise SequenceTypeError(
+                f"seq debe ser PackedSequence, se recibió {type(seq).__name__!r}. "
+                "Crea la secuencia con SmartImporter.from_string() o SmartImporter.from_file()."
+            )
+        if seq.seq_type != SeqType.NUCLEOTIDE:
+            raise SequenceTypeError(
+                f"Se esperaba SeqType.NUCLEOTIDE, se recibió {seq.seq_type.name}. "
+                "translate_all_frames() solo traduce ADN/ARN."
+            )
+        if seq.n_symbols < 3:
+            raise SequenceValueError(
+                f"Secuencia demasiado corta ({seq.n_symbols} nt): "
+                "se necesitan al menos 3 nucleótidos para un codón."
+            )
+
+        rc_seq  = seq.reverse_complement()
+        results: list[PackedSequence] = []
+
+        for strand_codes, strand_sign in [
+            (seq.decode(),    '+'),
+            (rc_seq.decode(), '-'),
+        ]:
+            for offset in range(3):
+                frame_codes = strand_codes[offset:]
+                if len(frame_codes) < 3:
+                    continue
+                frame_label = f"{strand_sign}{offset + 1}"
+
+                try:
+                    orf_start = cls._find_orf_start(frame_codes)
+                except (TranslationError, ValueError):
+                    continue  # no ATG in this frame — skip silently
+
+                orf      = frame_codes[orf_start:]
+                n_codons = len(orf) // 3
+                if n_codons == 0:
+                    continue
+
+                # Translate codons (C engine or NumPy)
+                if _C_AVAILABLE:
+                    aa_codes: np.ndarray = _c_translate(cls.CODON_LUT, orf, n_codons)
+                else:
+                    codons      = orf[: n_codons * 3].reshape(n_codons, 3)
+                    idx_u16     = (codons.astype(np.uint16) * cls._CODON_WEIGHTS).sum(axis=1)
+                    valid       = idx_u16 < np.uint16(64)
+                    safe_idx    = np.where(valid, idx_u16, np.uint16(0)).astype(np.uint8)
+                    aa_codes    = np.where(
+                        valid, cls.CODON_LUT[safe_idx], np.uint8(BioCode.UNK)
+                    ).astype(np.uint8)
+
+                # Truncate at first in-frame STOP codon
+                stop_mask = aa_codes == np.uint8(BioCode.STOP)
+                if stop_mask.any():
+                    aa_codes = aa_codes[: int(np.argmax(stop_mask))]
+
+                n_aa = int(len(aa_codes))
+                if n_aa == 0:
+                    continue
+
+                if warn_short and n_aa < cls._MIN_AA_LEN:
+                    warnings.warn(
+                        f"Frame {frame_label}: proteína corta "
+                        f"({n_aa} aa < {cls._MIN_AA_LEN} aa).",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
+                abs_pos = offset + orf_start
+                results.append(PackedSequence(
+                    header    = f"[PROT | frame {frame_label} | ORF@{abs_pos}] {seq.header}",
+                    seq_type  = SeqType.PROTEIN,
+                    n_symbols = n_aa,
+                    data      = BitPacker.pack(aa_codes),
+                ))
+
+        return results
+
     # ── Private helpers ────────────────────────────────────────────────────────
 
     @classmethod
@@ -354,7 +472,7 @@ class SmartTranslator:
         hit_mask: np.ndarray = np.all(windows == cls._START_CODON, axis=1)
         first_hit: int = int(np.argmax(hit_mask))
         if not hit_mask[first_hit]:
-            raise ValueError(
+            raise TranslationError(
                 "No se encontró ningún codón de inicio ATG/AUG en la secuencia. "
                 "Asegúrate de que sea una secuencia codificante (CDS) válida."
             )
