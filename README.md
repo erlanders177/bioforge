@@ -1,5 +1,9 @@
 # BioForge — High-Performance Bioinformatics Engine
 
+[![Tests](https://github.com/erlanders177/bioforge/actions/workflows/tests.yml/badge.svg)](https://github.com/erlanders177/bioforge/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-PolyForm_NC_1.0-blue)](LICENSE)
+
 A bioinformatics engine built for **Edge Computing**.  
 No Biopython. No heavy dependencies. NumPy core + optional C engine for maximum speed.
 
@@ -70,6 +74,13 @@ git clone https://github.com/erlanders177/bioforge.git
 cd bioforge
 pip install numpy
 ```
+
+**Optional — compile the C engine** (27–29× faster on translation and alignment):
+```bash
+python engine/build.py
+```
+Requires GCC. On Windows: [MinGW-w64](https://www.mingw-w64.org/). On Linux/Mac: `sudo apt install gcc` / `brew install gcc`.  
+If not compiled, BioForge falls back to NumPy automatically — no code changes needed.
 
 For development and testing:
 ```bash
@@ -234,6 +245,17 @@ pytest tests/ --benchmark-only
 # Quick smoke check (no coding knowledge required)
 python check.py
 ```
+
+---
+
+## Known limitations
+
+| Limitation | Detail |
+|------------|--------|
+| Aligner memory | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Banded NW planned for v1.2. |
+| Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
+| C engine | Pre-compiled `.dll`/`.so` not included. Run `python engine/build.py` to compile. Requires GCC. |
+| Translation | Single-frame only (forward strand, first ATG). 6-frame translation planned for v1.1. |
 
 ---
 
