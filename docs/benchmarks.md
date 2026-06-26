@@ -59,16 +59,16 @@ Para genomas completos se necesitaría banded alignment (extensión futura).
 
 ```bash
 # Benchmark de empaquetado y traducción (30M bases)
-python stress_test.py
+python tools/stress_test.py
 
 # Self-test completo con benchmark de aligner (1000×1000 nt)
-python aligner.py
+python bioforge/aligner.py
 
 # Self-test del motor de traducción
-python smart_translator.py
+python bioforge/smart_translator.py
 
 # Self-test del motor de almacenamiento (10M bases)
-python biocore.py
+python bioforge/biocore.py
 ```
 
 ---
