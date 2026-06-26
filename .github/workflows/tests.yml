@@ -28,7 +28,7 @@ jobs:
         run: pip install numpy hypothesis pytest pytest-benchmark
 
       - name: Compile C engine
-        run: python engine/build.py
+        run: python bioforge/engine/build.py
         continue-on-error: true   # fallback to NumPy if GCC not available
 
       - name: Run tests

@@ -36,16 +36,16 @@ Two core rules:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Level 3 — aligner.py          Needleman-Wunsch alignment    │
+│  Level 3 — bioforge/aligner.py           NW alignment         │
 │  Anti-diagonal wavefront O(m+n) · mutation detection         │
 ├──────────────────────────────────────────────────────────────┤
-│  Level 2 — smart_translator.py  DNA → Protein translation    │
+│  Level 2 — bioforge/smart_translator.py  DNA → Protein       │
 │  CODON_LUT + sliding_window_view · first-ATG ORF detection   │
 ├──────────────────────────────────────────────────────────────┤
-│  Level 1 — biocore.py           5-bit storage engine         │
+│  Level 1 — bioforge/biocore.py           5-bit storage        │
 │  BitPacker · PackedSequence · SmartImporter · LUTs           │
 ├──────────────────────────────────────────────────────────────┤
-│  C engine — engine/engine.c     Optional compiled backend     │
+│  C engine — bioforge/engine/engine.c     Optional backend     │
 │  GCC -O3 -march=native -fopenmp · auto-loaded via ctypes     │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -77,7 +77,7 @@ pip install numpy
 
 **Optional — compile the C engine** (27–29× faster on translation and alignment):
 ```bash
-python engine/build.py
+python bioforge/engine/build.py
 ```
 Requires GCC. On Windows: [MinGW-w64](https://www.mingw-w64.org/). On Linux/Mac: `sudo apt install gcc` / `brew install gcc`.  
 If not compiled, BioForge falls back to NumPy automatically — no code changes needed.
@@ -133,7 +133,7 @@ for mut in result.mutations:
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
-from analyze import run, build_report
+from bioforge import run, build_report
 
 result = run("reference.fa", "query.fa", mode="both")
 print(build_report(result))
@@ -163,17 +163,19 @@ python check.py
 ## Project structure
 
 ```
-biocore.py              Level 1 — 5-bit storage engine
-smart_translator.py     Level 2 — DNA → protein translation
-aligner.py              Level 3 — pairwise alignment + mutation detection
-analyze.py              Full pipeline: DNA + protein analysis, report generation
+bioforge/               Python package — all core modules
+  __init__.py           Public API entry point (from bioforge import ...)
+  biocore.py            Level 1 — 5-bit storage engine
+  smart_translator.py   Level 2 — DNA → protein translation
+  aligner.py            Level 3 — pairwise alignment + mutation detection
+  analyze.py            Full pipeline: DNA + protein analysis, report generation
+  engine/
+    engine.c            C source — pack, unpack, NW align, translate (GCC -O3)
+    engine.dll          Compiled C backend (Windows)
+    _loader.py          ctypes wrapper with automatic NumPy fallback
+
 check.py                Non-programmer verifier (runs all checks automatically)
 conftest.py             Pytest fixtures shared across all tests
-
-engine/
-  engine.c              C source — pack, unpack, NW align, translate (GCC -O3)
-  engine.dll            Compiled C backend (Windows)
-  _loader.py            ctypes wrapper with automatic NumPy fallback
 
 tools/
   visor.py              Interactive step-by-step translator (CLI)
@@ -222,12 +224,12 @@ with OpenMP, giving **~29× speedup** over the NumPy wavefront.
 
 ### C engine
 
-`engine/engine.c` provides optimised implementations of all hot-path
+`bioforge/engine/engine.c` provides optimised implementations of all hot-path
 operations. Loaded automatically via `ctypes` at import time.  
 If `engine.dll` is missing, all code falls back to NumPy silently.
 
 ```python
-from engine._loader import C_AVAILABLE
+from bioforge.engine._loader import C_AVAILABLE
 print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ```
 
@@ -254,7 +256,7 @@ python check.py
 |------------|--------|
 | Aligner memory | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Banded NW planned for v1.2. |
 | Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
-| C engine | Pre-compiled `.dll`/`.so` not included. Run `python engine/build.py` to compile. Requires GCC. |
+| C engine | Pre-compiled `.dll`/`.so` not included. Run `python bioforge/engine/build.py` to compile. Requires GCC. |
 | Translation | Single-frame only (forward strand, first ATG). 6-frame translation planned for v1.1. |
 
 ---
