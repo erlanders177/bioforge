@@ -71,6 +71,47 @@ EXPORT void bio_pack5(const uint8_t* codes, int32_t n, uint8_t* out) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   TRADUCCION GENETICA
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Localiza el primer codon ATG (A=0, T/U=3, G=2) en el array de codigos.
+ * Devuelve la posicion base-0 del primer nucleotido, o -1 si no se encuentra.
+ */
+EXPORT int32_t bio_find_atg(const uint8_t* codes, int32_t n) {
+    int32_t limit = n - 2;
+    for (int32_t i = 0; i < limit; i++) {
+        if (codes[i] == 0u && codes[i + 1] == 3u && codes[i + 2] == 2u)
+            return i;
+    }
+    return -1;
+}
+
+/*
+ * Traduce n_codons codones usando el LUT de 64 entradas del codigo genetico.
+ *
+ *   codon_lut  : 64 bytes, indice = n1*16 + n2*4 + n3 (A=0 C=1 G=2 T/U=3)
+ *   nuc_codes  : array plano de n_codons*3 valores uint8 [0-3]
+ *   out        : array de salida, n_codons bytes (BioCode de AA o UNK=31)
+ *
+ * Codones con indices fuera de [0,63] (bases ambiguas > 3) se mapean a UNK.
+ * El bucle interno es trivialmente auto-vectorizable por GCC -O3.
+ */
+EXPORT void bio_translate(
+    const uint8_t* codon_lut,
+    const uint8_t* nuc_codes,
+    int32_t        n_codons,
+    uint8_t*       out
+) {
+    for (int32_t i = 0; i < n_codons; i++) {
+        int32_t idx = (int32_t)nuc_codes[i * 3]      * 16
+                    + (int32_t)nuc_codes[i * 3 + 1]  *  4
+                    + (int32_t)nuc_codes[i * 3 + 2];
+        out[i] = (idx < 64) ? codon_lut[idx] : (uint8_t)31u;  /* 31 = UNK */
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    NEEDLEMAN-WUNSCH
    ═══════════════════════════════════════════════════════════════════════════ */
 

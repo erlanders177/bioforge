@@ -51,6 +51,13 @@ import numpy as np
 # ── biocore integration ────────────────────────────────────────────────────────
 from biocore import BioCode, BitPacker, PackedSequence, SeqType
 
+# ── motor C (opcional) ────────────────────────────────────────────────────────
+try:
+    from engine._loader import C_AVAILABLE as _C_AVAILABLE
+    from engine._loader import c_find_atg  as _c_find_atg
+    from engine._loader import c_translate  as _c_translate
+except ImportError:
+    _C_AVAILABLE = False
 
 __all__: list[str] = ["SmartTranslator"]
 
@@ -248,43 +255,33 @@ class SmartTranslator:
         orf_start: int = cls._find_orf_start(nuc_codes)
 
         # ③ Extract ORF from start codon; discard any incomplete trailing codon
-        orf: np.ndarray     = nuc_codes[orf_start:]
-        n_codons: int       = len(orf) // 3
+        orf: np.ndarray = nuc_codes[orf_start:]
+        n_codons: int   = len(orf) // 3
         if n_codons == 0:
             raise ValueError(
                 f"El ORF en la posición {orf_start} no tiene ningún codón "
                 "completo tras el ATG de inicio."
             )
-        # Reshape into (N, 3) codon matrix — zero-copy view
-        codons: np.ndarray = orf[: n_codons * 3].reshape(n_codons, 3)  # (N, 3) uint8
 
-        # ④ Base-4 index computation: idx = n₁×16 + n₂×4 + n₃  (vectorised)
-        #
-        #    Cast to uint16 *before* multiplying to avoid uint8 overflow for
-        #    any non-ACGT symbol (e.g. UNK=31 → 31×16 = 496, overflows uint8).
-        #    Valid codons always produce indices in [0, 63]; invalid ones
-        #    exceed 63 and are intercepted by the mask below.
-        indices_u16: np.ndarray = (
-            codons.astype(np.uint16) * cls._CODON_WEIGHTS
-        ).sum(axis=1)                                              # shape (N,) uint16
-
-        # Mask codons with ambiguous/gap symbols that fall outside [0, 63]
-        valid_codon: np.ndarray = indices_u16 < np.uint16(64)     # shape (N,) bool
-        safe_idx: np.ndarray    = np.where(
-            valid_codon, indices_u16, np.uint16(0)
-        ).astype(np.uint8)                                         # shape (N,) uint8
-
-        # ⑤ Translate: single vectorised fancy-index into CODON_LUT
-        #    Invalid codons are mapped to BioCode.UNK (31)
-        aa_codes: np.ndarray = np.where(
-            valid_codon,
-            cls.CODON_LUT[safe_idx],
-            np.uint8(BioCode.UNK),
-        ).astype(np.uint8)                                         # shape (N,) uint8
+        # ④+⑤ Traducir codones → AAs  (C si disponible, NumPy si no)
+        if _C_AVAILABLE:
+            aa_codes: np.ndarray = _c_translate(cls.CODON_LUT, orf, n_codons)
+        else:
+            codons: np.ndarray  = orf[: n_codons * 3].reshape(n_codons, 3)
+            indices_u16: np.ndarray = (
+                codons.astype(np.uint16) * cls._CODON_WEIGHTS
+            ).sum(axis=1)
+            valid_codon: np.ndarray = indices_u16 < np.uint16(64)
+            safe_idx: np.ndarray    = np.where(
+                valid_codon, indices_u16, np.uint16(0)
+            ).astype(np.uint8)
+            aa_codes = np.where(
+                valid_codon,
+                cls.CODON_LUT[safe_idx],
+                np.uint8(BioCode.UNK),
+            ).astype(np.uint8)
 
         # ⑥ Truncate at first in-frame STOP codon (BioCode.STOP = 24).
-        #    np.argmax on a bool mask returns the first True index in one C-level pass
-        #    without allocating an index array (unlike np.nonzero).
         stop_mask: np.ndarray = aa_codes == np.uint8(BioCode.STOP)
         if stop_mask.any():
             aa_codes = aa_codes[: int(np.argmax(stop_mask))]      # exclude STOP itself
@@ -334,16 +331,18 @@ class SmartTranslator:
         ValueError
             If no ATG/AUG codon is found (Fail-Fast).
         """
-        # Build (n-2, 3) zero-copy sliding view — no data copy
+        if _C_AVAILABLE:
+            pos = _c_find_atg(codes)
+            if pos == -1:
+                raise ValueError(
+                    "No se encontró ningún codón de inicio ATG/AUG en la secuencia. "
+                    "Asegúrate de que sea una secuencia codificante (CDS) válida."
+                )
+            return pos
+
+        # fallback NumPy: sliding-window vectorizado
         windows: np.ndarray = sliding_window_view(codes, window_shape=3)
-
-        # Vectorised 3-way comparison: True only where all three bases match ATG
-        hit_mask: np.ndarray = np.all(
-            windows == cls._START_CODON, axis=1
-        )                                                          # shape (n-2,) bool
-
-        # np.argmax returns the index of the *first* True entry.
-        # If no True exists, it returns 0 — the guard below catches that case.
+        hit_mask: np.ndarray = np.all(windows == cls._START_CODON, axis=1)
         first_hit: int = int(np.argmax(hit_mask))
         if not hit_mask[first_hit]:
             raise ValueError(

@@ -22,3 +22,7 @@ env/
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Motor C compilado (binarios, no van en git)
+engine/engine.dll
+engine/engine.so

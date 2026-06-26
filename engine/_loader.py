@@ -52,6 +52,14 @@ def _setup_signatures() -> None:
     _lib.bio_unpack5.restype  = None
     _lib.bio_unpack5.argtypes = [_U8P, _I32, _U8P]
 
+    # ── bio_find_atg ──────────────────────────────────────────────────────────
+    _lib.bio_find_atg.restype  = _I32
+    _lib.bio_find_atg.argtypes = [_U8P, _I32]
+
+    # ── bio_translate ─────────────────────────────────────────────────────────
+    _lib.bio_translate.restype  = None
+    _lib.bio_translate.argtypes = [_U8P, _U8P, _I32, _U8P]
+
     # ── nw_global / nw_semiglobal (misma firma) ────────────────────────────────
     _nw_args = [
         _U8P, _I32,     # codes_a, m
@@ -99,6 +107,26 @@ def c_unpack5(packed: np.ndarray, n: int) -> np.ndarray:
     _lib.bio_unpack5(
         safe.ctypes.data_as(_U8P),
         _I32(n),
+        out.ctypes.data_as(_U8P),
+    )
+    return out
+
+
+def c_find_atg(codes: np.ndarray) -> int:
+    """Devuelve el indice del primer ATG en codes, o -1 si no existe."""
+    safe = np.ascontiguousarray(codes, dtype=np.uint8)
+    return int(_lib.bio_find_atg(safe.ctypes.data_as(_U8P), _I32(len(safe))))
+
+
+def c_translate(codon_lut: np.ndarray, nuc_codes: np.ndarray, n_codons: int) -> np.ndarray:
+    """Traduce n_codons codones usando el LUT; devuelve array uint8 de AAs."""
+    lut  = np.ascontiguousarray(codon_lut, dtype=np.uint8)
+    safe = np.ascontiguousarray(nuc_codes[:n_codons * 3], dtype=np.uint8)
+    out  = np.empty(n_codons, dtype=np.uint8)
+    _lib.bio_translate(
+        lut.ctypes.data_as(_U8P),
+        safe.ctypes.data_as(_U8P),
+        _I32(n_codons),
         out.ctypes.data_as(_U8P),
     )
     return out
