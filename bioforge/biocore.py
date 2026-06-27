@@ -1345,10 +1345,13 @@ class SmartImporter:
                     qual_used = int(qual_off[m])
                     fixed = (int(nsy[0]) if (m > 0 and nsy[0] > 0
                              and bool(np.all(nsy == nsy[0]))) else 0)
-                    if fixed:
+                    # Solo usar la ruta 2-D si las calidades cuadran exactamente
+                    # (FASTQ malformado con qual != secuencia → ruta irregular).
+                    if fixed and qual_used == m * fixed:
                         qual = qual_buf[:qual_used].copy().reshape(m, fixed)
                         qoff = None
                     else:
+                        fixed = 0
                         qual = qual_buf[:qual_used].copy()
                         qoff = qual_off[: m + 1].copy()
                     yield ReadBatch(packed, poff, nsy, tps,

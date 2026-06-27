@@ -786,6 +786,10 @@ static int32_t _parse_one(
     if (type_out) *type_out = 0;
     if (qual_out) *qual_out = 0;
 
+    /* Bucle externo: los registros vacíos se SALTAN (no detienen la lectura).
+       Devolver 0 solo en el fin de archivo real — nunca por un registro vacío,
+       que de otro modo truncaría el resto del fichero. */
+    for (;;) {
     if (p->fmt == 1) {
         /* ── FASTA ─────────────────────────────────────────────────────── */
         uint8_t* gt = _find_ch(p, '>');
@@ -805,12 +809,16 @@ static int32_t _parse_one(
             total += n;
         }
 
-        int type = (force_type >= 0) ? force_type
-                 : (_has_prot_chars(p, codes, total) ? 1 : 0);
-        _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, total);
-        if (type_out) *type_out = type;
-        *n_out = total;
-        return (total > 0) ? 1 : 0;
+        if (total > 0) {
+            int type = (force_type >= 0) ? force_type
+                     : (_has_prot_chars(p, codes, total) ? 1 : 0);
+            _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, total);
+            if (type_out) *type_out = type;
+            *n_out = total;
+            return 1;
+        }
+        if (_peek(p) < 0) return 0;   /* fin de archivo real */
+        continue;                      /* registro vacío: saltar al siguiente */
 
     } else {
         /* ── FASTQ ─────────────────────────────────────────────────────── */
@@ -838,22 +846,28 @@ static int32_t _parse_one(
         _readline(p, NULL, 0);
 
         /* Línea 4: calidades */
+        int32_t q = 0;
         if (qual && qual_out) {
-            int32_t q = _readbytes(p, qual, codes_max);
+            q = _readbytes(p, qual, codes_max);
             if (q < 0) q = 0;
             for (int32_t i = 0; i < q; i++)
                 qual[i] = (uint8_t)((qual[i] >= 33u) ? qual[i] - 33u : 0u);
-            *qual_out = q;
         } else {
             _readline(p, NULL, 0);
         }
 
-        int type = (force_type == 1) ? 1 : 0;
-        _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, n);
-        if (type_out) *type_out = type;
-        *n_out = n;
-        return (n > 0) ? 1 : 0;
+        if (n > 0) {
+            int type = (force_type == 1) ? 1 : 0;
+            _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, n);
+            if (type_out) *type_out = type;
+            if (qual_out) *qual_out = q;
+            *n_out = n;
+            return 1;
+        }
+        if (_peek(p) < 0) return 0;   /* fin de archivo real */
+        continue;                      /* lectura vacía: saltar a la siguiente */
     }
+    }   /* for (;;) */
 }
 
 /* Envoltorio público de un solo registro (compatibilidad v2.0). */

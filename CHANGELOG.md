@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.0.1] — 2026-06-27
+
+Correcciones encontradas en una auditoría completa del código tras v2.0.0.
+
+### Fixed
+
+- **Registros vacíos truncaban el archivo** (`engine.c`, `_parse_one`): un registro
+  FASTA/FASTQ sin secuencia hacía que el parser devolviera `0`, indistinguible del
+  fin de archivo. Resultado: un registro vacío al inicio de un lote (en el peor
+  caso, el primero del fichero) **detenía la lectura y descartaba el resto**.
+  Ahora los registros vacíos se **saltan**; `0` solo significa EOF real.
+- **FASTQ malformado (calidad ≠ longitud de secuencia)** provocaba un
+  `ValueError` críptico al hacer `reshape` en la ruta columnar de longitud fija
+  (`biocore.py`, `_stream_columnar`). Ahora se detecta el descuadre y se usa la
+  ruta irregular, sin fallo.
+
+### Tests
+- 275 tests (desde 269): 6 nuevos de regresión para registros vacíos (FASTA/FASTQ,
+  en medio y como primero) y FASTQ con calidad de longitud incorrecta.
+
+---
+
 ## [2.0.0] — 2026-06-27
 
 Versión centrada en **velocidad de ingesta**: el objetivo es procesar secuencias

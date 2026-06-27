@@ -475,3 +475,56 @@ def test_fastq_gz_columnar(tmp_path):
     for b in SmartImporter.stream_fastq_batches(str(gzf)):
         total += len(b)
     assert total == len(recs)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Registros vacíos — deben SALTARSE, nunca truncar el archivo
+# (regresión: un registro vacío devolvía 0 en C = indistinguible de EOF)
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_fasta_empty_record_in_middle_is_skipped(tmp_path):
+    p = tmp_path / "m.fasta"
+    p.write_text(">a\nACGT\n>vacio\n>c\nGGGG\n", encoding="ascii")
+    got = [(s.header, s.to_string()) for s in SmartImporter.stream(str(p))]
+    assert got == [("a", "ACGT"), ("c", "GGGG")]
+
+
+def test_fasta_empty_first_record_does_not_truncate(tmp_path):
+    p = tmp_path / "f.fasta"
+    p.write_text(">vacio\n>a\nACGT\n>c\nGGGG\n", encoding="ascii")
+    got = [s.header for s in SmartImporter.stream(str(p))]
+    assert got == ["a", "c"]            # antes del fix devolvía []
+
+
+def test_fastq_empty_record_in_middle_is_skipped(tmp_path):
+    p = tmp_path / "m.fastq"
+    p.write_text("@r1\nACGT\n+\nIIII\n@r2\n\n+\n\n@r3\nGGGG\n+\nIIII\n",
+                 encoding="ascii")
+    got = [r.sequence.header for r in SmartImporter.stream_fastq(str(p))]
+    assert got == ["r1", "r3"]
+
+
+def test_fastq_empty_first_record_does_not_truncate(tmp_path):
+    p = tmp_path / "f.fastq"
+    p.write_text("@vacio\n\n+\n\n@r2\nACGT\n+\nIIII\n@r3\nGGGG\n+\nIIII\n",
+                 encoding="ascii")
+    got = [r.sequence.header for r in SmartImporter.stream_fastq(str(p))]
+    assert got == ["r2", "r3"]
+
+
+def test_columnar_empty_first_record(tmp_path):
+    p = tmp_path / "c.fastq"
+    p.write_text("@vacio\n\n+\n\n@r2\nACGT\n+\nIIII\n", encoding="ascii")
+    total = sum(len(b) for b in SmartImporter.stream_fastq_batches(str(p)))
+    assert total == 1
+
+
+def test_malformed_fastq_quality_length_no_crash(tmp_path):
+    # Calidad más corta que la secuencia: no debe romper el reshape 2-D.
+    p = tmp_path / "bad.fastq"
+    p.write_text("@r1\nACGT\n+\nIIII\n@r2\nACGT\n+\nIII\n@r3\nACGT\n+\nIIII\n",
+                 encoding="ascii")
+    means = []
+    for b in SmartImporter.stream_fastq_batches(str(p)):
+        means.append(b.mean_quality())   # no debe lanzar ValueError
+    assert np.concatenate(means).shape[0] == 3
