@@ -78,8 +78,14 @@ State  Symbol            State  Symbol
 ```bash
 git clone https://github.com/erlanders177/bioforge.git
 cd bioforge
-pip install numpy
+pip install -r requirements.txt      # only needs NumPy
 ```
+
+**Requirements**
+- Python ≥ 3.10
+- NumPy ≥ 1.24 — the only runtime dependency
+- The C engine ships pre-compiled (`engine.dll`, zlib statically linked). If it
+  can't load on your platform, BioForge falls back to NumPy automatically.
 
 **Optional — compile the C engine** (27–29× faster on translation and alignment):
 ```bash

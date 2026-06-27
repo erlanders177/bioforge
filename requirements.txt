@@ -1,0 +1,15 @@
+# BioForge — dependencias
+# ─────────────────────────────────────────────────────────────────────
+# Para USAR BioForge solo necesitas NumPy. El motor C va precompilado
+# (engine.dll) con zlib estático; si no carga, cae a NumPy automáticamente.
+#
+#   pip install -r requirements.txt
+#
+# Python >= 3.10
+
+numpy>=1.24
+
+# ── Opcionales (no se instalan con este archivo) ─────────────────────
+# Tests:      pip install pytest pytest-benchmark hypothesis   (o: pip install -e .[dev])
+# Benchmark:  pip install biopython psutil                     (o: pip install -e .[bench])
+# Recompilar el motor C (opcional): GCC / MinGW-w64 + python bioforge/engine/build.py
