@@ -28,6 +28,12 @@ Two core rules:
 | Memory (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
 | Translation throughput | **~5 M amino acids / second** (NumPy) · **~27× faster** with C engine |
 | NW alignment 1000×1000 nt | **~165 ms** (NumPy) · **~29× faster** with C engine |
+| FASTA ingestion (C batch parser) | **~80 M bases / second** |
+| FASTQ ingestion (C batch parser) | **~14 M bases / s · ~94 K reads / s** |
+| QC filter 200 K reads (columnar) | **0.28 s** — **18.6× faster** than per-record |
+| vs Biopython — QC filter | **~5–6× faster**, identical result |
+| vs Biopython — load all in RAM | **~6.9× less memory** (115 MB vs 801 MB) · ~9.5× faster |
+| Compressed input | **`.gz` read transparently in C** (zlib, static-linked) |
 | Dependencies | **NumPy** (C engine included, pre-compiled) |
 
 ---
@@ -106,6 +112,61 @@ print(len(seq.data))      # 21  (37.5% smaller than ASCII)
 print(seq.to_string())    # ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC
 ```
 
+### Stream a huge FASTA/FASTQ with constant RAM
+
+```python
+from bioforge import SmartImporter
+
+# One PackedSequence at a time — never loads the whole file
+for seq in SmartImporter.stream("genome.fa"):
+    print(seq.header, seq.n_symbols)
+
+# FASTQ yields FastqRecord (sequence + Phred qualities)
+for rec in SmartImporter.stream_fastq("reads.fastq"):
+    if rec.passes_quality(20):
+        process(rec.sequence)
+```
+
+### Quality-filter millions of reads — the fast lane (columnar)
+
+```python
+from bioforge import SmartImporter
+
+total = passed = 0
+for batch in SmartImporter.stream_fastq_batches("reads.fastq"):
+    mask = batch.passes(20)          # ONE NumPy op for thousands of reads
+    total  += len(batch)
+    passed += int(mask.sum())
+    kept = batch.filter(mask)        # new ReadBatch, no per-read objects
+print(f"{passed}/{total} reads with mean quality >= 20")
+```
+
+`stream_fastq_batches` keeps a whole batch as contiguous matrices instead of
+one object per read, so filtering 200 000 reads drops from ~5.3 s to ~0.28 s.
+Materialise a single read only when you need it: `batch[i]` → `FastqRecord`.
+
+Compressed `.gz` files are read transparently (decompressed in C):
+
+```python
+for rec in SmartImporter.stream_fastq("reads.fastq.gz"):   # no manual gunzip
+    ...
+```
+
+### GC content and k-mer spectrum — vectorised over a whole batch
+
+```python
+from bioforge import SmartImporter
+
+spectrum = None
+for batch in SmartImporter.stream_fastq_batches("reads.fastq"):
+    gc = batch.gc_content()              # GC fraction per read (NumPy array)
+    s  = batch.kmer_spectrum(k=4)        # counts of all 4^4 k-mers in the batch
+    spectrum = s if spectrum is None else spectrum + s
+# spectrum[i] = how many times k-mer #i appears across the whole file
+```
+
+Both run with zero per-read objects; ambiguous bases (N) are skipped from k-mers.
+
 ### Translate DNA to protein
 
 ```python
@@ -181,12 +242,14 @@ tools/
   visor.py              Interactive step-by-step translator (CLI)
   comparador.py         Sequence comparator tool (CLI)
   stress_test.py        30M-base performance benchmark
+  bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
 tests/
   test_biocore.py       L1: property-based tests (Hypothesis) + benchmarks
   test_translator.py    L2: genetic code correctness + error paths
   test_aligner.py       L3: alignment properties + mutation detection
   test_analyze.py       Pipeline: full integration tests + CLI tests
+  test_streaming.py     Streaming/batch parser + columnar API (Sequence/ReadBatch)
 
 docs/
   architecture.md       Design rules, levels, encoding details
@@ -238,7 +301,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (209 tests)
+# Full test suite (269 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -272,6 +335,13 @@ python check.py
 - [x] 6-frame translation — `SmartTranslator.translate_all_frames()`
 - [x] Banded NW — `SequenceAligner.align(seq_a, seq_b, band=N)`
 - [x] Smith-Waterman local alignment — `SequenceAligner.align_local()`
+- [x] Streaming FASTA/FASTQ parser in C — `SmartImporter.stream()` / `stream_fastq()`
+- [x] Batch parser (5-bit encoding in C) — ~80 M bases/s FASTA, ~94 K reads/s FASTQ
+- [x] Columnar QC API — `stream_fastq_batches()` · `ReadBatch.passes()` / `filter()`
+- [x] Compressed `.gz` decoded in C (zlib, static-linked, transparent)
+- [x] Object-free columnar k-mer spectrum + per-read GC — `kmer_spectrum()` / `gc_content()`
+- [x] Benchmark vs Biopython — `tools/bench_vs_biopython.py`
+- [ ] Native per-platform wheels on PyPI (cibuildwheel)
 
 ---
 

@@ -17,9 +17,27 @@
   #define EXPORT __attribute__((visibility("default")))
 #endif
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
+/* ── Lectura de archivos: gzip transparente si se compila con -DBIO_USE_ZLIB ──
+   zlib gzopen/gzread leen tanto archivos planos como .gz (autodetección del
+   magic gzip), así que un único código sirve para ambos formatos. Si zlib no
+   está disponible, se compila sin -DBIO_USE_ZLIB y se usa stdio normal. */
+#ifdef BIO_USE_ZLIB
+  #include <zlib.h>
+  typedef gzFile BIO_FILE;
+  #define BIO_OPEN(path)     gzopen((path), "rb")
+  #define BIO_READ(f, b, n)  gzread((f), (b), (unsigned)(n))
+  #define BIO_CLOSE(f)       gzclose(f)
+#else
+  typedef FILE* BIO_FILE;
+  #define BIO_OPEN(path)     fopen((path), "rb")
+  #define BIO_READ(f, b, n)  ((int)fread((b), 1, (size_t)(n), (f)))
+  #define BIO_CLOSE(f)       fclose(f)
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
    5-BIT PACK / UNPACK / GETITEM
@@ -541,4 +559,418 @@ EXPORT int32_t nw_banded_semiglobal(
 ) {
     return _nw_banded_core(ca, m, cb, n, decode, match, mismatch, gap, band, 1,
                            out_a, out_b, score, matches, mismatches, gaps);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STREAMING PARSER  (FASTA + FASTQ)
+   ─────────────────────────────────────────────────────────────────────────
+   Buffer de 64 KB. memchr() usa SIMD de la libc (AVX2/SSE2/NEON) para
+   encontrar saltos de línea sin escribir intrínsecos manuales.
+   La secuencia se codifica a BioCode 5-bit directamente en C, sin pasar
+   nunca por strings Python — esto elimina el cuello de botella principal
+   de Biopython y del SmartImporter.stream() en Python puro.
+
+   API:
+     bio_parser_open(path)           → handle opaco  (NULL si falla)
+     bio_parser_next(handle, …)      → 1 OK | 0 EOF | -1 error | -2 overflow
+     bio_parser_close(handle)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#define PBUF 65536   /* 64 KB de buffer de lectura */
+
+#define PSCR_HDR 4096          /* cabecera máxima en modo batch */
+#define PSCR_CAP (1 << 24)     /* 16 MB scratch por secuencia (modo batch) */
+
+typedef struct {
+    BIO_FILE fp;
+    uint8_t buf[PBUF];
+    int32_t beg, end;
+    int     eof;
+    int     fmt;    /* 1 = FASTA, 2 = FASTQ */
+    int     first;  /* 1 = no se ha leído aún el primer registro */
+    uint8_t nuc_lut[256];
+    uint8_t aa_lut[256];
+    uint8_t is_prot[256];
+
+    /* ── scratch para el parser por lotes (bio_parser_next_batch) ───────── */
+    char     scr_hdr[PSCR_HDR];
+    uint8_t* scr_codes;     /* malloc PSCR_CAP, NULL hasta el primer batch */
+    uint8_t* scr_qual;      /* malloc PSCR_CAP, NULL hasta el primer batch */
+    int32_t  scr_n, scr_q, scr_type;
+    int      has_pending;   /* 1 = hay un registro en scratch sin emitir */
+} BioParser;
+
+/* ── LUTs idénticas a las de Python (mismo esquema BioCode 5-bit) ───────── */
+static void _init_luts(BioParser* p) {
+    memset(p->nuc_lut, 31, 256);
+    p->nuc_lut['A'] = p->nuc_lut['a'] =  0;
+    p->nuc_lut['C'] = p->nuc_lut['c'] =  1;
+    p->nuc_lut['G'] = p->nuc_lut['g'] =  2;
+    p->nuc_lut['T'] = p->nuc_lut['t'] =  3;
+    p->nuc_lut['U'] = p->nuc_lut['u'] =  3;
+    p->nuc_lut['N'] = p->nuc_lut['n'] = 31;
+    p->nuc_lut['-'] = p->nuc_lut['.'] = 25;
+
+    memset(p->aa_lut, 31, 256);
+    p->aa_lut['A'] = p->aa_lut['a'] =  4;
+    p->aa_lut['C'] = p->aa_lut['c'] =  5;
+    p->aa_lut['D'] = p->aa_lut['d'] =  6;
+    p->aa_lut['E'] = p->aa_lut['e'] =  7;
+    p->aa_lut['F'] = p->aa_lut['f'] =  8;
+    p->aa_lut['G'] = p->aa_lut['g'] =  9;
+    p->aa_lut['H'] = p->aa_lut['h'] = 10;
+    p->aa_lut['I'] = p->aa_lut['i'] = 11;
+    p->aa_lut['K'] = p->aa_lut['k'] = 12;
+    p->aa_lut['L'] = p->aa_lut['l'] = 13;
+    p->aa_lut['M'] = p->aa_lut['m'] = 14;
+    p->aa_lut['N'] = p->aa_lut['n'] = 15;
+    p->aa_lut['P'] = p->aa_lut['p'] = 16;
+    p->aa_lut['Q'] = p->aa_lut['q'] = 17;
+    p->aa_lut['R'] = p->aa_lut['r'] = 18;
+    p->aa_lut['S'] = p->aa_lut['s'] = 19;
+    p->aa_lut['T'] = p->aa_lut['t'] = 20;
+    p->aa_lut['V'] = p->aa_lut['v'] = 21;
+    p->aa_lut['W'] = p->aa_lut['w'] = 22;
+    p->aa_lut['Y'] = p->aa_lut['y'] = 23;
+    p->aa_lut['*'] = 24;
+    p->aa_lut['-'] = 25;
+    p->aa_lut['X'] = p->aa_lut['x'] = 31;
+
+    memset(p->is_prot, 0, 256);
+    p->is_prot['E'] = p->is_prot['e'] = 1;
+    p->is_prot['F'] = p->is_prot['f'] = 1;
+    p->is_prot['I'] = p->is_prot['i'] = 1;
+    p->is_prot['L'] = p->is_prot['l'] = 1;
+    p->is_prot['P'] = p->is_prot['p'] = 1;
+    p->is_prot['Q'] = p->is_prot['q'] = 1;
+    p->is_prot['*'] = 1;
+}
+
+/* ── Rellena el buffer conservando bytes no consumidos ─────────────────── */
+static void _refill_buf(BioParser* p) {
+    if (p->eof) return;
+    int32_t rem = p->end - p->beg;
+    if (rem > 0) memmove(p->buf, p->buf + p->beg, (size_t)rem);
+    p->beg = 0; p->end = rem;
+    int32_t n = (int32_t)BIO_READ(p->fp, p->buf + rem, PBUF - rem);
+    if (n <= 0) { p->eof = 1; n = 0; }   /* 0 = EOF, -1 = error de descompresión */
+    p->end += n;
+}
+
+/* ── Primer byte disponible sin consumirlo, o -1 en EOF ─────────────────── */
+static int _peek(BioParser* p) {
+    if (p->beg >= p->end && !p->eof) _refill_buf(p);
+    return (p->beg < p->end) ? (int)p->buf[p->beg] : -1;
+}
+
+/* ── Busca 'ch' usando memchr (SIMD en libc moderna), rellenando si hace falta ─ */
+static uint8_t* _find_ch(BioParser* p, uint8_t ch) {
+    for (;;) {
+        uint8_t* f = (uint8_t*)memchr(
+            p->buf + p->beg, (int)ch, (size_t)(p->end - p->beg));
+        if (f) return f;
+        if (p->eof) return NULL;
+        _refill_buf(p);
+        if (p->end == 0) return NULL;
+    }
+}
+
+/* ── Lee texto hasta '\n', escribe en out[] si out!=NULL.
+      Elimina '\r'. Retorna longitud leída (sin '\n'), o -1 si max es 0. ─── */
+static int32_t _readline(BioParser* p, char* out, int32_t max) {
+    if (out && max <= 0) out = NULL;
+    int32_t total = 0;
+    for (;;) {
+        if (p->beg >= p->end) {
+            _refill_buf(p);
+            if (p->beg >= p->end) {
+                if (out) out[total] = '\0';
+                return total;
+            }
+        }
+        uint8_t* nl = (uint8_t*)memchr(
+            p->buf + p->beg, '\n', (size_t)(p->end - p->beg));
+        int32_t seg_end = nl ? (int32_t)(nl - p->buf) : p->end;
+        int32_t seg_len = seg_end - p->beg;
+        if (seg_len > 0 && p->buf[seg_end - 1] == '\r') seg_len--;
+        if (out) {
+            int32_t copy = seg_len;
+            if (total + copy >= max) copy = max - 1 - total;
+            if (copy > 0) memcpy(out + total, p->buf + p->beg, (size_t)copy);
+        }
+        total += seg_len;
+        p->beg = nl ? seg_end + 1 : p->end;
+        if (nl) { if (out) out[total < max ? total : max - 1] = '\0'; return total; }
+    }
+}
+
+/* ── Lee bytes crudos hasta '\n' en out[]; elimina '\r'.
+      Retorna conteo, -1 si overflow. ─────────────────────────────────────── */
+static int32_t _readbytes(BioParser* p, uint8_t* out, int32_t max) {
+    int32_t total = 0;
+    for (;;) {
+        if (p->beg >= p->end) {
+            _refill_buf(p);
+            if (p->beg >= p->end) return total;
+        }
+        uint8_t* nl = (uint8_t*)memchr(
+            p->buf + p->beg, '\n', (size_t)(p->end - p->beg));
+        int32_t seg_end = nl ? (int32_t)(nl - p->buf) : p->end;
+        int32_t seg_len = seg_end - p->beg;
+        if (seg_len > 0 && p->buf[seg_end - 1] == '\r') seg_len--;
+        if (total + seg_len > max) return -1;
+        if (out && seg_len > 0)
+            memcpy(out + total, p->buf + p->beg, (size_t)seg_len);
+        total += seg_len;
+        p->beg = nl ? seg_end + 1 : p->end;
+        if (nl) return total;
+    }
+}
+
+/* ── Codifica in-place raw_bytes → BioCode usando lut ─────────────────── */
+static void _encode_inplace(const uint8_t* lut, uint8_t* data, int32_t n) {
+    for (int32_t i = 0; i < n; i++) data[i] = lut[data[i]];
+}
+
+/* ── Detecta si hay caracteres exclusivos de proteína ─────────────────── */
+static int _has_prot_chars(const BioParser* p, const uint8_t* raw, int32_t n) {
+    for (int32_t i = 0; i < n; i++)
+        if (p->is_prot[raw[i]]) return 1;
+    return 0;
+}
+
+/* ─────────────────── API pública ─────────────────────────────────────── */
+
+EXPORT void* bio_parser_open(const char* path) {
+    BioParser* p = (BioParser*)calloc(1, sizeof(BioParser));
+    if (!p) return NULL;
+    p->fp = BIO_OPEN(path);
+    if (!p->fp) { free(p); return NULL; }
+    _init_luts(p);
+    p->first = 1;
+    /* Detectar formato: leer primer carácter no-espacio */
+    _refill_buf(p);
+    while (p->beg < p->end) {
+        uint8_t c = p->buf[p->beg];
+        if (c == '>') { p->fmt = 1; break; }
+        if (c == '@') { p->fmt = 2; break; }
+        if (c != '\n' && c != '\r' && c != ' ') break;
+        p->beg++;
+    }
+    if (!p->fmt) p->fmt = 1;   /* por defecto FASTA */
+    return (void*)p;
+}
+
+/*
+ * bio_parser_next — lee el siguiente registro FASTA o FASTQ.
+ *
+ *   handle      : devuelto por bio_parser_open
+ *   hdr/hdr_max : buffer para la cabecera sin '>'/'@' (null-terminado)
+ *   codes/codes_max/n_out : buffer de BioCode 5-bit (sin empaquetar), símbolos escritos
+ *   force_type  : -1 auto | 0 nucleótido | 1 proteína
+ *   type_out    : tipo detectado (0=nuc, 1=prot)
+ *   qual/qual_out : calidades Phred crudas (ASCII-33); NULL para FASTA
+ *
+ * Retorna: 1=registro leído | 0=EOF | -1=error | -2=overflow de buffer
+ */
+static int32_t _parse_one(
+    BioParser* p,
+    char*    hdr,      int32_t hdr_max,
+    uint8_t* codes,    int32_t codes_max,  int32_t* n_out,
+    int32_t  force_type,
+    int32_t* type_out,
+    uint8_t* qual,     int32_t* qual_out
+) {
+    if (!p) return -1;
+    *n_out = 0;
+    if (type_out) *type_out = 0;
+    if (qual_out) *qual_out = 0;
+
+    if (p->fmt == 1) {
+        /* ── FASTA ─────────────────────────────────────────────────────── */
+        uint8_t* gt = _find_ch(p, '>');
+        if (!gt) return 0;
+        p->beg = (int32_t)(gt - p->buf) + 1;   /* saltar '>' */
+
+        _readline(p, hdr, hdr_max);
+
+        int32_t total = 0;
+        for (;;) {
+            int c = _peek(p);
+            if (c < 0 || c == '>')   break;             /* EOF / siguiente registro */
+            if (c == '\n' || c == '\r') { p->beg++; continue; }  /* línea vacía */
+            if (c == ';') { _readline(p, NULL, 0); continue; }    /* comentario */
+            int32_t n = _readbytes(p, codes + total, codes_max - total);
+            if (n < 0) { *n_out = total; return -2; }
+            total += n;
+        }
+
+        int type = (force_type >= 0) ? force_type
+                 : (_has_prot_chars(p, codes, total) ? 1 : 0);
+        _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, total);
+        if (type_out) *type_out = type;
+        *n_out = total;
+        return (total > 0) ? 1 : 0;
+
+    } else {
+        /* ── FASTQ ─────────────────────────────────────────────────────── */
+        if (p->first) {
+            /* Sincronizar al primer '@' */
+            uint8_t* at = _find_ch(p, '@');
+            if (!at) return 0;
+            p->beg  = (int32_t)(at - p->buf) + 1;
+            p->first = 0;
+        } else {
+            /* Registros posteriores: el buffer apunta justo al '@' */
+            if (p->beg >= p->end) _refill_buf(p);
+            if (p->beg >= p->end) return 0;
+            if (p->buf[p->beg] == '@') p->beg++;
+        }
+
+        /* Línea 1: cabecera */
+        _readline(p, hdr, hdr_max);
+
+        /* Línea 2: secuencia */
+        int32_t n = _readbytes(p, codes, codes_max);
+        if (n < 0) return -2;
+
+        /* Línea 3: '+comment' — consumir y descartar */
+        _readline(p, NULL, 0);
+
+        /* Línea 4: calidades */
+        if (qual && qual_out) {
+            int32_t q = _readbytes(p, qual, codes_max);
+            if (q < 0) q = 0;
+            for (int32_t i = 0; i < q; i++)
+                qual[i] = (uint8_t)((qual[i] >= 33u) ? qual[i] - 33u : 0u);
+            *qual_out = q;
+        } else {
+            _readline(p, NULL, 0);
+        }
+
+        int type = (force_type == 1) ? 1 : 0;
+        _encode_inplace(type ? p->aa_lut : p->nuc_lut, codes, n);
+        if (type_out) *type_out = type;
+        *n_out = n;
+        return (n > 0) ? 1 : 0;
+    }
+}
+
+/* Envoltorio público de un solo registro (compatibilidad v2.0). */
+EXPORT int32_t bio_parser_next(
+    void*    handle,
+    char*    hdr,      int32_t hdr_max,
+    uint8_t* codes,    int32_t codes_max,  int32_t* n_out,
+    int32_t  force_type,
+    int32_t* type_out,
+    uint8_t* qual,     int32_t* qual_out
+) {
+    return _parse_one((BioParser*)handle, hdr, hdr_max, codes, codes_max,
+                      n_out, force_type, type_out, qual, qual_out);
+}
+
+/*
+ * bio_parser_next_batch — parsea hasta max_records registros en UNA llamada.
+ *
+ * Empaqueta cada secuencia a BioCode 5-bit dentro de C (bio_pack5), de modo
+ * que Python no cruza la frontera ni llama a pack() por registro. Esto elimina
+ * los dos cuellos de botella medidos: el peaje ctypes y el pack NumPy por
+ * registro.
+ *
+ * Buffers de salida (asignados una vez en Python y reutilizados):
+ *   hdr_buf  [hdr_buf_max]      cabeceras concatenadas, null-terminadas
+ *   hdr_off  [max_records+1]    offset de inicio de cada cabecera en hdr_buf
+ *   pack_buf [pack_buf_max]     secuencias 5-bit concatenadas, byte-alineadas
+ *   pack_off [max_records+1]    offset de byte de inicio de cada secuencia
+ *   n_syms   [max_records]      nº de símbolos por registro (para desempaquetar)
+ *   types    [max_records]      tipo (0=nuc, 1=prot) por registro
+ *   qual_buf [qual_buf_max]     calidades Phred concatenadas (NULL en FASTA)
+ *   qual_off [max_records+1]    offset de inicio de calidades por registro
+ *
+ * Si un registro no cabe en lo que queda de los buffers, se guarda en scratch
+ * (has_pending) y se emite en la siguiente llamada.
+ *
+ * Retorna: nº de registros parseados (>=0) | -1 error | -2 registro demasiado
+ *          grande para el buffer entero.
+ */
+EXPORT int32_t bio_parser_next_batch(
+    void*    handle,    int32_t max_records,  int32_t force_type,
+    char*    hdr_buf,   int32_t hdr_buf_max,  int32_t* hdr_off,
+    uint8_t* pack_buf,  int32_t pack_buf_max, int32_t* pack_off,
+    int32_t* n_syms,    int32_t* types,
+    uint8_t* qual_buf,  int32_t qual_buf_max, int32_t* qual_off
+) {
+    BioParser* p = (BioParser*)handle;
+    if (!p) return -1;
+
+    /* Reserva perezosa del scratch en el primer batch. */
+    if (!p->scr_codes) {
+        p->scr_codes = (uint8_t*)malloc(PSCR_CAP);
+        p->scr_qual  = (uint8_t*)malloc(PSCR_CAP);
+        if (!p->scr_codes || !p->scr_qual) return -1;
+    }
+
+    int32_t count = 0, hdr_used = 0, pack_used = 0, qual_used = 0;
+    hdr_off[0] = 0; pack_off[0] = 0;
+    if (qual_off) qual_off[0] = 0;
+
+    while (count < max_records) {
+        int32_t n, q = 0, type;
+
+        if (p->has_pending) {
+            n = p->scr_n; q = p->scr_q; type = p->scr_type;
+        } else {
+            int32_t r = _parse_one(
+                p, p->scr_hdr, PSCR_HDR,
+                p->scr_codes, PSCR_CAP, &n,
+                force_type, &type,
+                qual_buf ? p->scr_qual : NULL, &q);
+            if (r == 0) break;      /* EOF */
+            if (r < 0) return r;    /* error / registro mayor que el scratch */
+        }
+
+        int32_t hlen = (int32_t)strlen(p->scr_hdr);
+        int32_t plen = (n * 5 + 7) / 8;
+
+        /* ¿Cabe en lo que queda de los buffers de salida? (+1 slack de pack5) */
+        if (hdr_used  + hlen + 1 > hdr_buf_max  ||
+            pack_used + plen + 1 > pack_buf_max ||
+            (qual_buf && qual_used + q > qual_buf_max)) {
+            if (count == 0) return -2;          /* no cabe ni en buffer vacío */
+            p->scr_n = n; p->scr_q = q; p->scr_type = type;
+            p->has_pending = 1;
+            break;
+        }
+        p->has_pending = 0;
+
+        memcpy(hdr_buf + hdr_used, p->scr_hdr, (size_t)hlen);
+        hdr_buf[hdr_used + hlen] = '\0';
+        hdr_used += hlen + 1;
+        hdr_off[count + 1] = hdr_used;
+
+        bio_pack5(p->scr_codes, n, pack_buf + pack_used);
+        pack_used += plen;
+        pack_off[count + 1] = pack_used;
+
+        n_syms[count] = n;
+        types[count]  = type;
+
+        if (qual_buf) {
+            if (q > 0) memcpy(qual_buf + qual_used, p->scr_qual, (size_t)q);
+            qual_used += q;
+            qual_off[count + 1] = qual_used;
+        }
+        count++;
+    }
+    return count;
+}
+
+EXPORT void bio_parser_close(void* handle) {
+    BioParser* p = (BioParser*)handle;
+    if (p) {
+        if (p->fp)        BIO_CLOSE(p->fp);
+        if (p->scr_codes) free(p->scr_codes);
+        if (p->scr_qual)  free(p->scr_qual);
+        free(p);
+    }
 }

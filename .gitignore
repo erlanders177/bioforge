@@ -23,6 +23,12 @@ env/
 .DS_Store
 Thumbs.db
 
-# Motor C compilado (binarios, no van en git)
+# Motor C compilado en raíz (binarios sueltos, no van en git)
 engine/engine.dll
 engine/engine.so
+
+# Artefactos de empaquetado (pip / python -m build)
+build/
+dist/
+*.egg-info/
+*.whl

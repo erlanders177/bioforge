@@ -22,6 +22,9 @@ from .biocore import (
     AA_LUT,
     BitPacker,
     PackedSequence,
+    FastqRecord,
+    SequenceBatch,
+    ReadBatch,
     SmartImporter,
     SequenceStats,
     compute_stats,
@@ -30,7 +33,7 @@ from .smart_translator import SmartTranslator
 from .aligner import SequenceAligner, format_alignment, Mutation, AlignmentResult
 from .analyze import run, build_report, AnalysisResult
 
-__version__ = "1.1.1"
+__version__ = "2.0.0"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [
@@ -47,6 +50,9 @@ __all__ = [
     "AA_LUT",
     "BitPacker",
     "PackedSequence",
+    "FastqRecord",
+    "SequenceBatch",
+    "ReadBatch",
     "SmartImporter",
     "SequenceStats",
     "compute_stats",

@@ -1,17 +1,17 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "bioforge"
-version = "1.0.0"
+dynamic = ["version"]
 description = "High-performance bioinformatics engine for Edge Computing — 5-bit encoding, vectorised NumPy core, optional C backend"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
     {name = "Aarón Aranda Torrijos", email = "noe9601@gmail.com"},
 ]
-keywords = ["bioinformatics", "genomics", "sequence-analysis", "edge-computing", "numpy"]
+keywords = ["bioinformatics", "genomics", "sequence-analysis", "edge-computing", "numpy", "fastq", "fasta"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
@@ -32,6 +32,10 @@ dev = [
     "pytest-benchmark>=4.0",
     "hypothesis>=6.0",
 ]
+bench = [
+    "biopython>=1.80",
+    "psutil>=5.9",
+]
 
 [project.urls]
 Homepage = "https://github.com/erlanders177/bioforge"
@@ -41,6 +45,14 @@ Issues   = "https://github.com/erlanders177/bioforge/issues"
 [project.scripts]
 bioforge-analyze = "bioforge.analyze:main"
 
+# La versión vive solo en bioforge/__init__.py (una única fuente de verdad).
+[tool.setuptools.dynamic]
+version = {attr = "bioforge.__version__"}
+
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["bioforge*"]
+
+# Incluir el motor C compilado y su fuente dentro del paquete (wheel).
+[tool.setuptools.package-data]
+"bioforge.engine" = ["*.dll", "*.so", "*.dylib", "*.c"]

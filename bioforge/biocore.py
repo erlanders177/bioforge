@@ -49,6 +49,7 @@ Memory savings over plain ASCII: 5 bits/symbol → 37.5 % reduction.
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterator, Optional
@@ -56,12 +57,21 @@ from typing import Iterator, Optional
 import numpy as np
 
 try:
-    from .engine._loader import C_AVAILABLE as _C_AVAILABLE
-    from .engine._loader import c_getitem5 as _c_getitem5
-    from .engine._loader import c_pack5    as _c_pack5
-    from .engine._loader import c_unpack5  as _c_unpack5
+    from .engine._loader import C_AVAILABLE        as _C_AVAILABLE
+    from .engine._loader import C_PARSER_AVAILABLE as _C_PARSER_AVAILABLE
+    from .engine._loader import C_BATCH_AVAILABLE  as _C_BATCH_AVAILABLE
+    from .engine._loader import c_getitem5         as _c_getitem5
+    from .engine._loader import c_pack5            as _c_pack5
+    from .engine._loader import c_unpack5          as _c_unpack5
+    from .engine._loader import c_parser_open      as _c_parser_open
+    from .engine._loader import c_parser_next      as _c_parser_next
+    from .engine._loader import c_parser_next_fastq as _c_parser_next_fastq
+    from .engine._loader import c_parser_next_batch as _c_parser_next_batch
+    from .engine._loader import c_parser_close     as _c_parser_close
 except ImportError:
-    _C_AVAILABLE = False
+    _C_AVAILABLE        = False
+    _C_PARSER_AVAILABLE = False
+    _C_BATCH_AVAILABLE  = False
 
 
 __all__: list[str] = [
@@ -78,6 +88,7 @@ __all__: list[str] = [
     "AA_LUT",
     "BitPacker",
     "PackedSequence",
+    "FastqRecord",
     "SmartImporter",
     "SequenceStats",
     "compute_stats",
@@ -633,7 +644,385 @@ class PackedSequence:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# §5  SMART IMPORTER  —  FASTA parser and 5-bit encoder
+# §5  FASTQ RECORD  —  secuencia 5-bit + calidades Phred
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class FastqRecord:
+    """
+    Un registro FASTQ: secuencia nucleotídica empaquetada + calidades Phred.
+
+    Attributes
+    ──────────
+    sequence : PackedSequence (SeqType.NUCLEOTIDE, 5-bit packed)
+    quality  : np.ndarray uint8, valores Phred 0–93 (ASCII-33 ya restado).
+               Longitud idéntica a ``sequence.n_symbols``.
+
+    Quick start
+    ───────────
+    >>> for rec in SmartImporter.stream_fastq("reads.fastq"):
+    ...     if rec.passes_quality(20):
+    ...         process(rec.sequence)
+    """
+
+    sequence: PackedSequence
+    quality:  np.ndarray   # uint8, Phred 0–93
+
+    @property
+    def mean_quality(self) -> float:
+        """Calidad Phred media de la lectura."""
+        return float(self.quality.mean()) if len(self.quality) > 0 else 0.0
+
+    def passes_quality(self, min_q: int) -> bool:
+        """True si la calidad Phred media es ≥ min_q."""
+        return self.mean_quality >= min_q
+
+    def __repr__(self) -> str:
+        return (
+            f"FastqRecord(n={self.sequence.n_symbols:,}, "
+            f"q_mean={self.mean_quality:.1f}, "
+            f"header={self.sequence.header[:40]!r})"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §5b  COLUMNAR BATCHES  —  miles de registros como matrices, sin objeto/registro
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# La ruta rápida de v2.0.  En vez de fabricar un objeto Python por registro
+# (≈5 µs cada uno = ~2 s para 200 000 lecturas), se conservan las matrices
+# contiguas que el motor C ya produce y los análisis se hacen como operaciones
+# NumPy sobre columnas enteras.  Los objetos individuales (PackedSequence /
+# FastqRecord) se materializan **solo** cuando se piden con indexación.
+#
+# Caso ideal (Illumina): todas las lecturas miden lo mismo → las calidades son
+# una matriz 2-D limpia (m × L) y filtrar es indexación booleana pura.
+
+
+def _gather_headers(
+    hdr_raw: bytes, hdr_off: np.ndarray, idx: np.ndarray
+) -> "tuple[bytes, np.ndarray]":
+    """Reconstruye el blob de cabeceras para los registros seleccionados."""
+    parts: list[bytes] = []
+    new_off = np.empty(len(idx) + 1, dtype=np.int32)
+    new_off[0] = 0
+    cur = 0
+    for k, j in enumerate(idx):
+        seg = hdr_raw[int(hdr_off[j]): int(hdr_off[j + 1])]   # incluye '\0'
+        parts.append(seg)
+        cur += len(seg)
+        new_off[k + 1] = cur
+    return b"".join(parts), new_off
+
+
+# ── Núcleo vectorizado de GC y k-meros (compartido por ambos lotes) ──────────
+
+_GC_W = np.array([16, 8, 4, 2, 1], dtype=np.uint8)   # pesos de bit MSB→LSB
+
+
+def _decode_fixed_2d(packed: np.ndarray, m: int, L: int) -> np.ndarray:
+    """Decodifica m registros de longitud fija L → matriz (m, L) de BioCode.
+
+    Totalmente vectorizado: una sola ``unpackbits`` sobre toda la matriz de
+    bytes empaquetados. Aprovecha que cada registro ocupa exactamente
+    ``plen`` bytes cuando todas las longitudes coinciden.
+    """
+    plen = (L * 5 + 7) // 8
+    packed2d = packed[: m * plen].reshape(m, plen)
+    bits = np.unpackbits(packed2d, axis=1)[:, : L * 5].reshape(m, L, 5)
+    return (bits * _GC_W).sum(axis=2, dtype=np.uint8)
+
+
+def _batch_gc(packed, pack_off, n_syms) -> np.ndarray:
+    """Fracción GC (0..1) de cada registro. Vectorizado si la longitud es fija."""
+    m = int(n_syms.shape[0])
+    if m == 0:
+        return np.empty(0, dtype=np.float64)
+    if bool(np.all(n_syms == n_syms[0])) and int(n_syms[0]) > 0:
+        L = int(n_syms[0])
+        codes = _decode_fixed_2d(packed, m, L)
+        gc = ((codes == 1) | (codes == 2)).sum(axis=1)
+        return gc / L
+    # Longitud irregular: bucle por registro (cada uno se decodifica vectorizado).
+    out = np.empty(m, dtype=np.float64)
+    for i in range(m):
+        n = int(n_syms[i])
+        if n == 0:
+            out[i] = 0.0
+            continue
+        c = BitPacker.unpack(packed[int(pack_off[i]): int(pack_off[i + 1])], n)
+        out[i] = float(((c == 1) | (c == 2)).sum()) / n
+    return out
+
+
+def _batch_kmer_spectrum(packed, pack_off, n_syms, k: int) -> np.ndarray:
+    """Espectro de k-meros del lote entero → array int64 de longitud 4**k.
+
+    Cuenta todos los k-meros de todas las secuencias. Los k-meros con bases
+    ambiguas (código > 3) se descartan. Vectorizado si la longitud es fija.
+    """
+    if k < 1:
+        raise SequenceValueError(f"k debe ser >= 1, se recibió {k}.")
+    n_kmers = 4 ** k
+    out = np.zeros(n_kmers, dtype=np.int64)
+    m = int(n_syms.shape[0])
+    if m == 0:
+        return out
+    powers = (4 ** np.arange(k - 1, -1, -1)).astype(np.int64)
+    sw = np.lib.stride_tricks.sliding_window_view
+
+    if bool(np.all(n_syms == n_syms[0])) and int(n_syms[0]) >= k:
+        L = int(n_syms[0])
+        codes = _decode_fixed_2d(packed, m, L)              # (m, L)
+        win = sw(codes, k, axis=1)                          # (m, L-k+1, k)
+        valid = (win <= 3).all(axis=2)                      # (m, L-k+1)
+        ids = (win.astype(np.int64) * powers).sum(axis=2)   # (m, L-k+1)
+        return np.bincount(ids[valid].ravel(), minlength=n_kmers)[:n_kmers]
+
+    for i in range(m):
+        n = int(n_syms[i])
+        if n < k:
+            continue
+        c = BitPacker.unpack(
+            packed[int(pack_off[i]): int(pack_off[i + 1])], n).astype(np.int64)
+        win = sw(c, k)                                      # (n-k+1, k)
+        valid = (win <= 3).all(axis=1)
+        ids = (win * powers).sum(axis=1)[valid]
+        out += np.bincount(ids, minlength=n_kmers)[:n_kmers]
+    return out
+
+
+@dataclass
+class SequenceBatch:
+    """
+    Lote columnar de secuencias FASTA.
+
+    Guarda todas las secuencias de un lote como matrices contiguas.  El acceso
+    a un registro concreto (``batch[i]``) materializa un :class:`PackedSequence`
+    en ese momento; las operaciones de conjunto se hacen vectorizadas.
+
+    No instancies esto a mano — lo produce :meth:`SmartImporter.stream_batches`.
+    """
+
+    _packed:   np.ndarray   # uint8, secuencias 5-bit concatenadas (byte-alineadas)
+    _pack_off: np.ndarray   # int32, offsets de byte, len = m+1
+    _n_syms:   np.ndarray   # int32, longitud de cada registro, len = m
+    _types:    np.ndarray   # int32, tipo (0=nuc,1=prot), len = m
+    _hdr_raw:  bytes        # blob de cabeceras null-terminadas
+    _hdr_off:  np.ndarray   # int32, offsets de cabecera, len = m+1
+
+    def __len__(self) -> int:
+        return int(self._n_syms.shape[0])
+
+    @property
+    def n_symbols(self) -> np.ndarray:
+        """Longitud de cada registro del lote (array int32)."""
+        return self._n_syms
+
+    def header(self, i: int) -> str:
+        """Cabecera del registro ``i`` (decodificada bajo demanda)."""
+        i = int(i)
+        return self._hdr_raw[
+            int(self._hdr_off[i]): int(self._hdr_off[i + 1]) - 1
+        ].decode("ascii", errors="replace")
+
+    def __getitem__(self, i: int) -> PackedSequence:
+        n = len(self)
+        i = int(i)
+        if i < 0:
+            i += n
+        if not 0 <= i < n:
+            raise IndexError(f"índice {i} fuera de rango (lote de {n})")
+        return PackedSequence(
+            header    = self.header(i),
+            seq_type  = SeqType(int(self._types[i])),
+            n_symbols = int(self._n_syms[i]),
+            data      = self._packed[
+                int(self._pack_off[i]): int(self._pack_off[i + 1])
+            ].copy(),
+        )
+
+    def __iter__(self) -> "Iterator[PackedSequence]":
+        for i in range(len(self)):
+            yield self[i]
+
+    # ── Análisis vectorizado de composición (solo nucleótidos) ──────────────
+    def _require_nucleotide(self, op: str) -> None:
+        if len(self) and bool((self._types == 1).any()):
+            raise SequenceTypeError(
+                f"{op} solo aplica a secuencias nucleotídicas; el lote contiene "
+                "proteínas. Filtra por tipo antes de llamarlo."
+            )
+
+    def gc_content(self) -> np.ndarray:
+        """Fracción GC (0..1) de cada secuencia del lote (vectorizado)."""
+        self._require_nucleotide("gc_content()")
+        return _batch_gc(self._packed, self._pack_off, self._n_syms)
+
+    def kmer_spectrum(self, k: int) -> np.ndarray:
+        """Espectro de k-meros del lote → array int64 de longitud ``4**k``."""
+        self._require_nucleotide("kmer_spectrum()")
+        return _batch_kmer_spectrum(self._packed, self._pack_off, self._n_syms, k)
+
+    def __repr__(self) -> str:
+        return (f"SequenceBatch(m={len(self)}, "
+                f"bases={int(self._n_syms.sum()):,})")
+
+
+@dataclass
+class ReadBatch:
+    """
+    Lote columnar de lecturas FASTQ — la vía rápida para control de calidad.
+
+    Las calidades de todo el lote viven en una sola matriz.  Filtrar por calidad
+    media es una operación NumPy sobre las ``m`` lecturas a la vez, sin fabricar
+    un objeto por lectura.  ``batch[i]`` materializa un :class:`FastqRecord`
+    solo cuando lo pides.
+
+    Caso de longitud fija (Illumina): ``_fixed_len > 0`` y las calidades son una
+    matriz 2-D ``(m, L)``.  Caso irregular (Nanopore): calidades concatenadas en
+    1-D con ``_qual_off``.
+
+    No instancies esto a mano — lo produce :meth:`SmartImporter.stream_fastq_batches`.
+    """
+
+    _packed:   np.ndarray
+    _pack_off: np.ndarray
+    _n_syms:   np.ndarray
+    _types:    np.ndarray
+    _hdr_raw:  bytes
+    _hdr_off:  np.ndarray
+    _qual:     np.ndarray            # 2-D (m,L) si fijo; 1-D concatenado si no
+    _qual_off: "Optional[np.ndarray]"  # None si longitud fija
+    _fixed_len: int                  # >0 = longitud fija; 0 = irregular
+
+    def __len__(self) -> int:
+        return int(self._n_syms.shape[0])
+
+    @property
+    def n_symbols(self) -> np.ndarray:
+        return self._n_syms
+
+    # ── Operaciones vectorizadas sobre TODO el lote ─────────────────────────
+    def mean_quality(self) -> np.ndarray:
+        """Calidad Phred media de cada lectura (array float, una op NumPy)."""
+        if len(self) == 0:
+            return np.empty(0, dtype=np.float64)
+        if self._fixed_len:
+            return self._qual.mean(axis=1)
+        # Irregular: suma por segmentos con reduceat (vectorizado).
+        starts = self._qual_off[:-1]
+        sums   = np.add.reduceat(self._qual.astype(np.int64), starts)
+        n      = self._n_syms.astype(np.int64)
+        return np.where(n > 0, sums / np.maximum(n, 1), 0.0)
+
+    def passes(self, min_q: float) -> np.ndarray:
+        """Máscara booleana: True donde la calidad media ≥ ``min_q``."""
+        return self.mean_quality() >= min_q
+
+    def gc_content(self) -> np.ndarray:
+        """Fracción GC (0..1) de cada lectura del lote (vectorizado)."""
+        return _batch_gc(self._packed, self._pack_off, self._n_syms)
+
+    def kmer_spectrum(self, k: int) -> np.ndarray:
+        """Espectro de k-meros del lote → array int64 de longitud ``4**k``.
+
+        Cuenta todos los k-meros de todas las lecturas (los que tienen bases
+        ambiguas se descartan). Útil para perfiles de k-meros, corrección de
+        errores o estimación de cobertura — sin crear objetos por lectura.
+        """
+        return _batch_kmer_spectrum(self._packed, self._pack_off,
+                                    self._n_syms, k)
+
+    def filter(self, mask: np.ndarray) -> "ReadBatch":
+        """Devuelve un nuevo ReadBatch con solo las lecturas de ``mask``."""
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape[0] != len(self):
+            raise SequenceValueError(
+                f"la máscara tiene {mask.shape[0]} elementos pero el lote "
+                f"tiene {len(self)} lecturas."
+            )
+        idx = np.flatnonzero(mask)
+        new_n   = self._n_syms[idx].copy()
+        new_t   = self._types[idx].copy()
+        new_hdr, new_hoff = _gather_headers(self._hdr_raw, self._hdr_off, idx)
+
+        if self._fixed_len:
+            # Todo es 2-D regular → indexación pura, sin bucles.
+            L    = self._fixed_len
+            plen = (L * 5 + 7) // 8
+            m    = len(self)
+            packed2d  = self._packed[: m * plen].reshape(m, plen)
+            new_packed = packed2d[idx].reshape(-1).copy()
+            new_poff   = (np.arange(len(idx) + 1, dtype=np.int32) * plen)
+            new_qual   = self._qual[idx].copy()
+            return ReadBatch(new_packed, new_poff, new_n, new_t,
+                             new_hdr, new_hoff, new_qual, None, L)
+
+        # Irregular: reunir slices de los supervivientes (bucle por registro).
+        pack_parts, qual_parts = [], []
+        new_poff = np.empty(len(idx) + 1, dtype=np.int32)
+        new_qoff = np.empty(len(idx) + 1, dtype=np.int32)
+        new_poff[0] = new_qoff[0] = 0
+        pcur = qcur = 0
+        for k, j in enumerate(idx):
+            ps = self._packed[int(self._pack_off[j]): int(self._pack_off[j + 1])]
+            qs = self._qual[int(self._qual_off[j]): int(self._qual_off[j + 1])]
+            pack_parts.append(ps); qual_parts.append(qs)
+            pcur += ps.shape[0]; qcur += qs.shape[0]
+            new_poff[k + 1] = pcur; new_qoff[k + 1] = qcur
+        new_packed = (np.concatenate(pack_parts) if pack_parts
+                      else np.empty(0, dtype=np.uint8))
+        new_qual   = (np.concatenate(qual_parts) if qual_parts
+                      else np.empty(0, dtype=np.uint8))
+        return ReadBatch(new_packed, new_poff, new_n, new_t,
+                         new_hdr, new_hoff, new_qual, new_qoff, 0)
+
+    # ── Acceso por registro (materializa el objeto solo aquí) ───────────────
+    def header(self, i: int) -> str:
+        i = int(i)
+        return self._hdr_raw[
+            int(self._hdr_off[i]): int(self._hdr_off[i + 1]) - 1
+        ].decode("ascii", errors="replace")
+
+    def quality_of(self, i: int) -> np.ndarray:
+        """Calidades Phred de la lectura ``i`` (copia uint8)."""
+        i = int(i)
+        if self._fixed_len:
+            return self._qual[i].copy()
+        return self._qual[
+            int(self._qual_off[i]): int(self._qual_off[i + 1])
+        ].copy()
+
+    def __getitem__(self, i: int) -> FastqRecord:
+        n = len(self)
+        i = int(i)
+        if i < 0:
+            i += n
+        if not 0 <= i < n:
+            raise IndexError(f"índice {i} fuera de rango (lote de {n})")
+        seq = PackedSequence(
+            header    = self.header(i),
+            seq_type  = SeqType(int(self._types[i])),
+            n_symbols = int(self._n_syms[i]),
+            data      = self._packed[
+                int(self._pack_off[i]): int(self._pack_off[i + 1])
+            ].copy(),
+        )
+        return FastqRecord(sequence=seq, quality=self.quality_of(i))
+
+    def __iter__(self) -> "Iterator[FastqRecord]":
+        for i in range(len(self)):
+            yield self[i]
+
+    def __repr__(self) -> str:
+        kind = f"fixed L={self._fixed_len}" if self._fixed_len else "ragged"
+        return (f"ReadBatch(m={len(self)}, "
+                f"bases={int(self._n_syms.sum()):,}, {kind})")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §6  SMART IMPORTER  —  FASTA/FASTQ parser and 5-bit encoder
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SmartImporter:
@@ -749,6 +1138,417 @@ class SmartImporter:
 
         if header is not None and chunks:
             yield cls._encode("".join(chunks), header, force_type)
+
+    # ── Streaming API (O(1) RAM, motor C con buffer 64 KB) ───────────────────
+
+    _STREAM_HDR  = 4096          # bytes máximos para una cabecera FASTA/FASTQ
+    _STREAM_SEQ  = 16 * 1024 * 1024   # 16 MB — cubre lecturas Nanopore largas
+
+    # ── Modo por lotes (batch) — el camino rápido de v2.0 ────────────────────
+    # Una sola llamada a C parsea miles de registros y los empaqueta a 5-bit
+    # dentro de C. Elimina el peaje ctypes y el pack NumPy por registro.
+    _BATCH_RECORDS = 8192               # registros por llamada
+    _BATCH_HDR     = 2 * 1024 * 1024    # 2 MB para cabeceras concatenadas
+    _BATCH_PACK    = 16 * 1024 * 1024   # 16 MB de secuencias 5-bit (≤25 Mbp/lote)
+
+    @classmethod
+    def stream(
+        cls,
+        path:       str,
+        force_type: Optional[SeqType] = None,
+    ) -> Iterator[PackedSequence]:
+        """
+        Generador de bajo consumo de RAM para archivos FASTA de cualquier tamaño.
+
+        Cuando el motor C está disponible (compilado) usa el parser C con
+        buffer de 64 KB y encoding 5-bit directo en C — sin strings Python
+        en la ruta crítica.  Fallback automático a :meth:`from_file_chunked`
+        si el motor C no está presente.
+
+        Parameters
+        ----------
+        path : str
+            Ruta al archivo FASTA.
+        force_type : SeqType, optional
+            Fuerza el tipo para todos los registros (omite auto-detección).
+
+        Yields
+        ------
+        PackedSequence — un objeto por registro, en orden de fichero.
+
+        Example
+        -------
+        >>> for seq in SmartImporter.stream("genome.fa"):
+        ...     print(seq.n_symbols)
+        """
+        ft = -1
+        if force_type == SeqType.NUCLEOTIDE: ft = 0
+        elif force_type == SeqType.PROTEIN:  ft = 1
+
+        if _C_BATCH_AVAILABLE:
+            yield from cls._stream_batch(path, ft, fastq=False)
+            return
+
+        if not _C_PARSER_AVAILABLE:
+            yield from cls.from_file_chunked(path, force_type)
+            return
+
+        hdr_buf   = ctypes.create_string_buffer(cls._STREAM_HDR)
+        codes_buf = np.empty(cls._STREAM_SEQ, dtype=np.uint8)
+
+        handle = _c_parser_open(path)
+        if not handle:
+            raise IOError(f"No se puede abrir el archivo: {path!r}")
+
+        try:
+            while True:
+                ret, n, stype = _c_parser_next(handle, hdr_buf, codes_buf, ft)
+                if ret <= 0:
+                    break
+                packed = BitPacker.pack(codes_buf[:n])
+                header = hdr_buf.value.decode("ascii", errors="replace")
+                yield PackedSequence(
+                    header    = header,
+                    seq_type  = SeqType(stype),
+                    n_symbols = n,
+                    data      = packed,
+                )
+        finally:
+            _c_parser_close(handle)
+
+    @classmethod
+    def _stream_batch(cls, path: str, force_type: int, fastq: bool):
+        """Núcleo del modo por lotes — compartido por stream() y stream_fastq().
+
+        C parsea hasta ``_BATCH_RECORDS`` registros por llamada y empaqueta cada
+        secuencia a 5-bit. Aquí solo cruzamos la frontera ~N/8192 veces y
+        creamos los objetos Python a partir de buffers ya empaquetados.
+
+        Yields PackedSequence (FASTA) o FastqRecord (FASTQ).
+        """
+        BR = cls._BATCH_RECORDS
+        hdr_buf  = ctypes.create_string_buffer(cls._BATCH_HDR)
+        pack_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
+        hdr_off  = np.empty(BR + 1, dtype=np.int32)
+        pack_off = np.empty(BR + 1, dtype=np.int32)
+        n_syms   = np.empty(BR, dtype=np.int32)
+        types    = np.empty(BR, dtype=np.int32)
+        if fastq:
+            qual_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
+            qual_off = np.empty(BR + 1, dtype=np.int32)
+        else:
+            qual_buf = qual_off = None
+
+        handle = _c_parser_open(path)
+        if not handle:
+            raise IOError(f"No se puede abrir el archivo: {path!r}")
+
+        ps = PackedSequence  # alias local — menos lookups en el bucle
+        try:
+            while True:
+                m = _c_parser_next_batch(
+                    handle, BR, force_type,
+                    hdr_buf, hdr_off, pack_buf, pack_off,
+                    n_syms, types, qual_buf, qual_off,
+                )
+                if m == 0:
+                    break
+                if m < 0:
+                    raise IOError(
+                        f"Error del parser por lotes (código {m}) en {path!r}. "
+                        "Código -2 = un registro supera el buffer de 16 MB; "
+                        "usa una herramienta de lecturas ultra-largas."
+                    )
+                # Snapshot de los buffers como bytes/listas: una copia por lote,
+                # no por registro.
+                hraw = hdr_buf.raw
+                hoff = hdr_off[: m + 1].tolist()
+                poff = pack_off[: m + 1].tolist()
+                nlst = n_syms[:m].tolist()
+                tlst = types[:m].tolist()
+                qoff = qual_off[: m + 1].tolist() if fastq else None
+
+                for i in range(m):
+                    header = hraw[hoff[i]: hoff[i + 1] - 1].decode(
+                        "ascii", errors="replace")
+                    seq = ps(
+                        header    = header,
+                        seq_type  = SeqType(tlst[i]),
+                        n_symbols = nlst[i],
+                        data      = pack_buf[poff[i]: poff[i + 1]].copy(),
+                    )
+                    if fastq:
+                        yield FastqRecord(
+                            sequence = seq,
+                            quality  = qual_buf[qoff[i]: qoff[i + 1]].copy(),
+                        )
+                    else:
+                        yield seq
+        finally:
+            _c_parser_close(handle)
+
+    # ── Núcleo columnar (la vía rápida de v2.0) ──────────────────────────────
+    @classmethod
+    def _stream_columnar(cls, path: str, force_type: int, fastq: bool):
+        """Entrega lotes como matrices contiguas (SequenceBatch / ReadBatch).
+
+        Cero objetos por registro: se conservan las matrices que C ya produce.
+        Una copia por lote (no por registro) las desacopla de los buffers
+        reutilizados. Yields SequenceBatch (FASTA) o ReadBatch (FASTQ).
+        """
+        if not _C_BATCH_AVAILABLE:
+            yield from cls._columnar_fallback(path, force_type, fastq)
+            return
+
+        BR = cls._BATCH_RECORDS
+        hdr_buf  = ctypes.create_string_buffer(cls._BATCH_HDR)
+        pack_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
+        hdr_off  = np.empty(BR + 1, dtype=np.int32)
+        pack_off = np.empty(BR + 1, dtype=np.int32)
+        n_syms   = np.empty(BR, dtype=np.int32)
+        types    = np.empty(BR, dtype=np.int32)
+        if fastq:
+            qual_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
+            qual_off = np.empty(BR + 1, dtype=np.int32)
+        else:
+            qual_buf = qual_off = None
+
+        handle = _c_parser_open(path)
+        if not handle:
+            raise IOError(f"No se puede abrir el archivo: {path!r}")
+
+        try:
+            while True:
+                m = _c_parser_next_batch(
+                    handle, BR, force_type,
+                    hdr_buf, hdr_off, pack_buf, pack_off,
+                    n_syms, types, qual_buf, qual_off,
+                )
+                if m == 0:
+                    break
+                if m < 0:
+                    raise IOError(
+                        f"Error del parser por lotes (código {m}) en {path!r}. "
+                        "Código -2 = un registro supera el buffer de 16 MB."
+                    )
+                # Una copia por lote para desacoplar de los buffers reutilizados.
+                pack_used = int(pack_off[m])
+                hdr_used  = int(hdr_off[m])
+                packed = pack_buf[:pack_used].copy()
+                poff   = pack_off[: m + 1].copy()
+                nsy    = n_syms[:m].copy()
+                tps    = types[:m].copy()
+                hraw   = bytes(hdr_buf.raw[:hdr_used])
+                hoff   = hdr_off[: m + 1].copy()
+
+                if fastq:
+                    qual_used = int(qual_off[m])
+                    fixed = (int(nsy[0]) if (m > 0 and nsy[0] > 0
+                             and bool(np.all(nsy == nsy[0]))) else 0)
+                    if fixed:
+                        qual = qual_buf[:qual_used].copy().reshape(m, fixed)
+                        qoff = None
+                    else:
+                        qual = qual_buf[:qual_used].copy()
+                        qoff = qual_off[: m + 1].copy()
+                    yield ReadBatch(packed, poff, nsy, tps,
+                                    hraw, hoff, qual, qoff, fixed)
+                else:
+                    yield SequenceBatch(packed, poff, nsy, tps, hraw, hoff)
+        finally:
+            _c_parser_close(handle)
+
+    @classmethod
+    def _columnar_fallback(cls, path: str, force_type: int, fastq: bool):
+        """Construye lotes columnares desde el generador por registro.
+
+        Solo se usa si el motor C por lotes no está disponible (DLL antiguo o
+        sin compilar). Más lento, pero produce idénticos SequenceBatch/ReadBatch.
+        """
+        BR = cls._BATCH_RECORDS
+        ft = (SeqType.NUCLEOTIDE if force_type == 0 else
+              SeqType.PROTEIN if force_type == 1 else None)
+        gen = (cls.stream_fastq(path) if fastq else cls.stream(path, ft))
+        buf: list = []
+        for item in gen:
+            buf.append(item)
+            if len(buf) >= BR:
+                yield cls._assemble_batch(buf, fastq)
+                buf = []
+        if buf:
+            yield cls._assemble_batch(buf, fastq)
+
+    @staticmethod
+    def _assemble_batch(items: list, fastq: bool):
+        """Ensambla una lista de PackedSequence/FastqRecord en un lote columnar."""
+        m = len(items)
+        seqs = [(it.sequence if fastq else it) for it in items]
+        nsy  = np.array([s.n_symbols for s in seqs], dtype=np.int32)
+        tps  = np.array([int(s.seq_type) for s in seqs], dtype=np.int32)
+
+        pack_parts = [np.asarray(s.data, dtype=np.uint8) for s in seqs]
+        poff = np.empty(m + 1, dtype=np.int32)
+        poff[0] = 0
+        acc = 0
+        for k, p in enumerate(pack_parts):
+            acc += p.shape[0]; poff[k + 1] = acc
+        packed = (np.concatenate(pack_parts) if pack_parts
+                  else np.empty(0, dtype=np.uint8))
+
+        hdr_parts = [s.header.encode("ascii", "replace") + b"\0" for s in seqs]
+        hoff = np.empty(m + 1, dtype=np.int32)
+        hoff[0] = 0
+        acc = 0
+        for k, h in enumerate(hdr_parts):
+            acc += len(h); hoff[k + 1] = acc
+        hraw = b"".join(hdr_parts)
+
+        if not fastq:
+            return SequenceBatch(packed, poff, nsy, tps, hraw, hoff)
+
+        quals = [np.asarray(it.quality, dtype=np.uint8) for it in items]
+        fixed = (int(nsy[0]) if (m > 0 and nsy[0] > 0
+                 and bool(np.all(nsy == nsy[0]))) else 0)
+        if fixed:
+            qual = (np.stack(quals) if quals
+                    else np.empty((0, fixed), dtype=np.uint8))
+            qoff = None
+        else:
+            qual = (np.concatenate(quals) if quals
+                    else np.empty(0, dtype=np.uint8))
+            qoff = np.empty(m + 1, dtype=np.int32)
+            qoff[0] = 0
+            acc = 0
+            for k, q in enumerate(quals):
+                acc += q.shape[0]; qoff[k + 1] = acc
+        return ReadBatch(packed, poff, nsy, tps, hraw, hoff, qual, qoff, fixed)
+
+    @classmethod
+    def stream_batches(
+        cls,
+        path:       str,
+        force_type: Optional[SeqType] = None,
+    ) -> "Iterator[SequenceBatch]":
+        """
+        Lee un FASTA como lotes columnares :class:`SequenceBatch` (vía rápida).
+
+        Cada lote agrupa hasta ``_BATCH_RECORDS`` registros como matrices
+        contiguas, sin crear un objeto por registro. Ideal para barrer, contar
+        o filtrar grandes colecciones. Para acceder a un registro concreto usa
+        ``batch[i]``.
+
+        Example
+        -------
+        >>> for batch in SmartImporter.stream_batches("genome.fa"):
+        ...     print(len(batch), "secuencias,", int(batch.n_symbols.sum()), "bases")
+        """
+        ft = -1
+        if force_type == SeqType.NUCLEOTIDE: ft = 0
+        elif force_type == SeqType.PROTEIN:  ft = 1
+        yield from cls._stream_columnar(path, ft, fastq=False)
+
+    @classmethod
+    def stream_fastq_batches(cls, path: str) -> "Iterator[ReadBatch]":
+        """
+        Lee un FASTQ como lotes columnares :class:`ReadBatch` — la vía rápida
+        para control de calidad.
+
+        Filtrar por calidad media se vuelve una operación NumPy sobre todo el
+        lote, sin fabricar un objeto por lectura.
+
+        Example
+        -------
+        >>> total = buenas = 0
+        >>> for batch in SmartImporter.stream_fastq_batches("reads.fastq"):
+        ...     mask = batch.passes(20)        # 1 op NumPy para miles de lecturas
+        ...     total  += len(batch)
+        ...     buenas += int(mask.sum())
+        >>> print(f"{buenas}/{total} lecturas con calidad media ≥ 20")
+        """
+        yield from cls._stream_columnar(path, 0, fastq=True)
+
+    @classmethod
+    def stream_fastq(cls, path: str) -> Iterator[FastqRecord]:
+        """
+        Generador de bajo consumo de RAM para archivos FASTQ.
+
+        Cada ``FastqRecord`` contiene la secuencia 5-bit empaquetada y las
+        calidades Phred (valor entero 0–93, ya restado el offset ASCII de 33).
+
+        Parameters
+        ----------
+        path : str
+            Ruta al archivo FASTQ (no comprimido).
+
+        Yields
+        ------
+        FastqRecord — uno por lectura, en orden de fichero.
+
+        Example
+        -------
+        >>> for rec in SmartImporter.stream_fastq("reads.fastq"):
+        ...     if rec.passes_quality(20):
+        ...         prot = SmartTranslator.translate(rec.sequence)
+        """
+        if _C_BATCH_AVAILABLE:
+            yield from cls._stream_batch(path, 0, fastq=True)
+            return
+
+        if not _C_PARSER_AVAILABLE:
+            yield from cls._stream_fastq_python(path)
+            return
+
+        hdr_buf   = ctypes.create_string_buffer(cls._STREAM_HDR)
+        codes_buf = np.empty(cls._STREAM_SEQ, dtype=np.uint8)
+        qual_buf  = np.empty(cls._STREAM_SEQ, dtype=np.uint8)
+
+        handle = _c_parser_open(path)
+        if not handle:
+            raise IOError(f"No se puede abrir el archivo: {path!r}")
+
+        try:
+            while True:
+                ret, n, q = _c_parser_next_fastq(
+                    handle, hdr_buf, codes_buf, qual_buf
+                )
+                if ret <= 0:
+                    break
+                packed = BitPacker.pack(codes_buf[:n])
+                header = hdr_buf.value.decode("ascii", errors="replace")
+                seq = PackedSequence(
+                    header    = header,
+                    seq_type  = SeqType.NUCLEOTIDE,
+                    n_symbols = n,
+                    data      = packed,
+                )
+                yield FastqRecord(
+                    sequence = seq,
+                    quality  = qual_buf[:q].copy(),
+                )
+        finally:
+            _c_parser_close(handle)
+
+    @classmethod
+    def _stream_fastq_python(cls, path: str) -> Iterator[FastqRecord]:
+        """Fallback Python puro para FASTQ (sin motor C)."""
+        with open(path, "r", encoding="ascii", errors="replace") as fh:
+            while True:
+                line1 = fh.readline()
+                if not line1:
+                    break
+                line1 = line1.strip()
+                if not line1.startswith("@"):
+                    continue
+                header  = line1[1:]
+                seq_raw = fh.readline().strip()
+                fh.readline()          # línea '+comment'
+                qual_raw = fh.readline().strip()
+                if not seq_raw:
+                    continue
+                seq = cls._encode(seq_raw, header, None)
+                q   = np.frombuffer(qual_raw.encode("ascii"), dtype=np.uint8)
+                q   = np.clip(q.astype(np.int16) - 33, 0, 93).astype(np.uint8)
+                yield FastqRecord(sequence=seq, quality=q)
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

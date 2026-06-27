@@ -95,6 +95,64 @@ def _setup_signatures() -> None:
 
 _load()
 
+# ── Verificar si el motor tiene las funciones del parser (requiere recompilación) ─
+C_PARSER_AVAILABLE: bool = False
+
+def _check_parser() -> None:
+    global C_PARSER_AVAILABLE
+    if not C_AVAILABLE or _lib is None:
+        return
+    try:
+        # in_dll fuerza la resolución del símbolo en el DLL ahora mismo.
+        # Si el DLL es antiguo (sin bio_parser_open), lanza OSError aquí
+        # en vez de colapsar más tarde al llamar la función.
+        ctypes.c_void_p.in_dll(_lib, "bio_parser_open")
+        _lib.bio_parser_open.restype  = ctypes.c_void_p
+        _lib.bio_parser_open.argtypes = [ctypes.c_char_p]
+
+        _lib.bio_parser_next.restype  = _I32
+        _lib.bio_parser_next.argtypes = [
+            ctypes.c_void_p,         # handle
+            ctypes.c_char_p, _I32,   # hdr, hdr_max
+            _U8P, _I32, _I32P,       # codes, codes_max, n_out
+            _I32,                     # force_type (-1 auto | 0 nuc | 1 prot)
+            _I32P,                    # type_out
+            _U8P, _I32P,             # qual, qual_out  (NULL para FASTA)
+        ]
+
+        _lib.bio_parser_close.restype  = None
+        _lib.bio_parser_close.argtypes = [ctypes.c_void_p]
+
+        C_PARSER_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
+C_BATCH_AVAILABLE: bool = False
+
+def _check_batch() -> None:
+    """El parser por lotes es opcional: DLLs antiguos solo tienen next()."""
+    global C_BATCH_AVAILABLE
+    if not C_PARSER_AVAILABLE or _lib is None:
+        return
+    try:
+        ctypes.c_void_p.in_dll(_lib, "bio_parser_next_batch")
+        _lib.bio_parser_next_batch.restype  = _I32
+        _lib.bio_parser_next_batch.argtypes = [
+            ctypes.c_void_p, _I32, _I32,     # handle, max_records, force_type
+            ctypes.c_char_p, _I32, _I32P,    # hdr_buf, hdr_buf_max, hdr_off
+            _U8P, _I32, _I32P,               # pack_buf, pack_buf_max, pack_off
+            _I32P, _I32P,                    # n_syms, types
+            _U8P, _I32, _I32P,               # qual_buf, qual_buf_max, qual_off
+        ]
+        C_BATCH_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
+_check_parser()
+_check_batch()
+
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
 
@@ -212,6 +270,95 @@ def c_nw_banded(
         out_a.value.decode("ascii"), out_b.value.decode("ascii"),
         score.value, nm.value, nmi.value, ng.value,
     )
+
+
+def c_parser_open(path: str) -> int:
+    """Abre un archivo FASTA/FASTQ y devuelve un handle opaco (c_void_p)."""
+    raw = path.encode("utf-8") if isinstance(path, str) else path
+    return _lib.bio_parser_open(raw)   # devuelve c_void_p (int en Python)
+
+
+def c_parser_next(
+    handle: int,
+    hdr_buf: "ctypes.Array",
+    codes_buf: np.ndarray,
+    force_type: int,
+) -> "tuple[int, int, int]":
+    """Lee el siguiente registro FASTA.
+    Retorna (ret, n_symbols, seq_type): ret 1=OK 0=EOF -1=error -2=overflow."""
+    n_out    = _I32(0)
+    type_out = _I32(0)
+    ret = _lib.bio_parser_next(
+        ctypes.c_void_p(handle),
+        hdr_buf, _I32(len(hdr_buf)),
+        codes_buf.ctypes.data_as(_U8P), _I32(len(codes_buf)),
+        ctypes.byref(n_out),
+        _I32(force_type),
+        ctypes.byref(type_out),
+        None, None,   # sin calidades — FASTA
+    )
+    return ret, n_out.value, type_out.value
+
+
+def c_parser_next_fastq(
+    handle: int,
+    hdr_buf: "ctypes.Array",
+    codes_buf: np.ndarray,
+    qual_buf: np.ndarray,
+) -> "tuple[int, int, int]":
+    """Lee el siguiente registro FASTQ.
+    Retorna (ret, n_symbols, n_qual): ret 1=OK 0=EOF -1=error -2=overflow."""
+    n_out    = _I32(0)
+    type_out = _I32(0)
+    q_out    = _I32(0)
+    ret = _lib.bio_parser_next(
+        ctypes.c_void_p(handle),
+        hdr_buf, _I32(len(hdr_buf)),
+        codes_buf.ctypes.data_as(_U8P), _I32(len(codes_buf)),
+        ctypes.byref(n_out),
+        _I32(0),   # FASTQ siempre nucleótido
+        ctypes.byref(type_out),
+        qual_buf.ctypes.data_as(_U8P), ctypes.byref(q_out),
+    )
+    return ret, n_out.value, q_out.value
+
+
+def c_parser_next_batch(
+    handle: int,
+    max_records: int,
+    force_type: int,
+    hdr_buf:  "ctypes.Array",
+    hdr_off:  np.ndarray,
+    pack_buf: np.ndarray,
+    pack_off: np.ndarray,
+    n_syms:   np.ndarray,
+    types:    np.ndarray,
+    qual_buf: "np.ndarray | None" = None,
+    qual_off: "np.ndarray | None" = None,
+) -> int:
+    """Parsea hasta ``max_records`` registros en una sola llamada.
+
+    Empaqueta cada secuencia a 5-bit dentro de C. Rellena los arrays de salida
+    (que el llamante reutiliza entre lotes). Retorna el nº de registros
+    parseados (>=0), 0 = EOF, o negativo en error (-2 = registro demasiado
+    grande para el buffer).
+    """
+    q_ptr     = qual_buf.ctypes.data_as(_U8P) if qual_buf is not None else None
+    q_max     = _I32(len(qual_buf)) if qual_buf is not None else _I32(0)
+    q_off_ptr = qual_off.ctypes.data_as(_I32P) if qual_off is not None else None
+    return _lib.bio_parser_next_batch(
+        ctypes.c_void_p(handle), _I32(max_records), _I32(force_type),
+        hdr_buf, _I32(len(hdr_buf)), hdr_off.ctypes.data_as(_I32P),
+        pack_buf.ctypes.data_as(_U8P), _I32(len(pack_buf)),
+        pack_off.ctypes.data_as(_I32P),
+        n_syms.ctypes.data_as(_I32P), types.ctypes.data_as(_I32P),
+        q_ptr, q_max, q_off_ptr,
+    )
+
+
+def c_parser_close(handle: int) -> None:
+    """Libera el handle del parser y cierra el archivo."""
+    _lib.bio_parser_close(ctypes.c_void_p(handle))
 
 
 def c_nw_align(

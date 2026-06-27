@@ -5,6 +5,91 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.0.0] — 2026-06-27
+
+Versión centrada en **velocidad de ingesta**: el objetivo es procesar secuencias
+más rápido que la célula que las produce. El cuello de botella ya no es leer y
+codificar (eso vive en C), sino fabricar objetos Python por registro — y la API
+columnar lo elimina para los flujos de control de calidad.
+
+### Added
+
+**Parser de streaming en C (`engine/engine.c`)**
+- `bio_parser_open` / `bio_parser_next` / `bio_parser_close`: parser FASTA/FASTQ
+  con buffer de 64 KB, `memchr` (SIMD de la libc) para saltos de línea, y
+  codificación a BioCode 5-bit **dentro de C** — la secuencia nunca pasa por un
+  `str` de Python
+- `SmartImporter.stream(path)` — generador FASTA de RAM constante
+- `SmartImporter.stream_fastq(path)` — generador FASTQ; produce `FastqRecord`
+  (secuencia 5-bit + calidades Phred 0–93 ya decodificadas)
+- `FastqRecord` con `mean_quality` y `passes_quality(min_q)`
+
+**Parser por lotes en C (`bio_parser_next_batch`)**
+- Una sola llamada parsea hasta 8 192 registros y empaqueta cada secuencia a
+  5-bit en C, devolviendo buffers contiguos + tablas de offset
+- Elimina los dos cuellos de botella medidos: el peaje de `ctypes` por registro
+  y el `pack` de NumPy por registro
+- Stash interno para registros que no caben en el lote (se emiten en la
+  siguiente llamada)
+- FASTA: **20.8 → 80 M bases/s** (3.8×). FASTQ: **2.1 → 14 M bases/s, 14 K → 94 K
+  lecturas/s** (6.7×)
+
+**API columnar (`biocore.py`)**
+- `SequenceBatch` / `ReadBatch` — un lote de registros como matrices contiguas,
+  sin un objeto Python por registro
+- `SmartImporter.stream_batches(path)` (FASTA) / `stream_fastq_batches(path)` (FASTQ)
+- `ReadBatch.mean_quality()`, `passes(min_q)`, `filter(mask)` — vectorizados
+  sobre todo el lote; caso Illumina (longitud fija) usa una matriz 2-D limpia,
+  caso Nanopore (irregular) usa `reduceat` sobre offsets
+- Acceso perezoso: `batch[i]` materializa un `PackedSequence`/`FastqRecord` solo
+  cuando se pide
+- **Filtrar 200 000 lecturas por calidad media: 5.3 s → 0.28 s (18.6×)**,
+  resultado idéntico al filtrado por registro
+- Fallback en Python puro (`_columnar_fallback`) si el motor C por lotes no está
+
+**Composición vectorizada en los lotes (`biocore.py`)**
+- `ReadBatch.gc_content()` / `SequenceBatch.gc_content()` — fracción GC por
+  registro; una sola `unpackbits` para todo el lote cuando la longitud es fija
+- `ReadBatch.kmer_spectrum(k)` / `SequenceBatch.kmer_spectrum(k)` — espectro de
+  k-meros del lote (`int64`, longitud `4**k`); k-meros con bases ambiguas
+  descartados; vectorizado con `sliding_window_view` + `bincount`
+- `SequenceBatch` lanza `SequenceTypeError` si se piden GC/k-meros sobre proteínas
+
+**Lectura de archivos comprimidos (`engine/engine.c`)**
+- El parser lee `.gz` de forma transparente vía zlib (`gzopen`/`gzread`): el
+  mismo código sirve para archivos planos y comprimidos (autodetección del
+  magic gzip). `stream("x.fastq.gz")`, `stream_fastq(...)`, etc. funcionan sin
+  paso de descompresión manual
+- Compilación condicional `-DBIO_USE_ZLIB`: si zlib no está, se compila sin él
+  y los archivos planos siguen funcionando. En Windows zlib se enlaza **estático**
+  (`-l:libz.a`) → el DLL es autocontenido, sin dependencia de `zlib1.dll`
+
+**Detección de capacidades del motor (`engine/_loader.py`)**
+- Banderas separadas `C_PARSER_AVAILABLE` y `C_BATCH_AVAILABLE`: un DLL antiguo
+  sin las funciones nuevas degrada con gracia en vez de fallar
+
+**Empaquetado e instalación**
+- `pyproject.toml` actualizado: versión dinámica desde `bioforge.__version__`
+  (fuente única), backend estándar `setuptools.build_meta`, y el motor C
+  (`*.dll`/`*.so`/`*.c`) se incluye en el wheel vía `package-data`
+- `build.py` detecta GCC automáticamente (incl. ruta típica de MSYS2) e intenta
+  enlazar zlib, con fallback sin zlib si no está
+
+**Benchmark contra Biopython (`tools/bench_vs_biopython.py`)**
+- Mide tiempo y RAM pico (aislamiento por subproceso) en parsing, QC y carga
+  total. Resultados medidos (300 000 lecturas × 150 bp):
+  - QC (filtrar por calidad media): **~5–6× más rápido**, resultado idéntico
+  - Cargar todo en RAM: **~6.9× menos memoria** (115 MB vs 801 MB) y **~9.5×
+    más rápido** — aquí pesa el almacenamiento 5-bit
+
+### Tests
+- 269 tests (desde 239): `tests/test_streaming.py` añade 30 tests del parser
+  streaming/batch, la API columnar, GC, k-meros, `.gz` y rutas de error —
+  correctitud frente a `from_file` y a referencias ingenuas, longitud fija e
+  irregular, calidades Phred exactas, `filter()` y descarte de bases ambiguas
+
+---
+
 ## [1.1.1] — 2026-06-27
 
 ### Fixed
@@ -133,6 +218,8 @@ First stable release.
 
 ## Roadmap — planned for future releases
 
-- **v1.1** — Reverse complement (vectorised) · 6-frame translation
-- **v1.2** — Banded Needleman-Wunsch for sequences > 15 000 bp
-- **v2.0** — Package restructure (`from bioforge import ...`)
+- **v1.1** — Reverse complement (vectorised) · 6-frame translation ✓
+- **v1.2** — Banded Needleman-Wunsch for sequences > 15 000 bp ✓
+- **v2.0** — Streaming/batch parser in C · columnar API for QC ✓
+- **futuro** — API columnar 100% sin objetos (k-meros vectorizados, GC por lote);
+  lectura de FASTQ comprimido (gzip) en C; SIMD AVX2 en pack/unpack
