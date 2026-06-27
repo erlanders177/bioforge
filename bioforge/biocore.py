@@ -74,6 +74,9 @@ try:
     from .engine._loader import c_parse_mem_parallel as _c_parse_mem_parallel
     from .engine._loader import C_LIBDEFLATE_AVAILABLE as _C_LIBDEFLATE_AVAILABLE
     from .engine._loader import c_gzip_decompress as _c_gzip_decompress
+    from .engine._loader import c_is_bgzf as _c_is_bgzf
+    from .engine._loader import c_bgzf_usize as _c_bgzf_usize
+    from .engine._loader import c_bgzf_decompress_parallel as _c_bgzf_decompress_parallel
 except ImportError:
     _C_AVAILABLE        = False
     _C_PARSER_AVAILABLE = False
@@ -1581,11 +1584,26 @@ class SmartImporter:
         if len(comp) < 18:                          # gzip mínimo
             yield from cls._stream_columnar(path, force_type, fastq)
             return
+        cbuf = np.frombuffer(comp, dtype=np.uint8)
+
+        # ── Palanca 3: BGZF (gzip por bloques) → descompresión PARALELA ──────
+        if _c_is_bgzf(cbuf):
+            usize = _c_bgzf_usize(cbuf)
+            if usize > 0:
+                out = bytearray(usize)
+                oarr = np.frombuffer(out, dtype=np.uint8)
+                n = _c_bgzf_decompress_parallel(cbuf, oarr, nt)
+                if n >= 0:
+                    yield from cls._parse_buffer_windows(
+                        out, oarr, n, force_type, fastq, nt)
+                    return
+            # si algo falla, sigue al camino gzip normal
+
+        # ── Palanca 2: gzip normal → libdeflate (1 hilo) ────────────────────
         isize = struct.unpack("<I", comp[-4:])[0]   # tamaño descomprimido (mod 2^32)
         if isize == 0:
             yield from cls._stream_columnar(path, force_type, fastq)
             return
-        cbuf = np.frombuffer(comp, dtype=np.uint8)
         out = bytearray(isize)
         oarr = np.frombuffer(out, dtype=np.uint8)
         n = _c_gzip_decompress(cbuf, oarr)

@@ -4,7 +4,7 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **2.2.0**).
+Es un paquete instalable: `from bioforge import ...` (versión actual **2.3.0**).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
@@ -63,6 +63,10 @@ constante; >1=hilos; 0=todos los núcleos). El motor enruta: plano→parseo para
 (OpenMP, mmap sin copia); `.gz`→libdeflate (~2×) + parseo; fallback a zlib
 secuencial. El parseo paralelo está limitado por ancho de banda de memoria
 (poco en pocos núcleos); el win real es libdeflate en `.gz` (~1.6× end-to-end).
+**BGZF (palanca 3, v2.3):** `.gz` por bloques independientes → descompresión
+paralela (~1.95×, la vía más rápida). Conversor `bioforge-bgzip` (bgzf.py);
+salida compatible con gunzip. El despachador detecta BGZF (subcampo `BC`) y
+enruta; `.gz` normal → libdeflate 1 hilo.
 
 ---
 
@@ -80,6 +84,7 @@ secuencial. El parseo paralelo está limitado por ancho de banda de memoria
 | vs Biopython — cargar todo en RAM | **~6.9× menos RAM** (115 vs 801 MB), ~9.5× más rápido |
 | Leer FASTQ `.gz` (libdeflate + paralelo, n_threads≠1) | **~89 M bases/s** (1.59× vs zlib) |
 | Descompresión gzip libdeflate vs zlib | **2.15×** (379 vs 176 MB/s) |
+| Leer FASTQ **BGZF** (descompresión paralela) | **~113 M bases/s** (~1.95× vs baseline) |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
 Correspondería a 2-bit packing, no al esquema 5-bit implementado.
@@ -97,6 +102,7 @@ bioforge/                  paquete instalable (from bioforge import ...)
   aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman
   analyze.py               pipeline CLI (dna/protein/both)
   qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
+  bgzf.py                  conversor a BGZF (gzip por bloques, paralelo) — CLI bioforge-bgzip
   engine/
     engine.c               motor C — pack/unpack, NW/SW, parser FASTA/FASTQ + batch + .gz
     engine.dll             binario compilado (versionado en git)

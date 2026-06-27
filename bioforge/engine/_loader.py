@@ -187,6 +187,14 @@ def _check_libdeflate() -> None:
         _lib.bio_has_libdeflate.argtypes = []
         _lib.bio_gzip_decompress.restype = _I64
         _lib.bio_gzip_decompress.argtypes = [_U8P, _I64, _U8P, _I64]
+        _lib.bio_is_bgzf.restype = ctypes.c_int
+        _lib.bio_is_bgzf.argtypes = [_U8P, _I64]
+        _lib.bio_bgzf_usize.restype = _I64
+        _lib.bio_bgzf_usize.argtypes = [_U8P, _I64]
+        _lib.bio_bgzf_decompress_parallel.restype = _I64
+        _lib.bio_bgzf_decompress_parallel.argtypes = [_U8P, _I64, _U8P, _I64, _I32]
+        _lib.bio_bgzf_compress.restype = _I64
+        _lib.bio_bgzf_compress.argtypes = [_U8P, _I64, _U8P, _I64, _I32, _I32]
         C_LIBDEFLATE_AVAILABLE = bool(_lib.bio_has_libdeflate())
     except (AttributeError, OSError):
         pass
@@ -443,6 +451,38 @@ def c_gzip_decompress(cbuf: np.ndarray, obuf: np.ndarray) -> int:
     return int(_lib.bio_gzip_decompress(
         cbuf.ctypes.data_as(_U8P), _I64(len(cbuf)),
         obuf.ctypes.data_as(_U8P), _I64(len(obuf)),
+    ))
+
+
+def c_is_bgzf(cbuf: np.ndarray) -> bool:
+    """True si el buffer comprimido tiene formato BGZF (gzip por bloques)."""
+    return bool(_lib.bio_is_bgzf(cbuf.ctypes.data_as(_U8P), _I64(len(cbuf))))
+
+
+def c_bgzf_usize(cbuf: np.ndarray) -> int:
+    """Tamaño total descomprimido de un BGZF, o -1 si malformado."""
+    return int(_lib.bio_bgzf_usize(cbuf.ctypes.data_as(_U8P), _I64(len(cbuf))))
+
+
+def c_bgzf_decompress_parallel(cbuf: np.ndarray, obuf: np.ndarray,
+                               n_threads: int) -> int:
+    """Descomprime un BGZF en paralelo (bloques independientes).
+
+    Devuelve nº de bytes descomprimidos, o -1 en error.
+    """
+    return int(_lib.bio_bgzf_decompress_parallel(
+        cbuf.ctypes.data_as(_U8P), _I64(len(cbuf)),
+        obuf.ctypes.data_as(_U8P), _I64(len(obuf)), _I32(n_threads),
+    ))
+
+
+def c_bgzf_compress(inbuf: np.ndarray, obuf: np.ndarray,
+                    level: int, n_threads: int) -> int:
+    """Comprime ``inbuf`` a BGZF en paralelo. Devuelve bytes comprimidos o -1."""
+    return int(_lib.bio_bgzf_compress(
+        inbuf.ctypes.data_as(_U8P), _I64(len(inbuf)),
+        obuf.ctypes.data_as(_U8P), _I64(len(obuf)),
+        _I32(level), _I32(n_threads),
     ))
 
 

@@ -72,11 +72,220 @@
       libdeflate_free_decompressor(d);
       return ok ? out_pos : -1;
   }
+
+  /* ── BGZF: gzip por bloques independientes → descompresión PARALELA ──────
+     Un BGZF es un .gz válido (cada bloque es un miembro gzip con un subcampo
+     extra 'BC' que da BSIZE). Los bloques se descomprimen en paralelo. */
+
+  /* ¿Es BGZF? (primer bloque con subcampo extra 'BC'). */
+  EXPORT int bio_is_bgzf(const uint8_t* c, int64_t n) {
+      if (n < 18) return 0;
+      if (c[0] != 0x1f || c[1] != 0x8b || c[2] != 8 || !(c[3] & 4)) return 0;
+      int xlen = c[10] | (c[11] << 8);
+      int64_t p = 12, e = 12 + (int64_t)xlen;
+      if (e > n) return 0;
+      while (p + 4 <= e) {
+          int slen = c[p + 2] | (c[p + 3] << 8);
+          if (c[p] == 66 && c[p + 1] == 67) return 1;   /* 'B','C' */
+          p += 4 + slen;
+      }
+      return 0;
+  }
+
+  /* Tamaño del bloque BGZF en 'o' (BSIZE+1), o -1 si malformado. */
+  static int64_t _bgzf_block_size(const uint8_t* c, int64_t clen, int64_t o) {
+      if (o + 18 > clen || c[o] != 0x1f || c[o + 1] != 0x8b) return -1;
+      int xlen = c[o + 10] | (c[o + 11] << 8);
+      int64_t p = o + 12, e = o + 12 + xlen;
+      while (p + 4 <= e) {
+          int slen = c[p + 2] | (c[p + 3] << 8);
+          if (c[p] == 66 && c[p + 1] == 67)
+              return (int64_t)(c[p + 4] | (c[p + 5] << 8)) + 1;
+          p += 4 + slen;
+      }
+      return -1;
+  }
+
+  /* Tamaño total descomprimido de un BGZF (suma de ISIZE), o -1 si malformado. */
+  EXPORT int64_t bio_bgzf_usize(const uint8_t* c, int64_t clen) {
+      int64_t o = 0, utot = 0;
+      while (o < clen) {
+          int64_t bs = _bgzf_block_size(c, clen, o);
+          if (bs < 0 || o + bs > clen) return -1;
+          int32_t isize; memcpy(&isize, c + o + bs - 4, 4);
+          utot += isize;
+          o += bs;
+      }
+      return utot;
+  }
+
+  /* Descomprime un BGZF en paralelo. Devuelve bytes descomprimidos, o -1. */
+  EXPORT int64_t bio_bgzf_decompress_parallel(
+      const uint8_t* c, int64_t clen, uint8_t* obuf, int64_t ocap,
+      int n_threads)
+  {
+      /* Pass 0: contar bloques no vacíos y total descomprimido. */
+      int64_t o = 0, nb = 0, utot = 0;
+      while (o < clen) {
+          int64_t bs = _bgzf_block_size(c, clen, o);
+          if (bs < 0 || o + bs > clen) return -1;
+          int32_t isize; memcpy(&isize, c + o + bs - 4, 4);
+          if (isize > 0) { nb++; utot += isize; }
+          o += bs;
+      }
+      if (utot > ocap) return -1;
+      if (nb == 0) return 0;
+
+      int64_t* coff = (int64_t*)malloc((size_t)nb * sizeof(int64_t));
+      int32_t* csz  = (int32_t*)malloc((size_t)nb * sizeof(int32_t));
+      int64_t* uoff = (int64_t*)malloc((size_t)nb * sizeof(int64_t));
+      int32_t* usz  = (int32_t*)malloc((size_t)nb * sizeof(int32_t));
+      if (!coff || !csz || !uoff || !usz) {
+          free(coff); free(csz); free(uoff); free(usz); return -1;
+      }
+
+      /* Pass 1: registrar offsets de cada bloque. */
+      o = 0; int64_t i = 0, uo = 0;
+      while (o < clen) {
+          int64_t bs = _bgzf_block_size(c, clen, o);
+          int32_t isize; memcpy(&isize, c + o + bs - 4, 4);
+          if (isize > 0) {
+              coff[i] = o; csz[i] = (int32_t)bs;
+              uoff[i] = uo; usz[i] = isize;
+              uo += isize; i++;
+          }
+          o += bs;
+      }
+
+      int NT = n_threads;
+      if (NT < 1) NT = 1;
+      if (NT > omp_get_max_threads()) NT = omp_get_max_threads();
+      if (NT > 64) NT = 64;
+
+      /* Pass 2: descomprimir bloques en paralelo (1 descompresor por hilo). */
+      int err = 0;
+      #pragma omp parallel num_threads(NT)
+      {
+          struct libdeflate_decompressor* d = libdeflate_alloc_decompressor();
+          if (!d) { err = 1; }
+          else {
+              #pragma omp for schedule(static)
+              for (int64_t k = 0; k < nb; k++) {
+                  size_t actual = 0;
+                  enum libdeflate_result r = libdeflate_gzip_decompress(
+                      d, c + coff[k], (size_t)csz[k],
+                      obuf + uoff[k], (size_t)usz[k], &actual);
+                  if (r != LIBDEFLATE_SUCCESS || (int32_t)actual != usz[k])
+                      err = 1;
+              }
+              libdeflate_free_decompressor(d);
+          }
+      }
+      free(coff); free(csz); free(uoff); free(usz);
+      return err ? -1 : utot;
+  }
+
+  /* Marcador EOF estándar de BGZF (bloque vacío de 28 bytes). */
+  static const uint8_t _BGZF_EOF[28] = {
+      0x1f,0x8b,0x08,0x04,0,0,0,0,0,0xff,6,0,0x42,0x43,
+      2,0,0x1b,0,3,0,0,0,0,0,0,0,0,0
+  };
+
+  /* Comprime ``in`` a BGZF en paralelo (bloques de 64 KB independientes).
+     Devuelve el tamaño comprimido, o -1 si no cabe / error. */
+  EXPORT int64_t bio_bgzf_compress(const uint8_t* in, int64_t in_len,
+                                   uint8_t* out, int64_t out_cap,
+                                   int level, int n_threads) {
+      const int64_t CHUNK = 0xff00;   /* 65280: máx. descomprimido por bloque */
+      int64_t nb = (in_len + CHUNK - 1) / CHUNK;
+      int NT = n_threads;
+      if (NT < 1) NT = 1;
+      if (NT > omp_get_max_threads()) NT = omp_get_max_threads();
+      if (NT > 64) NT = 64;
+
+      uint8_t** bufs = NULL; int32_t* lens = NULL; int err = 0;
+      if (nb > 0) {
+          bufs = (uint8_t**)calloc((size_t)nb, sizeof(uint8_t*));
+          lens = (int32_t*)malloc((size_t)nb * sizeof(int32_t));
+          if (!bufs || !lens) { free(bufs); free(lens); return -1; }
+
+          #pragma omp parallel num_threads(NT)
+          {
+              struct libdeflate_compressor* comp =
+                  libdeflate_alloc_compressor(level);
+              if (!comp) { err = 1; }
+              else {
+                  #pragma omp for schedule(static)
+                  for (int64_t i = 0; i < nb; i++) {
+                      int64_t off = i * CHUNK;
+                      int32_t csz = (int32_t)((in_len - off < CHUNK)
+                                              ? in_len - off : CHUNK);
+                      size_t bound = libdeflate_deflate_compress_bound(comp, csz);
+                      uint8_t* blk = (uint8_t*)malloc(18 + bound + 8);
+                      if (!blk) { err = 1; continue; }
+                      size_t dlen = libdeflate_deflate_compress(
+                          comp, in + off, csz, blk + 18, bound);
+                      if (dlen == 0) { err = 1; free(blk); continue; }
+                      int64_t total = 18 + (int64_t)dlen + 8;
+                      int bsize = (int)total - 1;
+                      blk[0]=0x1f; blk[1]=0x8b; blk[2]=0x08; blk[3]=0x04;
+                      blk[4]=blk[5]=blk[6]=blk[7]=0;          /* mtime */
+                      blk[8]=0; blk[9]=0xff;                  /* xfl, os */
+                      blk[10]=6; blk[11]=0;                   /* xlen */
+                      blk[12]=0x42; blk[13]=0x43;             /* 'B','C' */
+                      blk[14]=2; blk[15]=0;                   /* slen */
+                      blk[16]=(uint8_t)(bsize & 0xff);
+                      blk[17]=(uint8_t)((bsize >> 8) & 0xff);
+                      uint32_t crc = libdeflate_crc32(0, in + off, csz);
+                      memcpy(blk + 18 + dlen, &crc, 4);
+                      uint32_t isize = (uint32_t)csz;
+                      memcpy(blk + 18 + dlen + 4, &isize, 4);
+                      bufs[i] = blk; lens[i] = (int32_t)total;
+                  }
+                  libdeflate_free_compressor(comp);
+              }
+          }
+      }
+
+      int64_t pos = 0;
+      if (!err) {
+          for (int64_t i = 0; i < nb; i++) {
+              if (!bufs[i]) { err = 1; break; }
+              if (pos + lens[i] > out_cap) { err = 1; break; }
+              memcpy(out + pos, bufs[i], (size_t)lens[i]);
+              pos += lens[i];
+          }
+          if (!err && pos + 28 <= out_cap) {
+              memcpy(out + pos, _BGZF_EOF, 28); pos += 28;
+          } else if (!err) {
+              err = 1;
+          }
+      }
+      for (int64_t i = 0; i < nb; i++) free(bufs ? bufs[i] : NULL);
+      free(bufs); free(lens);
+      return err ? -1 : pos;
+  }
 #else
   EXPORT int bio_has_libdeflate(void) { return 0; }
   EXPORT int64_t bio_gzip_decompress(const uint8_t* cbuf, int64_t clen,
                                      uint8_t* obuf, int64_t ocap) {
       (void)cbuf; (void)clen; (void)obuf; (void)ocap; return -1;
+  }
+  EXPORT int bio_is_bgzf(const uint8_t* c, int64_t n) {
+      (void)c; (void)n; return 0;
+  }
+  EXPORT int64_t bio_bgzf_usize(const uint8_t* c, int64_t clen) {
+      (void)c; (void)clen; return -1;
+  }
+  EXPORT int64_t bio_bgzf_decompress_parallel(
+      const uint8_t* c, int64_t clen, uint8_t* obuf, int64_t ocap, int nt) {
+      (void)c; (void)clen; (void)obuf; (void)ocap; (void)nt; return -1;
+  }
+  EXPORT int64_t bio_bgzf_compress(const uint8_t* in, int64_t in_len,
+                                   uint8_t* out, int64_t out_cap,
+                                   int level, int nt) {
+      (void)in;(void)in_len;(void)out;(void)out_cap;(void)level;(void)nt;
+      return -1;
   }
 #endif
 

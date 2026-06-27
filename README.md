@@ -170,6 +170,20 @@ Reading compressed FASTQ is **~1.6× faster** this way (libdeflate beats zlib);
 plain-file parse parallelism is memory-bandwidth bound, so its gain is modest on
 few cores but scales on many-core servers.
 
+### BGZF — parallel-decompressible `.gz` (~2× faster reads)
+
+A BGZF file is a **valid `.gz`** (any `gunzip` reads it) but split into
+independent 64 KB blocks, so BioForge decompresses it across all cores. Convert
+once a file you'll process repeatedly:
+
+```bash
+python -m bioforge.bgzf reads.fastq        # or: bioforge-bgzip reads.fastq
+# → reads.fastq.gz (BGZF). Reads at ~113 M bases/s vs ~58 for plain .gz.
+```
+
+BioForge auto-detects BGZF and routes to the parallel path; plain `.gz` keeps
+using single-thread libdeflate.
+
 ### GC content and k-mer spectrum — vectorised over a whole batch
 
 ```python
@@ -260,6 +274,7 @@ bioforge/               Python package — all core modules
   aligner.py            Level 3 — pairwise alignment + mutation detection
   analyze.py            Full pipeline: DNA + protein analysis, report generation
   qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
+  bgzf.py               BGZF converter (parallel block gzip) — bioforge-bgzip
   engine/
     engine.c            C source — pack, unpack, NW align, translate (GCC -O3)
     engine.dll          Compiled C backend (Windows)
@@ -374,6 +389,7 @@ python check.py
 - [x] Benchmark vs Biopython — `tools/bench_vs_biopython.py`
 - [x] Fast FASTQ quality report (FastQC-style) — `bioforge-qc` / `bioforge.qcreport`
 - [x] Adaptive multi-core dispatcher — `n_threads=`: parallel parse + libdeflate `.gz`
+- [x] BGZF parallel-decompressible `.gz` + converter — `bioforge-bgzip`
 - [ ] Native per-platform wheels on PyPI (cibuildwheel)
 - [ ] Long-read / genome-scale aligner (k-mer seeding)
 

@@ -5,6 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.3.0] — 2026-06-27
+
+Soporte **BGZF** (palanca 3): descompresión gzip **en paralelo** + conversor.
+Un BGZF es un `.gz` 100 % válido (lo lee cualquier `gunzip`/zlib) pero por bloques
+independientes, así que se descomprime en todos los núcleos a la vez.
+
+### Added
+
+**Lector BGZF paralelo (`engine.c`)**
+- `bio_is_bgzf` detecta el formato (subcampo extra `BC`); `bio_bgzf_usize` da el
+  tamaño descomprimido; `bio_bgzf_decompress_parallel` descomprime los bloques en
+  paralelo (OpenMP, 1 descompresor libdeflate por hilo).
+- El despachador de `.gz` (`_stream_gz_parallel`) detecta BGZF y enruta a la vía
+  paralela; los `.gz` normales siguen con libdeflate (1 hilo). Medido: BGZF
+  **113 M bases/s** vs 58 del baseline (~1.95×), y más rápido que la palanca 2.
+
+**Conversor a BGZF (`bioforge/bgzf.py`)**
+- `bgzf.compress_file(path)` / `compress_bytes(data)` — comprime a BGZF **en
+  paralelo** (un bloque de 64 KB por tarea). Salida compatible con gunzip.
+- CLI: `python -m bioforge.bgzf reads.fastq` y entry point `bioforge-bgzip`.
+- Idea: convierte una vez un FASTQ que vas a procesar muchas veces y léelo
+  siempre por la vía más rápida.
+
+### Tests
+- 298 tests (desde 293): `tests/test_bgzf.py` — round-trip, compatibilidad con
+  `gunzip` estándar, detección, lectura paralela == secuencial, FASTA y FASTQ.
+
+---
+
 ## [2.2.0] — 2026-06-27
 
 Procesamiento multinúcleo con un **despachador adaptativo**: el motor elige la
