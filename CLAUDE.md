@@ -3,14 +3,17 @@
 ## Qué es este proyecto
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
-Sin Biopython. Basado exclusivamente en NumPy. Python 3.13, Windows 10.
+Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
+Es un paquete instalable: `from bioforge import ...` (versión actual **2.0.0**).
 
-Tres niveles implementados y validados:
-- **L1** `biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
-- **L2** `smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view)
-- **L3** `aligner.py` — Needleman-Wunsch con vectorización anti-diagonal (wavefront)
+Niveles implementados y validados:
+- **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
+- **L2** `bioforge/smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
+- **L3** `bioforge/aligner.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
+- **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
-Documentación detallada en `docs/`.
+Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
+ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
 
 ---
 
@@ -18,10 +21,15 @@ Documentación detallada en `docs/`.
 
 ### 1. Cero loops Python en la ruta crítica
 **Prohibido** en `biocore.py`, `smart_translator.py`, y `_fill_matrix` de `aligner.py`:
-- Cualquier `for` o `while` que itere símbolo a símbolo o celda a celda.
+- Cualquier `for` o `while` que itere **símbolo a símbolo o celda a celda**.
 
 **Obligatorio:** operaciones NumPy vectorizadas — fancy indexing, `packbits`, `unpackbits`,
 `where`, `sliding_window_view`, `argmax`, `bincount`, etc.
+
+**Aclaración (v2.0):** los bucles **por registro** (no por símbolo) SÍ están permitidos
+—p.ej. el streaming/columnar de `SmartImporter` itera registros, y `ReadBatch.filter`
+en el caso irregular itera supervivientes. Todo el trabajo por símbolo (parse, encode,
+pack, GC, k-meros) ocurre en C o en una sola op NumPy sobre el lote.
 
 ### 2. Excepciones conocidas y aceptadas
 - `visor.py` — loops permitidos (frontend de display, no procesamiento)
@@ -38,8 +46,14 @@ Si una proteína no tiene E/F/I/L/P/Q/* en su secuencia, la auto-detección la
 clasificará silenciosamente como ADN. Usar siempre `force_type=SeqType.PROTEIN`.
 
 ### 5. Benchmark después de cada optimización
-Ejecutar `python stress_test.py` antes y después de cualquier cambio en el motor
-para verificar que no empeora RAM ni velocidad.
+Ejecutar `python tools/stress_test.py` antes y después de cualquier cambio en el
+motor para verificar que no empeora RAM ni velocidad. Para la ingesta, comparar
+con `python tools/bench_vs_biopython.py`.
+
+### 6. Recompilar el motor C tras tocar engine.c
+`python bioforge/engine/build.py` (autodetecta GCC, incl. MSYS2 en
+`C:\msys64\mingw64\bin\gcc.exe`, y enlaza zlib estático para `.gz`). El DLL
+compilado se versiona en git para que el usuario no necesite GCC.
 
 ---
 
@@ -51,6 +65,10 @@ para verificar que no empeora RAM ni velocidad.
 | RAM para 30M bases | **18.75 MB** |
 | Throughput traducción | **~5 M aa/s** |
 | Benchmark alineador 1000×1000 nt | **~165 ms** |
+| Ingesta FASTA (parser C por lotes) | **~80 M bases/s** |
+| Ingesta FASTQ (parser C por lotes) | **~14 M bases/s · ~94 K lecturas/s** |
+| Filtrar 200K lecturas por calidad (columnar) | **~0.28 s** (18.6× vs por registro) |
+| vs Biopython — cargar todo en RAM | **~6.9× menos RAM** (115 vs 801 MB), ~9.5× más rápido |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
 Correspondería a 2-bit packing, no al esquema 5-bit implementado.
@@ -60,33 +78,46 @@ Correspondería a 2-bit packing, no al esquema 5-bit implementado.
 ## Estructura de archivos
 
 ```
-biocore.py            L1 — almacenamiento (no modificar sin impacto en todo)
-smart_translator.py   L2 — traducción ADN→Proteína
-aligner.py            L3 — alineamiento NW + detección de mutaciones
-visor.py              frontend interactivo (loops permitidos aquí)
-stress_test.py        benchmark de 30M bases
-docs/
-  architecture.md     arquitectura detallada por niveles
-  api_reference.md    ejemplos de uso de todos los módulos
-  benchmarks.md       métricas reales y correcciones
-  roadmap.md          estado, extensiones pendientes, decisiones cerradas
+bioforge/                  paquete instalable (from bioforge import ...)
+  __init__.py              API pública + __version__ (fuente única de versión)
+  biocore.py               L1 — almacenamiento 5-bit, SmartImporter, FastqRecord,
+                           SequenceBatch/ReadBatch (API columnar) — no tocar sin impacto global
+  smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement
+  aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman
+  analyze.py               pipeline CLI (dna/protein/both)
+  engine/
+    engine.c               motor C — pack/unpack, NW/SW, parser FASTA/FASTQ + batch + .gz
+    engine.dll             binario compilado (versionado en git)
+    _loader.py             ctypes + banderas C_AVAILABLE/C_PARSER_AVAILABLE/C_BATCH_AVAILABLE
+    build.py               compila el DLL/SO (autodetecta GCC, enlaza zlib)
+tools/
+  visor.py                 frontend interactivo (loops permitidos aquí)
+  comparador.py            comparador de secuencias (CLI)
+  stress_test.py           benchmark de 30M bases
+  bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
+tests/                     test_biocore / _translator / _aligner / _analyze / _streaming
+docs/                      architecture · api_reference · benchmarks · roadmap
+pyproject.toml             empaquetado (versión dinámica, incluye el DLL en el wheel)
 ```
 
 ---
 
-## Limitaciones conocidas del estado actual
+## Limitaciones conocidas del estado actual (v2.0)
 
-- Alineador: solo viable para secuencias ≤ 15 000 símbolos (O(m·n) RAM)
-- Traductor: solo 1 frame (hebra directa, primer ATG). Sin 6 frames ni reverse complement.
-- Auto-detección de tipo: puede fallar en proteínas sin residuos exclusivos
+- Alineador: solo viable para secuencias ≤ 15 000 símbolos (O(m·n) RAM; usar `band=N`)
+- Auto-detección de tipo: puede fallar en proteínas sin residuos exclusivos (usar `force_type`)
+- API columnar: `batch[i]` materializa un objeto; el modo 100% sin objetos solo cubre
+  por ahora GC y k-meros
+- Wheel PyPI `py3-none-any` con DLL de Windows: en otras plataformas cae a fallback
+  NumPy o requiere recompilar. Faltan wheels nativos por plataforma (cibuildwheel)
 
 ---
 
-## Próximas extensiones priorizadas
+## Próximas extensiones priorizadas (post-v2.0)
 
-1. Banded NW — para secuencias > 15 000 bp
-2. Reverse complement vectorizado — prerequisito para 6-frame translation
-3. 6-frame translation
+1. Wheels nativos por plataforma (cibuildwheel) para `pip install bioforge` real
+2. Columnar 100% sin objetos en más operaciones (la "frontera taquión")
+3. SIMD AVX2 explícito en pack/unpack y `bio_find_atg`
 
 ---
 
