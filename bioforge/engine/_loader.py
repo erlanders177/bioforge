@@ -18,6 +18,7 @@ _DLL_PATH   = _ENGINE_DIR / ("engine.dll" if sys.platform == "win32" else "engin
 _U8P  = ctypes.POINTER(ctypes.c_uint8)
 _I32P = ctypes.POINTER(ctypes.c_int32)
 _I32  = ctypes.c_int32
+_I64  = ctypes.c_int64
 _CHARP = ctypes.c_char_p
 
 # ── Carga del DLL ──────────────────────────────────────────────────────────────
@@ -150,8 +151,32 @@ def _check_batch() -> None:
         pass
 
 
+C_PARALLEL_AVAILABLE: bool = False
+
+def _check_parallel() -> None:
+    """Parser paralelo en memoria (OpenMP). Opcional."""
+    global C_PARALLEL_AVAILABLE
+    if not C_BATCH_AVAILABLE or _lib is None:
+        return
+    try:
+        ctypes.c_void_p.in_dll(_lib, "bio_parse_mem_parallel")
+        _lib.bio_parse_mem_parallel.restype  = _I32
+        _lib.bio_parse_mem_parallel.argtypes = [
+            _U8P, _I64, _I32, _I32, _I32,    # data, len, fmt, n_threads, force_type
+            ctypes.c_char_p, _I32, _I32P,    # hdr_buf, hdr_buf_max, hdr_off
+            _U8P, _I64, _I32P,               # pack_buf, pack_buf_max, pack_off
+            _I32P, _I32P,                    # n_syms, types
+            _U8P, _I64, _I32P,               # qual_buf, qual_buf_max, qual_off
+            _I32,                            # max_records
+        ]
+        C_PARALLEL_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
 _check_parser()
 _check_batch()
+_check_parallel()
 
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
@@ -353,6 +378,41 @@ def c_parser_next_batch(
         pack_off.ctypes.data_as(_I32P),
         n_syms.ctypes.data_as(_I32P), types.ctypes.data_as(_I32P),
         q_ptr, q_max, q_off_ptr,
+    )
+
+
+def c_parse_mem_parallel(
+    data:     np.ndarray,
+    fmt:      int,
+    n_threads: int,
+    force_type: int,
+    hdr_buf:  "ctypes.Array",
+    hdr_off:  np.ndarray,
+    pack_buf: np.ndarray,
+    pack_off: np.ndarray,
+    n_syms:   np.ndarray,
+    types:    np.ndarray,
+    qual_buf: "np.ndarray | None",
+    qual_off: "np.ndarray | None",
+    max_records: int,
+) -> int:
+    """Parsea un bloque de memoria (solo registros completos) en paralelo.
+
+    ``data`` es un array uint8 contiguo. Rellena los buffers de salida (que el
+    llamante reutiliza). Devuelve nº de registros (>=0), o negativo en error.
+    """
+    q_ptr = qual_buf.ctypes.data_as(_U8P) if qual_buf is not None else None
+    q_max = _I64(len(qual_buf)) if qual_buf is not None else _I64(0)
+    q_off = qual_off.ctypes.data_as(_I32P) if qual_off is not None else None
+    return _lib.bio_parse_mem_parallel(
+        data.ctypes.data_as(_U8P), _I64(len(data)),
+        _I32(fmt), _I32(n_threads), _I32(force_type),
+        hdr_buf, _I32(len(hdr_buf)), hdr_off.ctypes.data_as(_I32P),
+        pack_buf.ctypes.data_as(_U8P), _I64(len(pack_buf)),
+        pack_off.ctypes.data_as(_I32P),
+        n_syms.ctypes.data_as(_I32P), types.ctypes.data_as(_I32P),
+        q_ptr, q_max, q_off,
+        _I32(max_records),
     )
 
 

@@ -58,6 +58,9 @@ def build() -> bool:
     if sys.platform == "win32":
         out = ENGINE_DIR / "engine.dll"
         zlib_link = ["-l:libz.a"]   # estático → DLL autocontenido, sin zlib1.dll
+        # -static enlaza libgomp (OpenMP), libgcc y winpthread DENTRO del DLL,
+        # para que no dependa de libgomp-1.dll en tiempo de carga.
+        base += ["-static"]
     else:
         out = ENGINE_DIR / "engine.so"
         base += ["-fPIC"]

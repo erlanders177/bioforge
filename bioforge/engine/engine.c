@@ -39,6 +39,14 @@
   #define BIO_CLOSE(f)       fclose(f)
 #endif
 
+/* OpenMP para el parser paralelo en memoria. Sin -fopenmp, se compila en serie. */
+#ifdef _OPENMP
+  #include <omp.h>
+#else
+  static int omp_get_max_threads(void) { return 1; }
+  static int omp_get_thread_num(void)  { return 0; }
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════════════
    5-BIT PACK / UNPACK / GETITEM
    Formato compatible con np.packbits(bitorder='big') +
@@ -612,50 +620,56 @@ typedef struct {
     int      has_pending;   /* 1 = hay un registro en scratch sin emitir */
 } BioParser;
 
-/* ── LUTs idénticas a las de Python (mismo esquema BioCode 5-bit) ───────── */
+/* ── LUTs idénticas a las de Python (mismo esquema BioCode 5-bit) ─────────
+   Standalone para que el parser paralelo construya LUTs en la pila y las
+   comparta entre hilos (solo lectura). */
+static void _build_luts(uint8_t* nuc_lut, uint8_t* aa_lut, uint8_t* is_prot) {
+    memset(nuc_lut, 31, 256);
+    nuc_lut['A'] = nuc_lut['a'] =  0;
+    nuc_lut['C'] = nuc_lut['c'] =  1;
+    nuc_lut['G'] = nuc_lut['g'] =  2;
+    nuc_lut['T'] = nuc_lut['t'] =  3;
+    nuc_lut['U'] = nuc_lut['u'] =  3;
+    nuc_lut['N'] = nuc_lut['n'] = 31;
+    nuc_lut['-'] = nuc_lut['.'] = 25;
+
+    memset(aa_lut, 31, 256);
+    aa_lut['A'] = aa_lut['a'] =  4;
+    aa_lut['C'] = aa_lut['c'] =  5;
+    aa_lut['D'] = aa_lut['d'] =  6;
+    aa_lut['E'] = aa_lut['e'] =  7;
+    aa_lut['F'] = aa_lut['f'] =  8;
+    aa_lut['G'] = aa_lut['g'] =  9;
+    aa_lut['H'] = aa_lut['h'] = 10;
+    aa_lut['I'] = aa_lut['i'] = 11;
+    aa_lut['K'] = aa_lut['k'] = 12;
+    aa_lut['L'] = aa_lut['l'] = 13;
+    aa_lut['M'] = aa_lut['m'] = 14;
+    aa_lut['N'] = aa_lut['n'] = 15;
+    aa_lut['P'] = aa_lut['p'] = 16;
+    aa_lut['Q'] = aa_lut['q'] = 17;
+    aa_lut['R'] = aa_lut['r'] = 18;
+    aa_lut['S'] = aa_lut['s'] = 19;
+    aa_lut['T'] = aa_lut['t'] = 20;
+    aa_lut['V'] = aa_lut['v'] = 21;
+    aa_lut['W'] = aa_lut['w'] = 22;
+    aa_lut['Y'] = aa_lut['y'] = 23;
+    aa_lut['*'] = 24;
+    aa_lut['-'] = 25;
+    aa_lut['X'] = aa_lut['x'] = 31;
+
+    memset(is_prot, 0, 256);
+    is_prot['E'] = is_prot['e'] = 1;
+    is_prot['F'] = is_prot['f'] = 1;
+    is_prot['I'] = is_prot['i'] = 1;
+    is_prot['L'] = is_prot['l'] = 1;
+    is_prot['P'] = is_prot['p'] = 1;
+    is_prot['Q'] = is_prot['q'] = 1;
+    is_prot['*'] = 1;
+}
+
 static void _init_luts(BioParser* p) {
-    memset(p->nuc_lut, 31, 256);
-    p->nuc_lut['A'] = p->nuc_lut['a'] =  0;
-    p->nuc_lut['C'] = p->nuc_lut['c'] =  1;
-    p->nuc_lut['G'] = p->nuc_lut['g'] =  2;
-    p->nuc_lut['T'] = p->nuc_lut['t'] =  3;
-    p->nuc_lut['U'] = p->nuc_lut['u'] =  3;
-    p->nuc_lut['N'] = p->nuc_lut['n'] = 31;
-    p->nuc_lut['-'] = p->nuc_lut['.'] = 25;
-
-    memset(p->aa_lut, 31, 256);
-    p->aa_lut['A'] = p->aa_lut['a'] =  4;
-    p->aa_lut['C'] = p->aa_lut['c'] =  5;
-    p->aa_lut['D'] = p->aa_lut['d'] =  6;
-    p->aa_lut['E'] = p->aa_lut['e'] =  7;
-    p->aa_lut['F'] = p->aa_lut['f'] =  8;
-    p->aa_lut['G'] = p->aa_lut['g'] =  9;
-    p->aa_lut['H'] = p->aa_lut['h'] = 10;
-    p->aa_lut['I'] = p->aa_lut['i'] = 11;
-    p->aa_lut['K'] = p->aa_lut['k'] = 12;
-    p->aa_lut['L'] = p->aa_lut['l'] = 13;
-    p->aa_lut['M'] = p->aa_lut['m'] = 14;
-    p->aa_lut['N'] = p->aa_lut['n'] = 15;
-    p->aa_lut['P'] = p->aa_lut['p'] = 16;
-    p->aa_lut['Q'] = p->aa_lut['q'] = 17;
-    p->aa_lut['R'] = p->aa_lut['r'] = 18;
-    p->aa_lut['S'] = p->aa_lut['s'] = 19;
-    p->aa_lut['T'] = p->aa_lut['t'] = 20;
-    p->aa_lut['V'] = p->aa_lut['v'] = 21;
-    p->aa_lut['W'] = p->aa_lut['w'] = 22;
-    p->aa_lut['Y'] = p->aa_lut['y'] = 23;
-    p->aa_lut['*'] = 24;
-    p->aa_lut['-'] = 25;
-    p->aa_lut['X'] = p->aa_lut['x'] = 31;
-
-    memset(p->is_prot, 0, 256);
-    p->is_prot['E'] = p->is_prot['e'] = 1;
-    p->is_prot['F'] = p->is_prot['f'] = 1;
-    p->is_prot['I'] = p->is_prot['i'] = 1;
-    p->is_prot['L'] = p->is_prot['l'] = 1;
-    p->is_prot['P'] = p->is_prot['p'] = 1;
-    p->is_prot['Q'] = p->is_prot['q'] = 1;
-    p->is_prot['*'] = 1;
+    _build_luts(p->nuc_lut, p->aa_lut, p->is_prot);
 }
 
 /* ── Rellena el buffer conservando bytes no consumidos ─────────────────── */
@@ -999,4 +1013,281 @@ EXPORT void bio_parser_close(void* handle) {
         if (p->scr_qual)  free(p->scr_qual);
         free(p);
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PARSER PARALELO EN MEMORIA  (OpenMP)
+   ─────────────────────────────────────────────────────────────────────────
+   Parsea un bloque de memoria que contiene SOLO registros completos (el
+   llamante en Python garantiza que la ventana termina en un registro completo).
+   El bloque se trocea en N rangos alineados a límites de registro; cada hilo
+   parsea su rango en buffers propios y luego se fusiona en orden. Salida
+   columnar idéntica a bio_parser_next_batch.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct { int64_t start, len; } Seg;
+
+/* Lee una línea desde *pos (sin '\n', sin '\r'); avanza *pos tras el '\n'. */
+static Seg _mem_line(const uint8_t* D, int64_t L, int64_t* pos) {
+    int64_t p = *pos;
+    Seg s; s.start = p; s.len = 0;
+    if (p >= L) { *pos = p; return s; }
+    const uint8_t* nl = (const uint8_t*)memchr(D + p, '\n', (size_t)(L - p));
+    int64_t e = nl ? (int64_t)(nl - D) : L;
+    int64_t len = e - p;
+    if (len > 0 && D[e - 1] == '\r') len--;
+    s.len = len;
+    *pos = nl ? e + 1 : L;
+    return s;
+}
+
+/* Siguiente inicio de registro FASTA ('>' a principio de línea) en [from, L). */
+static int64_t _next_fasta_start(const uint8_t* D, int64_t L, int64_t from) {
+    int64_t p = from;
+    while (p < L) {
+        const uint8_t* nl = (const uint8_t*)memchr(D + p, '\n', (size_t)(L - p));
+        if (!nl) return L;
+        int64_t q = (int64_t)(nl - D) + 1;
+        if (q < L && D[q] == '>') return q;
+        p = q;
+    }
+    return L;
+}
+
+/* Siguiente inicio de registro FASTQ en [from, L). Verifica la estructura de
+   4 líneas (la 3ª empieza por '+') para no confundir un '@' de calidad. */
+static int64_t _next_fastq_start(const uint8_t* D, int64_t L, int64_t from) {
+    int64_t p = from;
+    while (p < L) {
+        const uint8_t* nl = (const uint8_t*)memchr(D + p, '\n', (size_t)(L - p));
+        if (!nl) return L;
+        int64_t q = (int64_t)(nl - D) + 1;
+        if (q < L && D[q] == '@') {
+            int64_t r = q; int ok = 1;
+            for (int k = 0; k < 2; k++) {           /* avanzar 2 líneas */
+                const uint8_t* n2 =
+                    (const uint8_t*)memchr(D + r, '\n', (size_t)(L - r));
+                if (!n2) { ok = 0; break; }
+                r = (int64_t)(n2 - D) + 1;
+            }
+            if (ok && r < L && D[r] == '+') return q;
+        }
+        p = q;
+    }
+    return L;
+}
+
+/* Buffers de salida por hilo. */
+typedef struct {
+    uint8_t* pack; int64_t pack_len, pack_cap;
+    uint8_t* qual; int64_t qual_len, qual_cap;
+    char*    hdr;  int64_t hdr_len,  hdr_cap;
+    uint8_t* code; int64_t code_cap;          /* scratch para codificar 1 seq */
+    int32_t* nsy;  int32_t  nrec;  int64_t rec_cap;
+    int32_t* typ;
+    int32_t* hln;                              /* longitud de cabecera (incl '\0') */
+    int      oom;                              /* 1 si falló una reserva */
+} TOut;
+
+static int _ensure(void** buf, int64_t* cap, int64_t need, int64_t esz) {
+    if (*cap >= need) return 1;
+    int64_t nc = (*cap < 1024) ? 1024 : *cap;
+    while (nc < need) nc *= 2;
+    void* nb = realloc(*buf, (size_t)(nc * esz));
+    if (!nb) return 0;
+    *buf = nb; *cap = nc; return 1;
+}
+
+/* Crece nsy/typ/hln a la vez (comparten rec_cap). */
+static int _ensure_rec(TOut* t) {
+    if (t->rec_cap > t->nrec) return 1;
+    int64_t nc = (t->rec_cap < 1024) ? 1024 : t->rec_cap * 2;
+    int32_t* a = (int32_t*)realloc(t->nsy, (size_t)nc * sizeof(int32_t));
+    if (a) t->nsy = a;
+    int32_t* b = (int32_t*)realloc(t->typ, (size_t)nc * sizeof(int32_t));
+    if (b) t->typ = b;
+    int32_t* c = (int32_t*)realloc(t->hln, (size_t)nc * sizeof(int32_t));
+    if (c) t->hln = c;
+    if (!a || !b || !c) return 0;
+    t->rec_cap = nc;
+    return 1;
+}
+
+/* ── API pública ─────────────────────────────────────────────────────────── */
+/*
+ * bio_parse_mem_parallel — parsea D[0..len) (solo registros completos) en
+ * paralelo. Devuelve nº de registros (>=0) | -1 error | -2 overflow de buffer.
+ */
+EXPORT int32_t bio_parse_mem_parallel(
+    const uint8_t* D, int64_t len,
+    int32_t fmt, int32_t n_threads, int32_t force_type,
+    char*    hdr_buf,  int32_t  hdr_buf_max, int32_t* hdr_off,
+    uint8_t* pack_buf, int64_t  pack_buf_max, int32_t* pack_off,
+    int32_t* n_syms,   int32_t* types,
+    uint8_t* qual_buf, int64_t  qual_buf_max, int32_t* qual_off,
+    int32_t  max_records
+) {
+    if (!D || len <= 0) return 0;
+
+    uint8_t nuc_lut[256], aa_lut[256], is_prot[256];
+    _build_luts(nuc_lut, aa_lut, is_prot);
+
+    int maxt = omp_get_max_threads();
+    int NT = n_threads;
+    if (NT < 1) NT = 1;
+    if (NT > maxt) NT = maxt;
+    if (NT > 64)  NT = 64;
+
+    /* Límites de los rangos, alineados a inicio de registro. */
+    int64_t bound[65];
+    bound[0] = 0;
+    for (int t = 1; t < NT; t++) {
+        int64_t guess = (int64_t)((double)len * t / NT);
+        bound[t] = (fmt == 1) ? _next_fasta_start(D, len, guess)
+                              : _next_fastq_start(D, len, guess);
+    }
+    bound[NT] = len;
+    /* Colapsar rangos vacíos o desordenados. */
+    for (int t = 1; t <= NT; t++)
+        if (bound[t] < bound[t - 1]) bound[t] = bound[t - 1];
+
+    TOut* outs = (TOut*)calloc((size_t)NT, sizeof(TOut));
+    if (!outs) return -1;
+
+    #pragma omp parallel num_threads(NT)
+    {
+        int tid = omp_get_thread_num();
+        TOut* t = &outs[tid];
+        int64_t lo = bound[tid], hi = bound[tid + 1];
+        int64_t pos = lo;
+
+        while (pos < hi) {
+            int64_t rec_start = pos;
+            int32_t n = 0, type = 0, q = 0;
+            const char* hdr_ptr = NULL; int32_t hlen = 0;
+            const uint8_t* qsrc = NULL;
+
+            if (fmt == 1) {
+                /* FASTA */
+                Seg h = _mem_line(D, len, &pos);          /* '>...' */
+                hdr_ptr = (const char*)(D + h.start + 1);
+                hlen = (int32_t)(h.len > 0 ? h.len - 1 : 0);
+                while (pos < len && D[pos] != '>') {
+                    Seg sg = _mem_line(D, len, &pos);
+                    if (!_ensure((void**)&t->code, &t->code_cap,
+                                 (int64_t)n + sg.len, 1)) { t->oom = 1; break; }
+                    for (int64_t k = 0; k < sg.len; k++)
+                        t->code[n++] = D[sg.start + k];   /* crudo; se codifica abajo */
+                }
+                if (t->oom) break;
+                type = (force_type >= 0) ? force_type : 0;
+                if (force_type < 0) {
+                    for (int32_t k = 0; k < n; k++)
+                        if (is_prot[t->code[k]]) { type = 1; break; }
+                }
+                const uint8_t* lut = type ? aa_lut : nuc_lut;
+                for (int32_t k = 0; k < n; k++) t->code[k] = lut[t->code[k]];
+            } else {
+                /* FASTQ: 4 líneas */
+                Seg h  = _mem_line(D, len, &pos);
+                Seg sq = _mem_line(D, len, &pos);
+                Seg pl = _mem_line(D, len, &pos); (void)pl;
+                Seg ql = _mem_line(D, len, &pos);
+                hdr_ptr = (const char*)(D + h.start + 1);
+                hlen = (int32_t)(h.len > 0 ? h.len - 1 : 0);
+                n = (int32_t)sq.len;
+                if (!_ensure((void**)&t->code, &t->code_cap, n, 1)) { t->oom = 1; break; }
+                type = (force_type == 1) ? 1 : 0;
+                const uint8_t* lut = type ? aa_lut : nuc_lut;
+                for (int32_t k = 0; k < n; k++)
+                    t->code[k] = lut[D[sq.start + k]];
+                q = (int32_t)ql.len;
+                qsrc = D + ql.start;
+            }
+
+            if (n <= 0) continue;   /* registro vacío: saltar (no contar) */
+
+            /* Reservar y volcar al buffer del hilo. La calidad se escribe con
+               longitud == n (se rellena con 0 o se trunca) para mantener el
+               invariante calidad==secuencia incluso en FASTQ malformado. */
+            int64_t plen = (int64_t)(n * 5 + 7) / 8;
+            if (!_ensure((void**)&t->pack, &t->pack_cap, t->pack_len + plen + 1, 1) ||
+                !_ensure((void**)&t->hdr,  &t->hdr_cap,  t->hdr_len + hlen + 1, 1) ||
+                !_ensure_rec(t) ||
+                (fmt == 2 &&
+                 !_ensure((void**)&t->qual, &t->qual_cap, t->qual_len + n, 1))) {
+                t->oom = 1; break;
+            }
+
+            bio_pack5(t->code, n, t->pack + t->pack_len);
+            t->pack_len += plen;
+            if (hlen > 0) memcpy(t->hdr + t->hdr_len, hdr_ptr, (size_t)hlen);
+            t->hdr[t->hdr_len + hlen] = '\0';
+            t->hdr_len += hlen + 1;
+            if (fmt == 2) {
+                for (int32_t k = 0; k < n; k++) {
+                    uint8_t c = (k < q) ? qsrc[k] : 33u;
+                    t->qual[t->qual_len + k] =
+                        (uint8_t)((c >= 33u) ? c - 33u : 0u);
+                }
+                t->qual_len += n;
+            }
+            t->nsy[t->nrec] = n;
+            t->typ[t->nrec] = type;
+            t->hln[t->nrec] = hlen + 1;
+            t->nrec++;
+
+            if (rec_start >= hi) break;
+        }
+    }
+
+    /* ── Fusión serial en orden de hilo ──────────────────────────────────── */
+    int rc = 0;
+    int32_t total_rec = 0;
+    int64_t total_pack = 0, total_qual = 0, total_hdr = 0;
+    for (int t = 0; t < NT; t++) {
+        if (outs[t].oom) { rc = -1; }
+        total_rec  += outs[t].nrec;
+        total_pack += outs[t].pack_len;
+        total_qual += outs[t].qual_len;
+        total_hdr  += outs[t].hdr_len;
+    }
+    if (rc == 0) {
+        if (total_rec > max_records ||
+            total_pack + 1 > pack_buf_max ||
+            total_hdr > hdr_buf_max ||
+            (qual_buf && total_qual > qual_buf_max)) {
+            rc = -2;
+        }
+    }
+    if (rc == 0) {
+        int32_t ri = 0; int64_t po = 0, qo = 0, ho = 0;
+        pack_off[0] = 0; hdr_off[0] = 0;
+        if (qual_off) qual_off[0] = 0;
+        for (int t = 0; t < NT; t++) {
+            TOut* o = &outs[t];
+            if (o->pack_len) memcpy(pack_buf + po, o->pack, (size_t)o->pack_len);
+            if (o->hdr_len)  memcpy(hdr_buf + ho, o->hdr, (size_t)o->hdr_len);
+            if (qual_buf && o->qual_len)
+                memcpy(qual_buf + qo, o->qual, (size_t)o->qual_len);
+            int64_t lpo = po, lqo = qo, lho = ho;
+            for (int32_t j = 0; j < o->nrec; j++) {
+                int32_t n = o->nsy[j];
+                n_syms[ri] = n;
+                types[ri]  = o->typ[j];
+                lpo += (int64_t)(n * 5 + 7) / 8; pack_off[ri + 1] = (int32_t)lpo;
+                if (qual_off) { lqo += n; qual_off[ri + 1] = (int32_t)lqo; }
+                lho += o->hln[j]; hdr_off[ri + 1] = (int32_t)lho;
+                ri++;
+            }
+            po += o->pack_len; qo += o->qual_len; ho += o->hdr_len;
+        }
+    }
+
+    for (int t = 0; t < NT; t++) {
+        free(outs[t].pack); free(outs[t].qual); free(outs[t].hdr);
+        free(outs[t].code); free(outs[t].nsy); free(outs[t].typ); free(outs[t].hln);
+    }
+    free(outs);
+    return (rc != 0) ? rc : total_rec;
 }

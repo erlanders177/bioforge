@@ -50,6 +50,8 @@ Memory savings over plain ASCII: 5 bits/symbol → 37.5 % reduction.
 from __future__ import annotations
 
 import ctypes
+import mmap
+import os
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterator, Optional
@@ -68,10 +70,13 @@ try:
     from .engine._loader import c_parser_next_fastq as _c_parser_next_fastq
     from .engine._loader import c_parser_next_batch as _c_parser_next_batch
     from .engine._loader import c_parser_close     as _c_parser_close
+    from .engine._loader import C_PARALLEL_AVAILABLE as _C_PARALLEL_AVAILABLE
+    from .engine._loader import c_parse_mem_parallel as _c_parse_mem_parallel
 except ImportError:
     _C_AVAILABLE        = False
     _C_PARSER_AVAILABLE = False
     _C_BATCH_AVAILABLE  = False
+    _C_PARALLEL_AVAILABLE = False
 
 
 __all__: list[str] = [
@@ -715,6 +720,64 @@ def _gather_headers(
     return b"".join(parts), new_off
 
 
+# ── Cortes de ventana para el parser paralelo ────────────────────────────────
+# Devuelven el offset del INICIO del último registro del bloque; los registros
+# anteriores están completos y se parsean, el resto se arrastra a la siguiente
+# ventana. Asumen que el bloque empieza en un límite de registro.
+
+def _cut_fasta(data: bytes) -> int:
+    i = data.rfind(b"\n>")
+    return i + 1 if i != -1 else 0
+
+
+def _cut_fastq(data: bytes) -> int:
+    pos = len(data)
+    while True:
+        i = data.rfind(b"\n@", 0, pos)
+        if i == -1:
+            return 0
+        rec = i + 1
+        nl1 = data.find(b"\n", rec)
+        if nl1 == -1:
+            pos = i; continue
+        nl2 = data.find(b"\n", nl1 + 1)
+        if nl2 == -1:
+            pos = i; continue
+        if data[nl2 + 1: nl2 + 2] == b"+":   # verificado: registro real
+            return rec
+        pos = i
+
+
+def _columnar_batch(m, pack_buf, pack_off, n_syms, types,
+                    hdr_buf, hdr_off, qual_buf, qual_off, fastq):
+    """Construye un SequenceBatch/ReadBatch desde los buffers de salida de C.
+
+    Compartido por el camino columnar secuencial y el paralelo. Una copia por
+    lote desacopla de los buffers reutilizados; string_at copia solo lo usado.
+    """
+    pack_used = int(pack_off[m])
+    hdr_used  = int(hdr_off[m])
+    packed = pack_buf[:pack_used].copy()
+    poff   = pack_off[: m + 1].copy()
+    nsy    = n_syms[:m].copy()
+    tps    = types[:m].copy()
+    hraw   = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
+    hoff   = hdr_off[: m + 1].copy()
+    if not fastq:
+        return SequenceBatch(packed, poff, nsy, tps, hraw, hoff)
+    qual_used = int(qual_off[m])
+    fixed = (int(nsy[0]) if (m > 0 and nsy[0] > 0
+             and bool(np.all(nsy == nsy[0]))) else 0)
+    if fixed and qual_used == m * fixed:
+        qual = qual_buf[:qual_used].copy().reshape(m, fixed)
+        qoff = None
+    else:
+        fixed = 0
+        qual = qual_buf[:qual_used].copy()
+        qoff = qual_off[: m + 1].copy()
+    return ReadBatch(packed, poff, nsy, tps, hraw, hoff, qual, qoff, fixed)
+
+
 # ── Núcleo vectorizado de GC y k-meros (compartido por ambos lotes) ──────────
 
 _GC_W = np.array([16, 8, 4, 2, 1], dtype=np.uint8)   # pesos de bit MSB→LSB
@@ -1179,6 +1242,11 @@ class SmartImporter:
     _BATCH_HDR     = 2 * 1024 * 1024    # 2 MB para cabeceras concatenadas
     _BATCH_PACK    = 16 * 1024 * 1024   # 16 MB de secuencias 5-bit (≤25 Mbp/lote)
 
+    # ── Parser paralelo (OpenMP) — la vía de máximo rendimiento (FASTQ plano) ──
+    _PWINDOW = 32 * 1024 * 1024         # ventana (32 MB): amortiza copias y OpenMP
+    _PBUF    = 48 * 1024 * 1024         # buffers de salida (1.5× ventana, seguro)
+    _PMAXREC = 4_000_000               # registros máx. por ventana
+
     @classmethod
     def stream(
         cls,
@@ -1361,36 +1429,130 @@ class SmartImporter:
                         f"Error del parser por lotes (código {m}) en {path!r}. "
                         "Código -2 = un registro supera el buffer de 16 MB."
                     )
-                # Una copia por lote para desacoplar de los buffers reutilizados.
-                pack_used = int(pack_off[m])
-                hdr_used  = int(hdr_off[m])
-                packed = pack_buf[:pack_used].copy()
-                poff   = pack_off[: m + 1].copy()
-                nsy    = n_syms[:m].copy()
-                tps    = types[:m].copy()
-                # string_at copia solo hdr_used bytes (no los 2 MB del buffer).
-                hraw   = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
-                hoff   = hdr_off[: m + 1].copy()
-
-                if fastq:
-                    qual_used = int(qual_off[m])
-                    fixed = (int(nsy[0]) if (m > 0 and nsy[0] > 0
-                             and bool(np.all(nsy == nsy[0]))) else 0)
-                    # Solo usar la ruta 2-D si las calidades cuadran exactamente
-                    # (FASTQ malformado con qual != secuencia → ruta irregular).
-                    if fixed and qual_used == m * fixed:
-                        qual = qual_buf[:qual_used].copy().reshape(m, fixed)
-                        qoff = None
-                    else:
-                        fixed = 0
-                        qual = qual_buf[:qual_used].copy()
-                        qoff = qual_off[: m + 1].copy()
-                    yield ReadBatch(packed, poff, nsy, tps,
-                                    hraw, hoff, qual, qoff, fixed)
-                else:
-                    yield SequenceBatch(packed, poff, nsy, tps, hraw, hoff)
+                yield _columnar_batch(m, pack_buf, pack_off, n_syms, types,
+                                      hdr_buf, hdr_off, qual_buf, qual_off, fastq)
         finally:
             _c_parser_close(handle)
+
+    # ── Camino paralelo (OpenMP) — máximo rendimiento en FASTA/FASTQ plano ───
+    @staticmethod
+    def _is_plain(path: str) -> bool:
+        """True si el archivo NO está comprimido en gzip (mira el magic)."""
+        try:
+            with open(path, "rb") as f:
+                return f.read(2) != b"\x1f\x8b"
+        except OSError:
+            return False
+
+    @staticmethod
+    def _resolve_threads(n_threads: int) -> int:
+        if n_threads <= 0:
+            return os.cpu_count() or 1
+        return n_threads
+
+    @classmethod
+    def _use_parallel(cls, path: str, n_threads: int) -> bool:
+        return (_C_PARALLEL_AVAILABLE and n_threads != 1
+                and cls._is_plain(path))
+
+    @staticmethod
+    def _boundary_before(mm, fastq: bool, lo: int, hi: int) -> int:
+        """Mayor inicio de registro en (lo, hi]; ``lo`` si no hay ninguno.
+
+        Opera sobre el mmap sin copiar (rfind/find in situ). Para FASTQ verifica
+        la 3ª línea '+' para no confundir un '@' de calidad.
+        """
+        if not fastq:
+            i = mm.rfind(b"\n>", lo, hi)
+            return i + 1 if i != -1 else lo
+        sp = hi
+        while True:
+            i = mm.rfind(b"\n@", lo, sp)
+            if i == -1:
+                return lo
+            rec = i + 1
+            nl1 = mm.find(b"\n", rec, hi)
+            if nl1 == -1:
+                sp = i; continue
+            nl2 = mm.find(b"\n", nl1 + 1, hi)
+            if nl2 == -1:
+                sp = i; continue
+            if mm[nl2 + 1: nl2 + 2] == b"+":
+                return rec
+            sp = i
+
+    @classmethod
+    def _stream_parallel(cls, path: str, force_type: int, fastq: bool,
+                         n_threads: int):
+        """Parsea un FASTA/FASTQ plano por ventanas, cada una en paralelo (OpenMP).
+
+        Mapea el archivo (mmap) y trocea con **vistas NumPy sin copia**; cada
+        ventana termina en un límite de registro y C la reparte entre N hilos.
+        Yields SequenceBatch (FASTA) o ReadBatch (FASTQ).
+        """
+        nt  = cls._resolve_threads(n_threads)
+        fmt = 2 if fastq else 1
+        WIN = cls._PWINDOW
+        MR  = cls._PMAXREC
+        start_char = ord("@") if fastq else ord(">")
+
+        size = os.path.getsize(path)
+        if size == 0:
+            return
+        hdr_buf  = ctypes.create_string_buffer(cls._PBUF)
+        pack_buf = np.empty(cls._PBUF, dtype=np.uint8)
+        hdr_off  = np.empty(MR + 1, dtype=np.int32)
+        pack_off = np.empty(MR + 1, dtype=np.int32)
+        n_syms   = np.empty(MR, dtype=np.int32)
+        types    = np.empty(MR, dtype=np.int32)
+        if fastq:
+            qual_buf = np.empty(cls._PBUF, dtype=np.uint8)
+            qual_off = np.empty(MR + 1, dtype=np.int32)
+        else:
+            qual_buf = qual_off = None
+
+        with open(path, "rb") as fh:
+            mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            arr = None
+            block = None
+            try:
+                arr = np.frombuffer(mm, dtype=np.uint8)
+                # Inicio: saltar cualquier basura previa al primer registro.
+                pos = 0 if arr[0] == start_char else \
+                    cls._boundary_before(mm, fastq, 0, size)
+                while pos < size:
+                    end = pos + WIN
+                    if end >= size:
+                        block_end = size
+                    else:
+                        block_end = cls._boundary_before(mm, fastq, pos, end)
+                        if block_end <= pos:        # ventana < 1 registro: crecer
+                            grow = end
+                            while block_end <= pos and grow < size:
+                                grow = min(grow * 2, size)
+                                block_end = cls._boundary_before(mm, fastq, pos, grow)
+                            if block_end <= pos:
+                                block_end = size
+                    block = arr[pos:block_end]      # vista sin copia
+                    m = _c_parse_mem_parallel(
+                        block, fmt, nt, force_type,
+                        hdr_buf, hdr_off, pack_buf, pack_off,
+                        n_syms, types, qual_buf, qual_off, MR)
+                    if m < 0:
+                        raise IOError(
+                            f"Parser paralelo: código {m} en {path!r} "
+                            "(ventana demasiado densa o registro gigante; "
+                            "usa n_threads=1).")
+                    if m > 0:
+                        yield _columnar_batch(
+                            m, pack_buf, pack_off, n_syms, types,
+                            hdr_buf, hdr_off, qual_buf, qual_off, fastq)
+                    block = None        # soltar la vista antes de la siguiente
+                    pos = block_end
+            finally:
+                block = None
+                arr = None              # liberar el export del mmap antes de cerrar
+                mm.close()
 
     @classmethod
     def _columnar_fallback(cls, path: str, force_type: int, fastq: bool):
@@ -1462,27 +1624,38 @@ class SmartImporter:
         cls,
         path:       str,
         force_type: Optional[SeqType] = None,
+        n_threads:  int = 1,
     ) -> "Iterator[SequenceBatch]":
         """
         Lee un FASTA como lotes columnares :class:`SequenceBatch` (vía rápida).
 
-        Cada lote agrupa hasta ``_BATCH_RECORDS`` registros como matrices
-        contiguas, sin crear un objeto por registro. Ideal para barrer, contar
-        o filtrar grandes colecciones. Para acceder a un registro concreto usa
-        ``batch[i]``.
+        Cada lote agrupa registros como matrices contiguas, sin crear un objeto
+        por registro. Para acceder a un registro concreto usa ``batch[i]``.
+
+        Parameters
+        ----------
+        n_threads : int, default 1
+            1 = secuencial. >1 = nº de hilos. 0 = todos los núcleos (auto).
+            El parseo paralelo (OpenMP) solo aplica a archivos **planos**
+            (no `.gz`) cuando el motor C lo soporta; si no, cae a secuencial.
 
         Example
         -------
-        >>> for batch in SmartImporter.stream_batches("genome.fa"):
+        >>> for batch in SmartImporter.stream_batches("genome.fa", n_threads=0):
         ...     print(len(batch), "secuencias,", int(batch.n_symbols.sum()), "bases")
         """
         ft = -1
         if force_type == SeqType.NUCLEOTIDE: ft = 0
         elif force_type == SeqType.PROTEIN:  ft = 1
-        yield from cls._stream_columnar(path, ft, fastq=False)
+        if cls._use_parallel(path, n_threads):
+            yield from cls._stream_parallel(path, ft, False, n_threads)
+        else:
+            yield from cls._stream_columnar(path, ft, fastq=False)
 
     @classmethod
-    def stream_fastq_batches(cls, path: str) -> "Iterator[ReadBatch]":
+    def stream_fastq_batches(
+        cls, path: str, n_threads: int = 1,
+    ) -> "Iterator[ReadBatch]":
         """
         Lee un FASTQ como lotes columnares :class:`ReadBatch` — la vía rápida
         para control de calidad.
@@ -1490,16 +1663,25 @@ class SmartImporter:
         Filtrar por calidad media se vuelve una operación NumPy sobre todo el
         lote, sin fabricar un objeto por lectura.
 
+        Parameters
+        ----------
+        n_threads : int, default 1
+            1 = secuencial. >1 = nº de hilos. 0 = todos los núcleos (auto).
+            El parseo paralelo solo aplica a FASTQ **plano** (no `.gz`).
+
         Example
         -------
         >>> total = buenas = 0
-        >>> for batch in SmartImporter.stream_fastq_batches("reads.fastq"):
+        >>> for batch in SmartImporter.stream_fastq_batches("reads.fastq", n_threads=0):
         ...     mask = batch.passes(20)        # 1 op NumPy para miles de lecturas
         ...     total  += len(batch)
         ...     buenas += int(mask.sum())
         >>> print(f"{buenas}/{total} lecturas con calidad media ≥ 20")
         """
-        yield from cls._stream_columnar(path, 0, fastq=True)
+        if cls._use_parallel(path, n_threads):
+            yield from cls._stream_parallel(path, 0, True, n_threads)
+        else:
+            yield from cls._stream_columnar(path, 0, fastq=True)
 
     @classmethod
     def stream_fastq(cls, path: str) -> Iterator[FastqRecord]:

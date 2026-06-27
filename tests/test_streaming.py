@@ -24,7 +24,7 @@ from bioforge import (
     SequenceTypeError,
 )
 
-QCHARS = "".join(chr(33 + q) for q in range(40))   # Phred 0..39
+QCHARS = "".join(chr(33 + q) for q in range(64))   # Phred 0..63
 BASES = "ACGT"
 _BASE_ID = {"A": 0, "C": 1, "G": 2, "T": 3}
 
@@ -528,3 +528,99 @@ def test_malformed_fastq_quality_length_no_crash(tmp_path):
     for b in SmartImporter.stream_fastq_batches(str(p)):
         means.append(b.mean_quality())   # no debe lanzar ValueError
     assert np.concatenate(means).shape[0] == 3
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Parser paralelo (OpenMP) — la salida DEBE ser idéntica a la secuencial
+# ════════════════════════════════════════════════════════════════════════════
+
+from bioforge.engine._loader import C_PARALLEL_AVAILABLE  # noqa: E402
+
+_par = pytest.mark.skipif(
+    not C_PARALLEL_AVAILABLE, reason="motor C paralelo no disponible")
+
+
+def _collect_fastq(path, nt):
+    out = []
+    for b in SmartImporter.stream_fastq_batches(path, n_threads=nt):
+        for i in range(len(b)):
+            r = b[i]
+            out.append((r.sequence.header, r.sequence.to_string(),
+                        list(r.quality)))
+    return out
+
+
+def _collect_fasta(path, nt):
+    out = []
+    for b in SmartImporter.stream_batches(path, n_threads=nt):
+        for i in range(len(b)):
+            ps = b[i]
+            out.append((ps.header, ps.to_string()))
+    return out
+
+
+@_par
+@pytest.mark.parametrize("fixed", [True, False])
+def test_parallel_fastq_equals_sequential(tmp_path, fixed):
+    rng = random.Random(60 + int(fixed))
+    recs = []
+    for i in range(8000):           # varias ventanas para forzar troceo
+        L = 150 if fixed else rng.randint(40, 260)
+        recs.append((f"r{i} desc{i}", _rand_seq(L, rng),
+                     [rng.randint(0, 40) for _ in range(L)]))
+    p = tmp_path / "par.fastq"
+    _write_fastq(p, recs)
+    seq = _collect_fastq(str(p), 1)
+    for nt in (2, 4, 0):            # 0 = auto (todos los núcleos)
+        assert _collect_fastq(str(p), nt) == seq
+
+
+@_par
+def test_parallel_fasta_equals_sequential(tmp_path):
+    rng = random.Random(62)
+    recs = [(f"g{i} d{i}", _rand_seq(rng.randint(30, 300), rng))
+            for i in range(6000)]
+    p = tmp_path / "par.fasta"
+    _write_fasta(p, recs)
+    seq = _collect_fasta(str(p), 1)
+    for nt in (2, 4, 0):
+        assert _collect_fasta(str(p), nt) == seq
+
+
+@_par
+def test_parallel_small_window_many_windows(tmp_path):
+    # Fuerza muchas ventanas con un tamaño de ventana minúsculo monkeypatcheado.
+    rng = random.Random(63)
+    recs = [(f"r{i}", _rand_seq(120, rng),
+             [rng.randint(0, 40) for _ in range(120)]) for i in range(3000)]
+    p = tmp_path / "w.fastq"
+    _write_fastq(p, recs)
+    seq = _collect_fastq(str(p), 1)
+    old = SmartImporter._PWINDOW
+    try:
+        SmartImporter._PWINDOW = 64 * 1024          # 64 KB → decenas de ventanas
+        assert _collect_fastq(str(p), 4) == seq
+    finally:
+        SmartImporter._PWINDOW = old
+
+
+@_par
+def test_parallel_falls_back_for_gzip(tmp_path):
+    # .gz no es paralelizable aquí → debe caer a secuencial y dar lo correcto.
+    rng = random.Random(64)
+    recs = [(f"r{i}", _rand_seq(100, rng),
+             [rng.randint(0, 40) for _ in range(100)]) for i in range(500)]
+    gzf = tmp_path / "g.fastq.gz"
+    _write_fastq_gz(gzf, recs)
+    got = _collect_fastq(str(gzf), 4)   # pide 4 hilos; cae a secuencial
+    assert len(got) == len(recs)
+    assert got[0][1] == recs[0][1]
+
+
+@_par
+def test_parallel_empty_records_skipped(tmp_path):
+    p = tmp_path / "e.fastq"
+    p.write_text("@vacio\n\n+\n\n@r2\nACGT\n+\nIIII\n@r3\nGGGG\n+\nIIII\n",
+                 encoding="ascii")
+    got = _collect_fastq(str(p), 4)
+    assert [g[0] for g in got] == ["r2", "r3"]
