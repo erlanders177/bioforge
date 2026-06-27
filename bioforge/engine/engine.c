@@ -175,16 +175,28 @@ static int32_t _nw_core(
     }
 
     /* Determinar punto de inicio del traceback */
-    int32_t end_i = m;
+    int32_t end_i = m, end_j = n;
     if (semiglobal) {
-        /* Mejor score en la última columna */
-        int32_t best_sc = H[(int64_t)m * cols + n];
-        for (int32_t i = 1; i < m; i++) {
+        /* Buscar el mejor score en la ultima fila Y en la ultima columna.
+         * semi-global: gaps terminales del query (seq_b) son gratuitos.
+         * La ultima fila (i=m) contiene el final del query alineado contra
+         * distintas posiciones de la referencia (seq_a).
+         * La ultima columna (j=n) contiene el final de la referencia. */
+        int32_t best_sc = INT32_MIN;
+
+        /* Escanear ultima fila (i=m, j de 0 a n) */
+        for (int32_t j = 0; j <= n; j++) {
+            int32_t sc = H[(int64_t)m * cols + j];
+            if (sc > best_sc) { best_sc = sc; end_i = m; end_j = j; }
+        }
+        /* Escanear ultima columna (j=n, i de 0 a m) */
+        for (int32_t i = 0; i <= m; i++) {
             int32_t sc = H[(int64_t)i * cols + n];
-            if (sc > best_sc) { best_sc = sc; end_i = i; }
+            if (sc > best_sc) { best_sc = sc; end_i = i; end_j = n; }
         }
         *p_score = best_sc;
     } else {
+        end_j    = n;
         *p_score = H[(int64_t)m * cols + n];
     }
 
@@ -194,13 +206,18 @@ static int32_t _nw_core(
     if (!ta || !tb2) { free(H); free(tb); free(ta); free(tb2); return -1; }
 
     int32_t pos = 0, nm = 0, nmi = 0, ng = 0;
-    int32_t i = end_i, j = n;
+    int32_t i = end_i, j = end_j;
 
-    /* Semi-global: añadir gaps finales de seq_a si end_i < m */
+    /* Semi-global: gaps terminales gratuitos en seq_a (end_i<m) o seq_b (end_j<n) */
     if (semiglobal) {
         for (int32_t k = m; k > end_i; k--) {
             ta[pos]  = decode[(uint8_t)codes_a[k - 1]];
             tb2[pos] = '-';
+            ng++; pos++;
+        }
+        for (int32_t k = n; k > end_j; k--) {
+            ta[pos]  = '-';
+            tb2[pos] = decode[(uint8_t)codes_b[k - 1]];
             ng++; pos++;
         }
     }
