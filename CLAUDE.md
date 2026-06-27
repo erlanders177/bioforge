@@ -85,6 +85,7 @@ bioforge/                  paquete instalable (from bioforge import ...)
   smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement
   aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman
   analyze.py               pipeline CLI (dna/protein/both)
+  qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
   engine/
     engine.c               motor C — pack/unpack, NW/SW, parser FASTA/FASTQ + batch + .gz
     engine.dll             binario compilado (versionado en git)

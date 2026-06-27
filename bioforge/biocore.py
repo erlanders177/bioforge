@@ -936,6 +936,17 @@ class ReadBatch:
         """Máscara booleana: True donde la calidad media ≥ ``min_q``."""
         return self.mean_quality() >= min_q
 
+    def decoded_2d(self) -> "Optional[np.ndarray]":
+        """Códigos BioCode como matriz ``(m, L)`` si todas las lecturas miden
+        igual; ``None`` si la longitud es irregular. Decodifica una sola vez
+        (cacheado), compartido con ``gc_content``/``kmer_spectrum``."""
+        return _decode_cached(self)
+
+    def quality_matrix(self) -> "Optional[np.ndarray]":
+        """Calidades Phred como matriz ``(m, L)`` si la longitud es fija;
+        ``None`` si es irregular (usa ``quality_of(i)`` por lectura)."""
+        return self._qual if self._fixed_len else None
+
     def gc_content(self) -> np.ndarray:
         """Fracción GC (0..1) de cada lectura del lote (vectorizado)."""
         return _batch_gc(self._packed, self._pack_off, self._n_syms,

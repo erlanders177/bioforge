@@ -5,6 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.1.0] — 2026-06-27
+
+Primera **aplicación de cara al usuario** construida sobre el motor v2.0: un
+informe de calidad de FASTQ rápido (estilo FastQC) que aprovecha la API columnar.
+
+### Added
+
+**Informe de calidad FASTQ (`bioforge/qcreport.py`)**
+- `qcreport.run(path)` — calcula todas las métricas en **una sola pasada** sobre
+  `stream_fastq_batches` (RAM constante, sin objeto por lectura). Lee `.gz`.
+- Métricas: nº lecturas, bases, longitud (min/media/max), GC global, calidad
+  media global, % de lecturas con Q media ≥ 20 y ≥ 30, histograma de calidad por
+  lectura, histograma de %GC, **calidad media por posición** (el gráfico estrella
+  de FastQC), y composición A/C/G/T/N por posición.
+- `qcreport.build_report(r)` — informe de texto con histogramas y sparkline ASCII.
+- CLI: `python -m bioforge.qcreport reads.fastq.gz [-o informe.txt]` y entry point
+  `bioforge-qc`.
+
+**API columnar (`biocore.py`)**
+- `ReadBatch.decoded_2d()` — códigos como matriz `(m, L)` (longitud fija) o `None`.
+- `ReadBatch.quality_matrix()` — calidades como matriz `(m, L)` o `None`.
+
+### Tests
+- 284 tests (desde 275): `tests/test_qcreport.py` añade 9 tests del informe —
+  métricas contra valores a mano, calidad por posición, composición por base,
+  `.gz` == plano, longitud irregular, CLI y errores.
+
+---
+
 ## [2.0.1] — 2026-06-27
 
 Correcciones encontradas en una auditoría completa del código tras v2.0.0.

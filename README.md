@@ -173,6 +173,17 @@ for batch in SmartImporter.stream_fastq_batches("reads.fastq"):
 
 Both run with zero per-read objects; ambiguous bases (N) are skipped from k-mers.
 
+### Fast FASTQ quality report (FastQC-style)
+
+```bash
+python -m bioforge.qcreport reads.fastq.gz        # or: bioforge-qc reads.fastq.gz
+```
+
+One pass, constant RAM. Reports read/base counts, length, overall GC, mean
+quality, %reads ≥ Q20/Q30, plus per-read quality and GC histograms,
+**per-position mean quality** (the FastQC signature plot) and per-base
+composition — all built on the columnar API. Use `-o report.txt` to save it.
+
 ### Translate DNA to protein
 
 ```python
@@ -236,6 +247,7 @@ bioforge/               Python package — all core modules
   smart_translator.py   Level 2 — DNA → protein translation
   aligner.py            Level 3 — pairwise alignment + mutation detection
   analyze.py            Full pipeline: DNA + protein analysis, report generation
+  qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
   engine/
     engine.c            C source — pack, unpack, NW align, translate (GCC -O3)
     engine.dll          Compiled C backend (Windows)
@@ -256,6 +268,7 @@ tests/
   test_aligner.py       L3: alignment properties + mutation detection
   test_analyze.py       Pipeline: full integration tests + CLI tests
   test_streaming.py     Streaming/batch parser + columnar API (Sequence/ReadBatch)
+  test_qcreport.py      FASTQ quality report (qcreport.py)
 
 docs/
   architecture.md       Design rules, levels, encoding details
@@ -347,7 +360,10 @@ python check.py
 - [x] Compressed `.gz` decoded in C (zlib, static-linked, transparent)
 - [x] Object-free columnar k-mer spectrum + per-read GC — `kmer_spectrum()` / `gc_content()`
 - [x] Benchmark vs Biopython — `tools/bench_vs_biopython.py`
+- [x] Fast FASTQ quality report (FastQC-style) — `bioforge-qc` / `bioforge.qcreport`
+- [ ] Multi-threaded batch processing (use all CPU cores)
 - [ ] Native per-platform wheels on PyPI (cibuildwheel)
+- [ ] Long-read / genome-scale aligner (k-mer seeding)
 
 ---
 

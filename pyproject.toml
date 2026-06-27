@@ -44,6 +44,7 @@ Issues   = "https://github.com/erlanders177/bioforge/issues"
 
 [project.scripts]
 bioforge-analyze = "bioforge.analyze:main"
+bioforge-qc      = "bioforge.qcreport:main"
 
 # La versión vive solo en bioforge/__init__.py (una única fuente de verdad).
 [tool.setuptools.dynamic]
