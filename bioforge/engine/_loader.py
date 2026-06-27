@@ -174,9 +174,28 @@ def _check_parallel() -> None:
         pass
 
 
+C_LIBDEFLATE_AVAILABLE: bool = False
+
+def _check_libdeflate() -> None:
+    """Descompresor gzip rápido (libdeflate). Opcional."""
+    global C_LIBDEFLATE_AVAILABLE
+    if not C_AVAILABLE or _lib is None:
+        return
+    try:
+        ctypes.c_void_p.in_dll(_lib, "bio_has_libdeflate")
+        _lib.bio_has_libdeflate.restype = ctypes.c_int
+        _lib.bio_has_libdeflate.argtypes = []
+        _lib.bio_gzip_decompress.restype = _I64
+        _lib.bio_gzip_decompress.argtypes = [_U8P, _I64, _U8P, _I64]
+        C_LIBDEFLATE_AVAILABLE = bool(_lib.bio_has_libdeflate())
+    except (AttributeError, OSError):
+        pass
+
+
 _check_parser()
 _check_batch()
 _check_parallel()
+_check_libdeflate()
 
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
@@ -414,6 +433,17 @@ def c_parse_mem_parallel(
         q_ptr, q_max, q_off,
         _I32(max_records),
     )
+
+
+def c_gzip_decompress(cbuf: np.ndarray, obuf: np.ndarray) -> int:
+    """Descomprime gzip ``cbuf`` (uint8) en ``obuf`` (uint8) con libdeflate.
+
+    Devuelve nº de bytes descomprimidos, o -1 si no caben o hay error.
+    """
+    return int(_lib.bio_gzip_decompress(
+        cbuf.ctypes.data_as(_U8P), _I64(len(cbuf)),
+        obuf.ctypes.data_as(_U8P), _I64(len(obuf)),
+    ))
 
 
 def c_parser_close(handle: int) -> None:

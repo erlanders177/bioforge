@@ -5,6 +5,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.2.0] — 2026-06-27
+
+Procesamiento multinúcleo con un **despachador adaptativo**: el motor elige la
+mejor estrategia disponible según la entrada y solo llama a lo necesario.
+
+### Added
+
+**Descompresión `.gz` rápida con libdeflate (la victoria real)**
+- Para archivos `.gz`, el motor descomprime el archivo entero con **libdeflate**
+  (SIMD, ~2× más rápido que zlib) y parsea el resultado en memoria. Medido:
+  zlib 56 → **89 M bases/s end-to-end (1.59×)** leyendo FASTQ comprimido; la
+  descompresión sola es **2.15× más rápida** (379 vs 176 MB/s).
+- Fallback robusto a zlib en streaming (RAM constante) si el tamaño es
+  inesperado (gzip multi-miembro, etc.).
+
+**Parser paralelo (OpenMP)**
+- `bio_parse_mem_parallel` (`engine.c`): trocea un bloque en N rangos alineados
+  a límites de registro y los parsea en paralelo, con buffers por hilo y fusión
+  serial. Salida idéntica al parser secuencial.
+- `_stream_parallel`: mmap + vistas NumPy sin copia, troceo por ventanas.
+- Nota honesta: en hardware de **pocos núcleos** el parseo paralelo da poco
+  (~1.1×) — está limitado por ancho de banda de memoria, no por CPU (el C escala
+  2.2× en aislado). Se conserva como opción; rinde más en servidores multinúcleo.
+
+**Despachador adaptativo + API**
+- `stream_batches` / `stream_fastq_batches` aceptan ``n_threads`` (1 = secuencial
+  y RAM constante; >1 = nº de hilos; 0 = todos los núcleos). El motor enruta:
+  plano → parseo paralelo; `.gz` → libdeflate + parseo; si algo falta, cae a la
+  ruta secuencial con zlib.
+- Banderas `C_PARALLEL_AVAILABLE`, `C_LIBDEFLATE_AVAILABLE` (`engine/_loader.py`).
+- `ReadBatch.decoded_2d()` / `quality_matrix()` ya estaban (v2.1).
+
+**Empaquetado / build**
+- `build.py` enlaza **estáticamente** OpenMP (libgomp), zlib y libdeflate dentro
+  del DLL → motor C **autocontenido** (sin dependencias de runtime). Degrada con
+  gracia: si libdeflate no está, compila con zlib; si zlib no está, sin `.gz`.
+
+### Tests
+- 290 tests (desde 284): salida paralela == secuencial (FASTQ fijo/variable,
+  FASTA, muchas ventanas, registros vacíos, fallback `.gz`), y ruta `.gz` rápida
+  con libdeflate == ruta zlib.
+
+---
+
 ## [2.1.0] — 2026-06-27
 
 Primera **aplicación de cara al usuario** construida sobre el motor v2.0: un

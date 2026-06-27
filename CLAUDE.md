@@ -4,7 +4,7 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **2.0.0**).
+Es un paquete instalable: `from bioforge import ...` (versión actual **2.2.0**).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
@@ -52,8 +52,17 @@ con `python tools/bench_vs_biopython.py`.
 
 ### 6. Recompilar el motor C tras tocar engine.c
 `python bioforge/engine/build.py` (autodetecta GCC, incl. MSYS2 en
-`C:\msys64\mingw64\bin\gcc.exe`, y enlaza zlib estático para `.gz`). El DLL
+`C:\msys64\mingw64\bin\gcc.exe`). Enlaza **estático**: OpenMP (libgomp), zlib y
+libdeflate DENTRO del DLL → motor autocontenido, sin dependencias de runtime.
+Degrada con gracia si falta libdeflate (solo zlib) o zlib (sin `.gz`). El DLL
 compilado se versiona en git para que el usuario no necesite GCC.
+
+### 7. Procesamiento multinúcleo (v2.2) — despachador adaptativo
+`stream_batches`/`stream_fastq_batches` aceptan `n_threads` (1=secuencial RAM
+constante; >1=hilos; 0=todos los núcleos). El motor enruta: plano→parseo paralelo
+(OpenMP, mmap sin copia); `.gz`→libdeflate (~2×) + parseo; fallback a zlib
+secuencial. El parseo paralelo está limitado por ancho de banda de memoria
+(poco en pocos núcleos); el win real es libdeflate en `.gz` (~1.6× end-to-end).
 
 ---
 
@@ -69,6 +78,8 @@ compilado se versiona en git para que el usuario no necesite GCC.
 | Ingesta FASTQ (parser C por lotes) | **~14 M bases/s · ~94 K lecturas/s** |
 | Filtrar 200K lecturas por calidad (columnar) | **~0.28 s** (18.6× vs por registro) |
 | vs Biopython — cargar todo en RAM | **~6.9× menos RAM** (115 vs 801 MB), ~9.5× más rápido |
+| Leer FASTQ `.gz` (libdeflate + paralelo, n_threads≠1) | **~89 M bases/s** (1.59× vs zlib) |
+| Descompresión gzip libdeflate vs zlib | **2.15×** (379 vs 176 MB/s) |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
 Correspondería a 2-bit packing, no al esquema 5-bit implementado.

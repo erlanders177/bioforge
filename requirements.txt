@@ -13,3 +13,4 @@ numpy>=1.24
 # Tests:      pip install pytest pytest-benchmark hypothesis   (o: pip install -e .[dev])
 # Benchmark:  pip install biopython psutil                     (o: pip install -e .[bench])
 # Recompilar el motor C (opcional): GCC / MinGW-w64 + python bioforge/engine/build.py
+#   (build.py enlaza estático zlib + libdeflate + OpenMP si están; si no, degrada)

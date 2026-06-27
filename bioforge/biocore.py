@@ -72,11 +72,14 @@ try:
     from .engine._loader import c_parser_close     as _c_parser_close
     from .engine._loader import C_PARALLEL_AVAILABLE as _C_PARALLEL_AVAILABLE
     from .engine._loader import c_parse_mem_parallel as _c_parse_mem_parallel
+    from .engine._loader import C_LIBDEFLATE_AVAILABLE as _C_LIBDEFLATE_AVAILABLE
+    from .engine._loader import c_gzip_decompress as _c_gzip_decompress
 except ImportError:
     _C_AVAILABLE        = False
     _C_PARSER_AVAILABLE = False
     _C_BATCH_AVAILABLE  = False
     _C_PARALLEL_AVAILABLE = False
+    _C_LIBDEFLATE_AVAILABLE = False
 
 
 __all__: list[str] = [
@@ -1455,6 +1458,11 @@ class SmartImporter:
         return (_C_PARALLEL_AVAILABLE and n_threads != 1
                 and cls._is_plain(path))
 
+    @classmethod
+    def _use_gz_fast(cls, path: str, n_threads: int) -> bool:
+        return (_C_LIBDEFLATE_AVAILABLE and _C_PARALLEL_AVAILABLE
+                and n_threads != 1 and not cls._is_plain(path))
+
     @staticmethod
     def _boundary_before(mm, fastq: bool, lo: int, hi: int) -> int:
         """Mayor inicio de registro en (lo, hi]; ``lo`` si no hay ninguno.
@@ -1482,23 +1490,20 @@ class SmartImporter:
             sp = i
 
     @classmethod
-    def _stream_parallel(cls, path: str, force_type: int, fastq: bool,
-                         n_threads: int):
-        """Parsea un FASTA/FASTQ plano por ventanas, cada una en paralelo (OpenMP).
+    def _parse_buffer_windows(cls, buf, arr, size: int,
+                              force_type: int, fastq: bool, nt: int):
+        """Núcleo del parseo paralelo: trocea ``arr`` (vista de ``buf``) en
+        ventanas alineadas a registro y reparte cada una entre ``nt`` hilos.
 
-        Mapea el archivo (mmap) y trocea con **vistas NumPy sin copia**; cada
-        ventana termina en un límite de registro y C la reparte entre N hilos.
-        Yields SequenceBatch (FASTA) o ReadBatch (FASTQ).
+        ``buf`` soporta rfind/find/slicing (mmap o bytearray); ``arr`` es su
+        vista NumPy uint8. Yields SequenceBatch / ReadBatch.
         """
-        nt  = cls._resolve_threads(n_threads)
+        if size == 0:
+            return
         fmt = 2 if fastq else 1
         WIN = cls._PWINDOW
         MR  = cls._PMAXREC
         start_char = ord("@") if fastq else ord(">")
-
-        size = os.path.getsize(path)
-        if size == 0:
-            return
         hdr_buf  = ctypes.create_string_buffer(cls._PBUF)
         pack_buf = np.empty(cls._PBUF, dtype=np.uint8)
         hdr_off  = np.empty(MR + 1, dtype=np.int32)
@@ -1511,48 +1516,83 @@ class SmartImporter:
         else:
             qual_buf = qual_off = None
 
+        pos = 0 if arr[0] == start_char else \
+            cls._boundary_before(buf, fastq, 0, size)
+        while pos < size:
+            end = pos + WIN
+            if end >= size:
+                block_end = size
+            else:
+                block_end = cls._boundary_before(buf, fastq, pos, end)
+                if block_end <= pos:               # ventana < 1 registro: crecer
+                    grow = end
+                    while block_end <= pos and grow < size:
+                        grow = min(grow * 2, size)
+                        block_end = cls._boundary_before(buf, fastq, pos, grow)
+                    if block_end <= pos:
+                        block_end = size
+            block = arr[pos:block_end]              # vista sin copia
+            m = _c_parse_mem_parallel(
+                block, fmt, nt, force_type,
+                hdr_buf, hdr_off, pack_buf, pack_off,
+                n_syms, types, qual_buf, qual_off, MR)
+            if m < 0:
+                raise IOError(
+                    f"Parser paralelo: código {m} (ventana demasiado densa o "
+                    "registro gigante; usa n_threads=1).")
+            if m > 0:
+                yield _columnar_batch(
+                    m, pack_buf, pack_off, n_syms, types,
+                    hdr_buf, hdr_off, qual_buf, qual_off, fastq)
+            block = None                            # soltar la vista
+            pos = block_end
+
+    @classmethod
+    def _stream_parallel(cls, path: str, force_type: int, fastq: bool,
+                         n_threads: int):
+        """FASTA/FASTQ plano: mmap + parseo paralelo por ventanas (sin copia)."""
+        nt = cls._resolve_threads(n_threads)
+        size = os.path.getsize(path)
+        if size == 0:
+            return
         with open(path, "rb") as fh:
             mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
             arr = None
-            block = None
             try:
                 arr = np.frombuffer(mm, dtype=np.uint8)
-                # Inicio: saltar cualquier basura previa al primer registro.
-                pos = 0 if arr[0] == start_char else \
-                    cls._boundary_before(mm, fastq, 0, size)
-                while pos < size:
-                    end = pos + WIN
-                    if end >= size:
-                        block_end = size
-                    else:
-                        block_end = cls._boundary_before(mm, fastq, pos, end)
-                        if block_end <= pos:        # ventana < 1 registro: crecer
-                            grow = end
-                            while block_end <= pos and grow < size:
-                                grow = min(grow * 2, size)
-                                block_end = cls._boundary_before(mm, fastq, pos, grow)
-                            if block_end <= pos:
-                                block_end = size
-                    block = arr[pos:block_end]      # vista sin copia
-                    m = _c_parse_mem_parallel(
-                        block, fmt, nt, force_type,
-                        hdr_buf, hdr_off, pack_buf, pack_off,
-                        n_syms, types, qual_buf, qual_off, MR)
-                    if m < 0:
-                        raise IOError(
-                            f"Parser paralelo: código {m} en {path!r} "
-                            "(ventana demasiado densa o registro gigante; "
-                            "usa n_threads=1).")
-                    if m > 0:
-                        yield _columnar_batch(
-                            m, pack_buf, pack_off, n_syms, types,
-                            hdr_buf, hdr_off, qual_buf, qual_off, fastq)
-                    block = None        # soltar la vista antes de la siguiente
-                    pos = block_end
+                yield from cls._parse_buffer_windows(
+                    mm, arr, size, force_type, fastq, nt)
             finally:
-                block = None
-                arr = None              # liberar el export del mmap antes de cerrar
+                arr = None          # liberar el export del mmap antes de cerrar
                 mm.close()
+
+    @classmethod
+    def _stream_gz_parallel(cls, path: str, force_type: int, fastq: bool,
+                            n_threads: int):
+        """.gz: descomprime entero con libdeflate (~2× zlib) y parsea en paralelo.
+
+        Si el tamaño es inesperado (gzip multi-miembro, etc.) cae a la ruta
+        secuencial con zlib (RAM constante) sin fallar.
+        """
+        import struct
+        nt = cls._resolve_threads(n_threads)
+        with open(path, "rb") as fh:
+            comp = fh.read()
+        if len(comp) < 18:                          # gzip mínimo
+            yield from cls._stream_columnar(path, force_type, fastq)
+            return
+        isize = struct.unpack("<I", comp[-4:])[0]   # tamaño descomprimido (mod 2^32)
+        if isize == 0:
+            yield from cls._stream_columnar(path, force_type, fastq)
+            return
+        cbuf = np.frombuffer(comp, dtype=np.uint8)
+        out = bytearray(isize)
+        oarr = np.frombuffer(out, dtype=np.uint8)
+        n = _c_gzip_decompress(cbuf, oarr)
+        if n < 0:                                   # tamaño/forma inesperada → fallback
+            yield from cls._stream_columnar(path, force_type, fastq)
+            return
+        yield from cls._parse_buffer_windows(out, oarr, n, force_type, fastq, nt)
 
     @classmethod
     def _columnar_fallback(cls, path: str, force_type: int, fastq: bool):
@@ -1649,6 +1689,8 @@ class SmartImporter:
         elif force_type == SeqType.PROTEIN:  ft = 1
         if cls._use_parallel(path, n_threads):
             yield from cls._stream_parallel(path, ft, False, n_threads)
+        elif cls._use_gz_fast(path, n_threads):
+            yield from cls._stream_gz_parallel(path, ft, False, n_threads)
         else:
             yield from cls._stream_columnar(path, ft, fastq=False)
 
@@ -1680,6 +1722,8 @@ class SmartImporter:
         """
         if cls._use_parallel(path, n_threads):
             yield from cls._stream_parallel(path, 0, True, n_threads)
+        elif cls._use_gz_fast(path, n_threads):
+            yield from cls._stream_gz_parallel(path, 0, True, n_threads)
         else:
             yield from cls._stream_columnar(path, 0, fastq=True)
 

@@ -624,3 +624,42 @@ def test_parallel_empty_records_skipped(tmp_path):
                  encoding="ascii")
     got = _collect_fastq(str(p), 4)
     assert [g[0] for g in got] == ["r2", "r3"]
+
+
+# ── Palanca 2: ruta .gz rápida con libdeflate (== ruta zlib secuencial) ──────
+from bioforge.engine._loader import C_LIBDEFLATE_AVAILABLE  # noqa: E402
+
+_ld = pytest.mark.skipif(
+    not (C_LIBDEFLATE_AVAILABLE and C_PARALLEL_AVAILABLE),
+    reason="libdeflate/paralelo no disponible")
+
+
+@_ld
+@pytest.mark.parametrize("fixed", [True, False])
+def test_gz_fast_equals_sequential(tmp_path, fixed):
+    rng = random.Random(70 + int(fixed))
+    recs = []
+    for i in range(6000):
+        L = 150 if fixed else rng.randint(40, 220)
+        recs.append((f"r{i} d{i}", _rand_seq(L, rng),
+                     [rng.randint(0, 40) for _ in range(L)]))
+    gzf = tmp_path / "g.fastq.gz"
+    _write_fastq_gz(gzf, recs)
+    seq = _collect_fastq(str(gzf), 1)        # zlib secuencial
+    fast = _collect_fastq(str(gzf), 4)       # libdeflate + paralelo
+    assert fast == seq
+    assert len(seq) == len(recs)
+
+
+@_ld
+def test_gz_fast_fasta(tmp_path):
+    import gzip
+    rng = random.Random(72)
+    recs = [(f"g{i}", _rand_seq(rng.randint(30, 200), rng)) for i in range(4000)]
+    gzf = tmp_path / "x.fasta.gz"
+    with gzip.open(gzf, "wt", newline="\n") as f:
+        for h, s in recs:
+            f.write(f">{h}\n{s}\n")
+    seq = _collect_fasta(str(gzf), 1)
+    fast = _collect_fasta(str(gzf), 4)
+    assert fast == seq == recs

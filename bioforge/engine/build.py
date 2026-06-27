@@ -68,24 +68,35 @@ def build() -> bool:
 
     common = base + ["-o", str(out), str(SRC)]
 
-    # Intento 1: con zlib (soporte .gz)
-    print(f"Compilando {SRC.name} -> {out.name} (con zlib para .gz) ...")
-    res = _run(common + ["-DBIO_USE_ZLIB"] + zlib_link)
-    if res.returncode == 0:
-        size_kb = out.stat().st_size // 1024
-        print(f"[OK] Motor compilado CON soporte .gz: {out}  ({size_kb} KB)")
-        return True
+    if sys.platform == "win32":
+        deflate_link = ["-l:libdeflate.a"]
+    else:
+        deflate_link = ["-ldeflate"]
 
-    # Intento 2: sin zlib (los archivos planos siguen funcionando)
-    print("[aviso] No se pudo enlazar zlib; recompilando sin soporte .gz.")
-    res = _run(common)
-    if res.returncode == 0:
-        size_kb = out.stat().st_size // 1024
-        print(f"[OK] Motor compilado SIN soporte .gz: {out}  ({size_kb} KB)")
-        return True
+    # Se intenta de más a menos capaz; cada intento degrada con gracia.
+    #   1. zlib (.gz) + libdeflate (.gz ~2x más rápido)
+    #   2. zlib (.gz) solo
+    #   3. sin nada (archivos planos siguen funcionando)
+    attempts = [
+        ("CON .gz + libdeflate (rápido)",
+         ["-DBIO_USE_ZLIB", "-DBIO_USE_LIBDEFLATE"] + zlib_link + deflate_link),
+        ("CON .gz (zlib)",      ["-DBIO_USE_ZLIB"] + zlib_link),
+        ("SIN soporte .gz",     []),
+    ]
+
+    print(f"Compilando {SRC.name} -> {out.name} ...")
+    last = None
+    for label, extra in attempts:
+        res = _run(common + extra)
+        last = res
+        if res.returncode == 0:
+            size_kb = out.stat().st_size // 1024
+            print(f"[OK] Motor compilado [{label}]: {out}  ({size_kb} KB)")
+            return True
+        print(f"[aviso] No se pudo compilar [{label}]; probando alternativa.")
 
     print("[ERROR] Error de compilacion:")
-    print(res.stderr)
+    print(last.stderr if last else "(sin salida)")
     return False
 
 

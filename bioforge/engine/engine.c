@@ -47,6 +47,39 @@
   static int omp_get_thread_num(void)  { return 0; }
 #endif
 
+/* libdeflate: descompresión gzip ~2x más rápida que zlib (SIMD). Opcional. */
+#ifdef BIO_USE_LIBDEFLATE
+  #include <libdeflate.h>
+  EXPORT int bio_has_libdeflate(void) { return 1; }
+  /* Descomprime gzip cbuf[0..clen) en obuf (cap ocap). Soporta multi-miembro.
+     Devuelve nº de bytes descomprimidos, o -1 si no caben / error. */
+  EXPORT int64_t bio_gzip_decompress(const uint8_t* cbuf, int64_t clen,
+                                     uint8_t* obuf, int64_t ocap) {
+      struct libdeflate_decompressor* d = libdeflate_alloc_decompressor();
+      if (!d) return -1;
+      int64_t in_pos = 0, out_pos = 0;
+      int ok = 1;
+      while (in_pos < clen) {
+          size_t ain = 0, aout = 0;
+          enum libdeflate_result r = libdeflate_gzip_decompress_ex(
+              d, cbuf + in_pos, (size_t)(clen - in_pos),
+              obuf + out_pos, (size_t)(ocap - out_pos), &ain, &aout);
+          if (r != LIBDEFLATE_SUCCESS) { ok = 0; break; }
+          in_pos  += (int64_t)ain;
+          out_pos += (int64_t)aout;
+          if (ain == 0) break;   /* sin avance: evitar bucle infinito */
+      }
+      libdeflate_free_decompressor(d);
+      return ok ? out_pos : -1;
+  }
+#else
+  EXPORT int bio_has_libdeflate(void) { return 0; }
+  EXPORT int64_t bio_gzip_decompress(const uint8_t* cbuf, int64_t clen,
+                                     uint8_t* obuf, int64_t ocap) {
+      (void)cbuf; (void)clen; (void)obuf; (void)ocap; return -1;
+  }
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════════════
    5-BIT PACK / UNPACK / GETITEM
    Formato compatible con np.packbits(bitorder='big') +
