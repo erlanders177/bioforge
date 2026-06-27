@@ -21,6 +21,19 @@ Correcciones encontradas en una auditoría completa del código tras v2.0.0.
   (`biocore.py`, `_stream_columnar`). Ahora se detecta el descuadre y se usa la
   ruta irregular, sin fallo.
 
+### Performance
+
+- **`bio_unpack5` ahora es seguro en los límites** (`engine.c`): se eliminó la
+  copia completa del array empaquetado que `c_unpack5` hacía en **cada** llamada
+  para un "byte de seguridad". Afecta a toda la ruta de `decode()` — alineador,
+  traductor, GC/k-meros irregulares. Unpack ≈ 229 M símbolos/s.
+- **Copia de cabeceras** (`biocore.py`): el streaming/columnar copiaba los 2 MB
+  completos del buffer de cabeceras por lote; ahora usa `ctypes.string_at` y
+  copia solo los bytes realmente usados.
+- **GC + k-meros comparten una sola decodificación** por lote (`_decode_cached`):
+  llamar a `gc_content()` y `kmer_spectrum()` sobre el mismo lote ya no
+  desempaqueta dos veces.
+
 ### Tests
 - 275 tests (desde 269): 6 nuevos de regresión para registros vacíos (FASTA/FASTQ,
   en medio y como primero) y FASTQ con calidad de longitud incorrecta.

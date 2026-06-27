@@ -65,10 +65,22 @@ EXPORT uint8_t bio_getitem5(const uint8_t* packed, int32_t i) {
     return (uint8_t)((word >> (11u - shift0)) & 0x1Fu);
 }
 
-/* Desempaqueta n códigos hacia out[n]. */
+/* Desempaqueta n códigos hacia out[n].
+   Autónomo y seguro en los límites: nunca lee más allá de packed[plen-1], de
+   modo que el llamante NO necesita un byte extra de relleno. Esto elimina una
+   copia completa del array en cada decode() (ruta caliente: alineador, traductor,
+   GC/k-meros). El bucle es trivialmente auto-vectorizable por GCC -O3. */
 EXPORT void bio_unpack5(const uint8_t* packed, int32_t n, uint8_t* out) {
-    for (int32_t i = 0; i < n; i++)
-        out[i] = bio_getitem5(packed, i);
+    int32_t plen = (n * 5 + 7) / 8;
+    for (int32_t i = 0; i < n; i++) {
+        uint32_t bit_start = (uint32_t)i * 5u;
+        uint32_t byte0  = bit_start >> 3;
+        uint32_t shift0 = bit_start & 7u;
+        uint16_t word   = (uint16_t)packed[byte0] << 8;
+        uint32_t b1     = byte0 + 1u;
+        if (shift0 > 3u && b1 < (uint32_t)plen) word |= packed[b1];
+        out[i] = (uint8_t)((word >> (11u - shift0)) & 0x1Fu);
+    }
 }
 
 /* Empaqueta n códigos de 5 bits en out (tamaño >= ceil(n*5/8)+1). */

@@ -176,9 +176,9 @@ def c_pack5(codes: np.ndarray) -> np.ndarray:
 
 
 def c_unpack5(packed: np.ndarray, n: int) -> np.ndarray:
-    # Asegurar byte extra para lecturas seguras
-    safe = np.zeros(len(packed) + 1, dtype=np.uint8)
-    safe[:len(packed)] = packed
+    # bio_unpack5 es seguro en los límites → no hace falta copiar un byte extra.
+    # ascontiguousarray no copia si ya es uint8 contiguo (el caso normal).
+    safe = np.ascontiguousarray(packed, dtype=np.uint8)
     out = np.empty(n, dtype=np.uint8)
     _lib.bio_unpack5(
         safe.ctypes.data_as(_U8P),

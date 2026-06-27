@@ -733,16 +733,30 @@ def _decode_fixed_2d(packed: np.ndarray, m: int, L: int) -> np.ndarray:
     return (bits * _GC_W).sum(axis=2, dtype=np.uint8)
 
 
-def _batch_gc(packed, pack_off, n_syms) -> np.ndarray:
-    """Fracción GC (0..1) de cada registro. Vectorizado si la longitud es fija."""
+def _decode_cached(obj) -> "Optional[np.ndarray]":
+    """Decodifica el lote a una matriz (m, L) UNA vez y la cachea en ``obj``.
+
+    Devuelve ``None`` si las longitudes no son fijas (ruta irregular). Compartido
+    por ``gc_content()`` y ``kmer_spectrum()`` para no desempaquetar dos veces.
+    """
+    if getattr(obj, "_dec_done", False):
+        return obj._dec_cache
+    n = obj._n_syms
+    out = (_decode_fixed_2d(obj._packed, len(obj), int(n[0]))
+           if (len(obj) and int(n[0]) > 0 and bool(np.all(n == n[0]))) else None)
+    obj._dec_cache = out
+    obj._dec_done = True
+    return out
+
+
+def _batch_gc(packed, pack_off, n_syms, codes2d) -> np.ndarray:
+    """Fracción GC (0..1) de cada registro. ``codes2d`` = matriz cacheada o None."""
     m = int(n_syms.shape[0])
     if m == 0:
         return np.empty(0, dtype=np.float64)
-    if bool(np.all(n_syms == n_syms[0])) and int(n_syms[0]) > 0:
-        L = int(n_syms[0])
-        codes = _decode_fixed_2d(packed, m, L)
-        gc = ((codes == 1) | (codes == 2)).sum(axis=1)
-        return gc / L
+    if codes2d is not None:
+        gc = ((codes2d == 1) | (codes2d == 2)).sum(axis=1)
+        return gc / codes2d.shape[1]
     # Longitud irregular: bucle por registro (cada uno se decodifica vectorizado).
     out = np.empty(m, dtype=np.float64)
     for i in range(m):
@@ -755,11 +769,11 @@ def _batch_gc(packed, pack_off, n_syms) -> np.ndarray:
     return out
 
 
-def _batch_kmer_spectrum(packed, pack_off, n_syms, k: int) -> np.ndarray:
-    """Espectro de k-meros del lote entero → array int64 de longitud 4**k.
+def _batch_kmer_spectrum(packed, pack_off, n_syms, k: int, codes2d) -> np.ndarray:
+    """Espectro de k-meros del lote → array int64 de longitud 4**k.
 
-    Cuenta todos los k-meros de todas las secuencias. Los k-meros con bases
-    ambiguas (código > 3) se descartan. Vectorizado si la longitud es fija.
+    Cuenta todos los k-meros de todas las secuencias; los que tienen bases
+    ambiguas (código > 3) se descartan. ``codes2d`` = matriz cacheada o None.
     """
     if k < 1:
         raise SequenceValueError(f"k debe ser >= 1, se recibió {k}.")
@@ -771,10 +785,10 @@ def _batch_kmer_spectrum(packed, pack_off, n_syms, k: int) -> np.ndarray:
     powers = (4 ** np.arange(k - 1, -1, -1)).astype(np.int64)
     sw = np.lib.stride_tricks.sliding_window_view
 
-    if bool(np.all(n_syms == n_syms[0])) and int(n_syms[0]) >= k:
-        L = int(n_syms[0])
-        codes = _decode_fixed_2d(packed, m, L)              # (m, L)
-        win = sw(codes, k, axis=1)                          # (m, L-k+1, k)
+    if codes2d is not None:
+        if codes2d.shape[1] < k:
+            return out                                      # ninguna ventana válida
+        win = sw(codes2d, k, axis=1)                        # (m, L-k+1, k)
         valid = (win <= 3).all(axis=2)                      # (m, L-k+1)
         ids = (win.astype(np.int64) * powers).sum(axis=2)   # (m, L-k+1)
         return np.bincount(ids[valid].ravel(), minlength=n_kmers)[:n_kmers]
@@ -857,12 +871,14 @@ class SequenceBatch:
     def gc_content(self) -> np.ndarray:
         """Fracción GC (0..1) de cada secuencia del lote (vectorizado)."""
         self._require_nucleotide("gc_content()")
-        return _batch_gc(self._packed, self._pack_off, self._n_syms)
+        return _batch_gc(self._packed, self._pack_off, self._n_syms,
+                         _decode_cached(self))
 
     def kmer_spectrum(self, k: int) -> np.ndarray:
         """Espectro de k-meros del lote → array int64 de longitud ``4**k``."""
         self._require_nucleotide("kmer_spectrum()")
-        return _batch_kmer_spectrum(self._packed, self._pack_off, self._n_syms, k)
+        return _batch_kmer_spectrum(self._packed, self._pack_off, self._n_syms,
+                                    k, _decode_cached(self))
 
     def __repr__(self) -> str:
         return (f"SequenceBatch(m={len(self)}, "
@@ -922,7 +938,8 @@ class ReadBatch:
 
     def gc_content(self) -> np.ndarray:
         """Fracción GC (0..1) de cada lectura del lote (vectorizado)."""
-        return _batch_gc(self._packed, self._pack_off, self._n_syms)
+        return _batch_gc(self._packed, self._pack_off, self._n_syms,
+                         _decode_cached(self))
 
     def kmer_spectrum(self, k: int) -> np.ndarray:
         """Espectro de k-meros del lote → array int64 de longitud ``4**k``.
@@ -932,7 +949,7 @@ class ReadBatch:
         errores o estimación de cobertura — sin crear objetos por lectura.
         """
         return _batch_kmer_spectrum(self._packed, self._pack_off,
-                                    self._n_syms, k)
+                                    self._n_syms, k, _decode_cached(self))
 
     def filter(self, mask: np.ndarray) -> "ReadBatch":
         """Devuelve un nuevo ReadBatch con solo las lecturas de ``mask``."""
@@ -1260,8 +1277,10 @@ class SmartImporter:
                         "usa una herramienta de lecturas ultra-largas."
                     )
                 # Snapshot de los buffers como bytes/listas: una copia por lote,
-                # no por registro.
-                hraw = hdr_buf.raw
+                # no por registro. string_at copia solo los bytes usados, no los
+                # 2 MB completos del buffer de cabeceras.
+                hdr_used = int(hdr_off[m])
+                hraw = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
                 hoff = hdr_off[: m + 1].tolist()
                 poff = pack_off[: m + 1].tolist()
                 nlst = n_syms[:m].tolist()
@@ -1338,7 +1357,8 @@ class SmartImporter:
                 poff   = pack_off[: m + 1].copy()
                 nsy    = n_syms[:m].copy()
                 tps    = types[:m].copy()
-                hraw   = bytes(hdr_buf.raw[:hdr_used])
+                # string_at copia solo hdr_used bytes (no los 2 MB del buffer).
+                hraw   = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
                 hoff   = hdr_off[: m + 1].copy()
 
                 if fastq:
