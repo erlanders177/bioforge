@@ -30,7 +30,7 @@ from .smart_translator import SmartTranslator
 from .aligner import SequenceAligner, format_alignment, Mutation, AlignmentResult
 from .analyze import run, build_report, AnalysisResult
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [

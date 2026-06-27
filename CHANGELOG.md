@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [1.1.1] — 2026-06-27
+
+### Fixed
+
+- `__init__.py`: `__version__` reported `"1.0.0"` instead of the correct version
+- `aligner.py`: C engine imports were unconditional — if the `engine/` directory were missing, `aligner.py` would crash with `ImportError` instead of falling back to NumPy (inconsistent with `biocore.py` which used `try/except`)
+- `engine.c`: Semi-global NW (`nw_semiglobal`) only searched the last column for the best traceback start; it now searches both the last row and the last column, matching the NumPy fallback behaviour
+
+---
+
 ## [1.1.0] — 2026-06-27
 
 ### Added
