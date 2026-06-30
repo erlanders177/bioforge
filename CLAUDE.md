@@ -4,7 +4,7 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **2.3.0**).
+Es un paquete instalable: `from bioforge import ...` (versión actual **2.2.0**).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
@@ -63,7 +63,7 @@ constante; >1=hilos; 0=todos los núcleos). El motor enruta: plano→parseo para
 (OpenMP, mmap sin copia); `.gz`→libdeflate (~2×) + parseo; fallback a zlib
 secuencial. El parseo paralelo está limitado por ancho de banda de memoria
 (poco en pocos núcleos); el win real es libdeflate en `.gz` (~1.6× end-to-end).
-**BGZF (palanca 3, v2.3):** `.gz` por bloques independientes → descompresión
+**BGZF (palanca 3):** `.gz` por bloques independientes → descompresión
 paralela (~1.95×, la vía más rápida). Conversor `bioforge-bgzip` (bgzf.py);
 salida compatible con gunzip. El despachador detecta BGZF (subcampo `BC`) y
 enruta; `.gz` normal → libdeflate 1 hilo.
