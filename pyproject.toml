@@ -58,3 +58,26 @@ include = ["bioforge*"]
 # Incluir el motor C compilado y su fuente dentro del paquete (wheel).
 [tool.setuptools.package-data]
 "bioforge.engine" = ["*.dll", "*.so", "*.dylib", "*.c"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# cibuildwheel — wheels nativos por plataforma (Windows / Linux / macOS).
+# El motor se carga con ctypes (independiente de la ABI de Python), así que
+# construimos UN wheel por plataforma con una sola versión de Python; el wheel
+# resultante (py3-none-<plat>, ver setup.py) vale para todas las Python 3.
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.cibuildwheel]
+build = "cp312-*"
+skip = "*-musllinux* *_i686 *-win32"
+build-frontend = "build"
+# Verificación de humo en cada plataforma: el motor C DEBE cargar.
+test-requires = "numpy"
+test-command = "python {project}/tools/ci_check.py"
+
+[tool.cibuildwheel.linux]
+# zlib viene en la imagen manylinux; libgomp viene con gcc (parseo paralelo).
+# libdeflate (.gz ~2×) se intenta instalar; si no, build.py degrada a zlib.
+before-all = "yum install -y zlib-devel libdeflate-devel || dnf install -y zlib-devel libdeflate-devel || true"
+
+[tool.cibuildwheel.macos]
+# clang necesita libomp (Homebrew) para OpenMP; libdeflate opcional (.gz ~2×).
+before-all = "brew install libomp libdeflate || true"

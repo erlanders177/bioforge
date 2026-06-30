@@ -25,8 +25,8 @@ python -m build
 ```
 
 Esto crea en `dist/`:
-- `bioforge-2.2.0-py3-none-any.whl`  (incluye el motor C de Windows)
-- `bioforge-2.2.0.tar.gz`            (código fuente + engine.c para recompilar)
+- `bioforge-2.2.1-py3-none-any.whl`  (incluye el motor C de Windows)
+- `bioforge-2.2.1.tar.gz`            (código fuente + engine.c para recompilar)
 
 ## 2. Ensayo en TestPyPI (recomendado)
 
