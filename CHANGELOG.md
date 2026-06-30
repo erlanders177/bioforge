@@ -5,6 +5,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [2.3.0] — 2026-06-30
+
+**Wheels nativos multiplataforma.** El motor C ahora se compila para Windows,
+Linux y macOS, así que `pip install bioforge` da el motor rápido en las tres
+plataformas (antes solo Windows; el resto caía al fallback NumPy). Verificado en
+CI: el motor C carga y traduce en cada sistema.
+
+### Added
+- Compilación de wheels por plataforma con **cibuildwheel** + GitHub Actions
+  (`.github/workflows/wheels.yml`). Wheels `py3-none-<plataforma>`: un wheel por
+  SO vale para todas las versiones de Python 3 (el motor es ctypes, no depende
+  de la ABI de Python).
+- `setup.py`: compila el motor al construir el wheel y lo etiqueta por
+  plataforma; en Windows reutiliza el `engine.dll` precompilado.
+- `tools/ci_check.py`: verificación de humo que falla si el motor C no carga.
+- Herramientas de desarrollo: Ruff, mypy, pyright, pytest-cov, pre-commit
+  (config en `pyproject.toml` y `.pre-commit-config.yaml`); Scalene y py-spy
+  para perfilado (extra `[profile]`).
+
+### Changed
+- `build.py`: compilación **portátil** (`BIOFORGE_PORTABLE`, sin `-march=native`)
+  para wheels que funcionan en cualquier CPU, y **autocontenida**
+  (`BIOFORGE_STATIC`): OpenMP estático en Linux/macOS para no depender de
+  librerías fuera de la lista blanca de manylinux. Soporte de macOS (clang +
+  libomp).
+- Limpieza con `ruff --fix`: imports muertos, f-strings, `zip(..., strict=True)`.
+
+### Notes
+- En Linux/macOS, los wheels llevan zlib (`.gz`) + OpenMP (paralelo); el extra
+  de libdeflate (`.gz` ~2×) queda pendiente de compilarse desde fuente en CI.
+
+---
+
 ## [2.2.1] — 2026-06-27
 
 **Actualización de emergencia (hotfix).** Una auditoría línea por línea tras
