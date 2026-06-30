@@ -166,20 +166,22 @@
       int err = 0;
       #pragma omp parallel num_threads(NT)
       {
+          /* El descompresor de libdeflate NO es seguro entre hilos: uno por hilo.
+             El bucle de trabajo va FUERA del if para que TODOS los hilos del
+             equipo encuentren el mismo 'omp for' (si no, deadlock en su barrera). */
           struct libdeflate_decompressor* d = libdeflate_alloc_decompressor();
-          if (!d) { err = 1; }
-          else {
-              #pragma omp for schedule(static)
-              for (int64_t k = 0; k < nb; k++) {
-                  size_t actual = 0;
-                  enum libdeflate_result r = libdeflate_gzip_decompress(
-                      d, c + coff[k], (size_t)csz[k],
-                      obuf + uoff[k], (size_t)usz[k], &actual);
-                  if (r != LIBDEFLATE_SUCCESS || (int32_t)actual != usz[k])
-                      err = 1;
-              }
-              libdeflate_free_decompressor(d);
+          if (!d) err = 1;
+          #pragma omp for schedule(static)
+          for (int64_t k = 0; k < nb; k++) {
+              if (!d) continue;
+              size_t actual = 0;
+              enum libdeflate_result r = libdeflate_gzip_decompress(
+                  d, c + coff[k], (size_t)csz[k],
+                  obuf + uoff[k], (size_t)usz[k], &actual);
+              if (r != LIBDEFLATE_SUCCESS || (int32_t)actual != usz[k])
+                  err = 1;
           }
+          if (d) libdeflate_free_decompressor(d);
       }
       free(coff); free(csz); free(uoff); free(usz);
       return err ? -1 : utot;
@@ -211,39 +213,40 @@
 
           #pragma omp parallel num_threads(NT)
           {
+              /* Un compresor por hilo. El 'omp for' va FUERA del if para que
+                 todos los hilos lo encuentren (si no, deadlock en la barrera). */
               struct libdeflate_compressor* comp =
                   libdeflate_alloc_compressor(level);
-              if (!comp) { err = 1; }
-              else {
-                  #pragma omp for schedule(static)
-                  for (int64_t i = 0; i < nb; i++) {
-                      int64_t off = i * CHUNK;
-                      int32_t csz = (int32_t)((in_len - off < CHUNK)
-                                              ? in_len - off : CHUNK);
-                      size_t bound = libdeflate_deflate_compress_bound(comp, csz);
-                      uint8_t* blk = (uint8_t*)malloc(18 + bound + 8);
-                      if (!blk) { err = 1; continue; }
-                      size_t dlen = libdeflate_deflate_compress(
-                          comp, in + off, csz, blk + 18, bound);
-                      if (dlen == 0) { err = 1; free(blk); continue; }
-                      int64_t total = 18 + (int64_t)dlen + 8;
-                      int bsize = (int)total - 1;
-                      blk[0]=0x1f; blk[1]=0x8b; blk[2]=0x08; blk[3]=0x04;
-                      blk[4]=blk[5]=blk[6]=blk[7]=0;          /* mtime */
-                      blk[8]=0; blk[9]=0xff;                  /* xfl, os */
-                      blk[10]=6; blk[11]=0;                   /* xlen */
-                      blk[12]=0x42; blk[13]=0x43;             /* 'B','C' */
-                      blk[14]=2; blk[15]=0;                   /* slen */
-                      blk[16]=(uint8_t)(bsize & 0xff);
-                      blk[17]=(uint8_t)((bsize >> 8) & 0xff);
-                      uint32_t crc = libdeflate_crc32(0, in + off, csz);
-                      memcpy(blk + 18 + dlen, &crc, 4);
-                      uint32_t isize = (uint32_t)csz;
-                      memcpy(blk + 18 + dlen + 4, &isize, 4);
-                      bufs[i] = blk; lens[i] = (int32_t)total;
-                  }
-                  libdeflate_free_compressor(comp);
+              if (!comp) err = 1;
+              #pragma omp for schedule(static)
+              for (int64_t i = 0; i < nb; i++) {
+                  if (!comp) continue;
+                  int64_t off = i * CHUNK;
+                  int32_t csz = (int32_t)((in_len - off < CHUNK)
+                                          ? in_len - off : CHUNK);
+                  size_t bound = libdeflate_deflate_compress_bound(comp, csz);
+                  uint8_t* blk = (uint8_t*)malloc(18 + bound + 8);
+                  if (!blk) { err = 1; continue; }
+                  size_t dlen = libdeflate_deflate_compress(
+                      comp, in + off, csz, blk + 18, bound);
+                  if (dlen == 0) { err = 1; free(blk); continue; }
+                  int64_t total = 18 + (int64_t)dlen + 8;
+                  int bsize = (int)total - 1;
+                  blk[0]=0x1f; blk[1]=0x8b; blk[2]=0x08; blk[3]=0x04;
+                  blk[4]=blk[5]=blk[6]=blk[7]=0;          /* mtime */
+                  blk[8]=0; blk[9]=0xff;                  /* xfl, os */
+                  blk[10]=6; blk[11]=0;                   /* xlen */
+                  blk[12]=0x42; blk[13]=0x43;             /* 'B','C' */
+                  blk[14]=2; blk[15]=0;                   /* slen */
+                  blk[16]=(uint8_t)(bsize & 0xff);
+                  blk[17]=(uint8_t)((bsize >> 8) & 0xff);
+                  uint32_t crc = libdeflate_crc32(0, in + off, csz);
+                  memcpy(blk + 18 + dlen, &crc, 4);
+                  uint32_t isize = (uint32_t)csz;
+                  memcpy(blk + 18 + dlen + 4, &isize, 4);
+                  bufs[i] = blk; lens[i] = (int32_t)total;
               }
+              if (comp) libdeflate_free_compressor(comp);
           }
       }
 

@@ -1252,6 +1252,10 @@ class SmartImporter:
     _PWINDOW = 32 * 1024 * 1024         # ventana (32 MB): amortiza copias y OpenMP
     _PBUF    = 48 * 1024 * 1024         # buffers de salida (1.5× ventana, seguro)
     _PMAXREC = 4_000_000               # registros máx. por ventana
+    # La vía rápida .gz descomprime el archivo entero en RAM. Por encima de este
+    # tamaño COMPRIMIDO se cae a la ruta secuencial (zlib, RAM constante) para no
+    # agotar memoria con archivos enormes.
+    _PGZ_MAX_COMPRESSED = 512 * 1024 * 1024   # 512 MB
 
     @classmethod
     def stream(
@@ -1579,6 +1583,11 @@ class SmartImporter:
         """
         import struct
         nt = cls._resolve_threads(n_threads)
+        # Archivos comprimidos enormes → ruta secuencial (RAM constante), para no
+        # cargar todo el archivo descomprimido en memoria.
+        if os.path.getsize(path) > cls._PGZ_MAX_COMPRESSED:
+            yield from cls._stream_columnar(path, force_type, fastq)
+            return
         with open(path, "rb") as fh:
             comp = fh.read()
         if len(comp) < 18:                          # gzip mínimo

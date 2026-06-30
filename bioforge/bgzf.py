@@ -64,7 +64,11 @@ def compress_file(in_path: str, out_path: Optional[str] = None,
                   level: int = 6, n_threads: int = 0) -> str:
     """Convierte ``in_path`` a un archivo BGZF. Devuelve la ruta de salida."""
     if out_path is None:
-        out_path = in_path + ".gz" if not in_path.endswith(".gz") else in_path
+        out_path = in_path + ".gz"
+    if os.path.abspath(out_path) == os.path.abspath(in_path):
+        raise ValueError(
+            f"La salida coincide con la entrada ({in_path!r}); indica otra ruta "
+            "con -o para no sobrescribir el archivo original.")
     with open(in_path, "rb") as f:
         data = f.read()
     comp = compress_bytes(data, level=level, n_threads=n_threads)
