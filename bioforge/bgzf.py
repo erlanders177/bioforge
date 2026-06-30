@@ -28,6 +28,8 @@ from typing import Optional
 
 import numpy as np
 
+from .biocore import EngineError
+
 try:
     from .engine._loader import C_LIBDEFLATE_AVAILABLE as _C_LIBDEFLATE_AVAILABLE
     from .engine._loader import c_bgzf_compress as _c_bgzf_compress
@@ -42,7 +44,7 @@ def compress_bytes(data: bytes, level: int = 6, n_threads: int = 0) -> bytes:
     ``n_threads``: 0 = todos los núcleos. ``level``: 1–12 (libdeflate).
     """
     if not _C_LIBDEFLATE_AVAILABLE:
-        raise RuntimeError(
+        raise EngineError(
             "El motor C no tiene libdeflate; recompila con "
             "`python bioforge/engine/build.py` (necesita la librería libdeflate).")
     nt = (os.cpu_count() or 1) if n_threads <= 0 else n_threads
@@ -56,7 +58,7 @@ def compress_bytes(data: bytes, level: int = 6, n_threads: int = 0) -> bytes:
         out = np.empty(cap * 2 + (1 << 20), dtype=np.uint8)
         n = _c_bgzf_compress(inbuf, out, level, nt)
         if n < 0:
-            raise RuntimeError("Fallo al comprimir a BGZF.")
+            raise EngineError("Fallo al comprimir a BGZF.")
     return out[:n].tobytes()
 
 
@@ -109,7 +111,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except FileNotFoundError:
         print(f"Archivo no encontrado: {args.input}", file=sys.stderr)
         return 1
-    except (RuntimeError, OSError) as exc:
+    except (EngineError, ValueError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     return 0

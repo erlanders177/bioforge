@@ -68,6 +68,16 @@ paralela (~1.95×, la vía más rápida). Conversor `bioforge-bgzip` (bgzf.py);
 salida compatible con gunzip. El despachador detecta BGZF (subcampo `BC`) y
 enruta; `.gz` normal → libdeflate 1 hilo.
 
+### 8. Sistema de errores unificado — todo bajo BioForgeError
+Cualquier fallo del motor DEBE lanzar una subclase de `BioForgeError`, para que
+`except BioForgeError` lo capture todo. Cada subclase hereda además del builtin
+estándar adecuado (compatibilidad). Jerarquía (en `biocore.py`):
+`SequenceTypeError`(+TypeError), `SequenceValueError`/`TranslationError`/
+`AlignmentError`(+ValueError), `BioForgeIOError`(+OSError, apertura de archivo),
+`EngineError`(+RuntimeError, parser/(de)compresión/BGZF). Los errores de
+**uso/argumento** (p.ej. `mode` inválido, salida==entrada) sí pueden ser
+`ValueError` plano, como ya hace `analyze.py`.
+
 ---
 
 ## Números correctos del proyecto

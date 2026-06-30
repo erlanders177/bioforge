@@ -16,6 +16,8 @@ from .biocore import (
     SequenceValueError,
     TranslationError,
     AlignmentError,
+    BioForgeIOError,
+    EngineError,
     BioCode,
     SeqType,
     NUC_LUT,
@@ -43,6 +45,8 @@ __all__ = [
     "SequenceValueError",
     "TranslationError",
     "AlignmentError",
+    "BioForgeIOError",
+    "EngineError",
     # Core types
     "BioCode",
     "SeqType",

@@ -34,7 +34,7 @@ from typing import Optional
 
 import numpy as np
 
-from .biocore import SmartImporter
+from .biocore import SmartImporter, SequenceValueError
 
 # Posiciones máximas que se siguen en los gráficos por-posición. Las lecturas
 # más largas (p.ej. Nanopore) solo contribuyen sus primeras _MAXPOS bases a
@@ -140,7 +140,7 @@ def run(path: str) -> QCReport:
 
     elapsed = time.perf_counter() - t0
     if n_reads == 0:
-        raise ValueError(
+        raise SequenceValueError(
             f"No se encontraron lecturas en {path!r}. "
             "¿Es un archivo FASTQ (.fastq / .fastq.gz)?"
         )

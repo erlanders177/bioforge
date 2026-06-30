@@ -246,15 +246,22 @@ print(build_report(result))
 ### Error handling
 
 ```python
-from bioforge import BioForgeError, TranslationError, SmartTranslator
+from bioforge import BioForgeError, TranslationError, SmartImporter, SmartTranslator
 
 try:
-    protein = SmartTranslator.translate(my_seq)
+    for rec in SmartImporter.stream_fastq("reads.fastq.gz"):
+        protein = SmartTranslator.translate(rec.sequence)
 except TranslationError as e:
     print(f"Translation failed: {e}")   # e.g. no ATG found
 except BioForgeError as e:
-    print(f"BioForge error: {e}")       # any other engine error
+    print(f"BioForge error: {e}")       # ANY engine error: parse, I/O, decompress…
 ```
+
+**One exception family.** Every engine error subclasses `BioForgeError`, so a
+single `except BioForgeError` catches them all — translation, alignment, parsing,
+file I/O (`BioForgeIOError`), engine/decompression (`EngineError`). Each also
+subclasses the matching builtin (`ValueError`, `OSError`, `RuntimeError`…), so
+existing `except OSError`-style code keeps working.
 
 ### Run the verifier (no coding knowledge required)
 

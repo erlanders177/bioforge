@@ -92,6 +92,8 @@ __all__: list[str] = [
     "SequenceValueError",
     "TranslationError",
     "AlignmentError",
+    "BioForgeIOError",
+    "EngineError",
     # Núcleo
     "BioCode",
     "SeqType",
@@ -171,6 +173,28 @@ class AlignmentError(BioForgeError, ValueError):
     - El modo no es ``'global'`` ni ``'semi-global'``.
     - ``width`` es ≤ 0 en ``format_alignment``.
     - Las cadenas alineadas tienen longitudes incongruentes.
+    """
+
+
+class BioForgeIOError(BioForgeError, OSError):
+    """No se pudo abrir o leer un archivo de secuencias.
+
+    Hereda de ``OSError`` (= ``IOError``), por lo que el código que ya atrapa
+    errores de E/S sigue funcionando, y además se captura con ``BioForgeError``.
+    """
+
+
+class EngineError(BioForgeError, RuntimeError):
+    """Fallo del motor de ingesta: parser, descompresión o conversión BGZF.
+
+    Se lanza cuando:
+
+    - El parser por lotes o paralelo devuelve un código de error (buffer
+      desbordado, ventana demasiado densa, registro gigante).
+    - La (des)compresión BGZF/libdeflate falla.
+    - Se pide la vía rápida ``.gz`` sin libdeflate compilado.
+
+    Hereda de ``RuntimeError`` y se captura con ``BioForgeError``.
     """
 
 
@@ -1304,7 +1328,7 @@ class SmartImporter:
 
         handle = _c_parser_open(path)
         if not handle:
-            raise IOError(f"No se puede abrir el archivo: {path!r}")
+            raise BioForgeIOError(f"No se puede abrir el archivo: {path!r}")
 
         try:
             while True:
@@ -1347,7 +1371,7 @@ class SmartImporter:
 
         handle = _c_parser_open(path)
         if not handle:
-            raise IOError(f"No se puede abrir el archivo: {path!r}")
+            raise BioForgeIOError(f"No se puede abrir el archivo: {path!r}")
 
         ps = PackedSequence  # alias local — menos lookups en el bucle
         try:
@@ -1360,7 +1384,7 @@ class SmartImporter:
                 if m == 0:
                     break
                 if m < 0:
-                    raise IOError(
+                    raise EngineError(
                         f"Error del parser por lotes (código {m}) en {path!r}. "
                         "Código -2 = un registro supera el buffer de 16 MB; "
                         "usa una herramienta de lecturas ultra-largas."
@@ -1423,7 +1447,7 @@ class SmartImporter:
 
         handle = _c_parser_open(path)
         if not handle:
-            raise IOError(f"No se puede abrir el archivo: {path!r}")
+            raise BioForgeIOError(f"No se puede abrir el archivo: {path!r}")
 
         try:
             while True:
@@ -1435,7 +1459,7 @@ class SmartImporter:
                 if m == 0:
                     break
                 if m < 0:
-                    raise IOError(
+                    raise EngineError(
                         f"Error del parser por lotes (código {m}) en {path!r}. "
                         "Código -2 = un registro supera el buffer de 16 MB."
                     )
@@ -1544,7 +1568,7 @@ class SmartImporter:
                 hdr_buf, hdr_off, pack_buf, pack_off,
                 n_syms, types, qual_buf, qual_off, MR)
             if m < 0:
-                raise IOError(
+                raise EngineError(
                     f"Parser paralelo: código {m} (ventana demasiado densa o "
                     "registro gigante; usa n_threads=1).")
             if m > 0:
@@ -1791,7 +1815,7 @@ class SmartImporter:
 
         handle = _c_parser_open(path)
         if not handle:
-            raise IOError(f"No se puede abrir el archivo: {path!r}")
+            raise BioForgeIOError(f"No se puede abrir el archivo: {path!r}")
 
         try:
             while True:
