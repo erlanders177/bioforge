@@ -186,8 +186,7 @@ def main() -> int:
         print("[aviso] Biopython no está instalado — solo se medirá BioForge.")
         print("        Instálalo con:  pip install biopython psutil\n")
 
-    from bioforge.engine._loader import (
-        C_AVAILABLE, C_PARSER_AVAILABLE, C_BATCH_AVAILABLE)
+    from bioforge.engine._loader import C_AVAILABLE, C_BATCH_AVAILABLE, C_PARSER_AVAILABLE
     print(f"Motor C: disponible={C_AVAILABLE}  parser={C_PARSER_AVAILABLE}  "
           f"batch={C_BATCH_AVAILABLE}")
 

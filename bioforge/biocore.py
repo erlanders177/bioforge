@@ -59,24 +59,24 @@ from typing import Iterator, Optional
 import numpy as np
 
 try:
-    from .engine._loader import C_AVAILABLE        as _C_AVAILABLE
-    from .engine._loader import C_PARSER_AVAILABLE as _C_PARSER_AVAILABLE
-    from .engine._loader import C_BATCH_AVAILABLE  as _C_BATCH_AVAILABLE
-    from .engine._loader import c_getitem5         as _c_getitem5
-    from .engine._loader import c_pack5            as _c_pack5
-    from .engine._loader import c_unpack5          as _c_unpack5
-    from .engine._loader import c_parser_open      as _c_parser_open
-    from .engine._loader import c_parser_next      as _c_parser_next
-    from .engine._loader import c_parser_next_fastq as _c_parser_next_fastq
-    from .engine._loader import c_parser_next_batch as _c_parser_next_batch
-    from .engine._loader import c_parser_close     as _c_parser_close
-    from .engine._loader import C_PARALLEL_AVAILABLE as _C_PARALLEL_AVAILABLE
-    from .engine._loader import c_parse_mem_parallel as _c_parse_mem_parallel
+    from .engine._loader import C_AVAILABLE as _C_AVAILABLE
+    from .engine._loader import C_BATCH_AVAILABLE as _C_BATCH_AVAILABLE
     from .engine._loader import C_LIBDEFLATE_AVAILABLE as _C_LIBDEFLATE_AVAILABLE
+    from .engine._loader import C_PARALLEL_AVAILABLE as _C_PARALLEL_AVAILABLE
+    from .engine._loader import C_PARSER_AVAILABLE as _C_PARSER_AVAILABLE
+    from .engine._loader import c_bgzf_decompress_parallel as _c_bgzf_decompress_parallel
+    from .engine._loader import c_bgzf_usize as _c_bgzf_usize
+    from .engine._loader import c_getitem5 as _c_getitem5
     from .engine._loader import c_gzip_decompress as _c_gzip_decompress
     from .engine._loader import c_is_bgzf as _c_is_bgzf
-    from .engine._loader import c_bgzf_usize as _c_bgzf_usize
-    from .engine._loader import c_bgzf_decompress_parallel as _c_bgzf_decompress_parallel
+    from .engine._loader import c_pack5 as _c_pack5
+    from .engine._loader import c_parse_mem_parallel as _c_parse_mem_parallel
+    from .engine._loader import c_parser_close as _c_parser_close
+    from .engine._loader import c_parser_next as _c_parser_next
+    from .engine._loader import c_parser_next_batch as _c_parser_next_batch
+    from .engine._loader import c_parser_next_fastq as _c_parser_next_fastq
+    from .engine._loader import c_parser_open as _c_parser_open
+    from .engine._loader import c_unpack5 as _c_unpack5
 except ImportError:
     _C_AVAILABLE        = False
     _C_PARSER_AVAILABLE = False

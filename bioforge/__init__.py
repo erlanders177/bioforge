@@ -10,30 +10,30 @@ Quick start
 'MKG'
 """
 
+from .aligner import AlignmentResult, Mutation, SequenceAligner, format_alignment
+from .analyze import AnalysisResult, build_report, run
 from .biocore import (
+    AA_LUT,
+    NUC_LUT,
+    AlignmentError,
+    BioCode,
     BioForgeError,
+    BioForgeIOError,
+    BitPacker,
+    EngineError,
+    FastqRecord,
+    PackedSequence,
+    ReadBatch,
+    SeqType,
+    SequenceBatch,
+    SequenceStats,
     SequenceTypeError,
     SequenceValueError,
-    TranslationError,
-    AlignmentError,
-    BioForgeIOError,
-    EngineError,
-    BioCode,
-    SeqType,
-    NUC_LUT,
-    AA_LUT,
-    BitPacker,
-    PackedSequence,
-    FastqRecord,
-    SequenceBatch,
-    ReadBatch,
     SmartImporter,
-    SequenceStats,
+    TranslationError,
     compute_stats,
 )
 from .smart_translator import SmartTranslator
-from .aligner import SequenceAligner, format_alignment, Mutation, AlignmentResult
-from .analyze import run, build_report, AnalysisResult
 
 __version__ = "2.2.1"
 __author__  = "Aarón Aranda Torrijos"

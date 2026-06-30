@@ -44,19 +44,26 @@ CODON_LUT  (64 entries, Standard Genetic Code NCBI table #1)
 from __future__ import annotations
 
 import warnings
-from numpy.lib.stride_tricks import sliding_window_view
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 # ── biocore integration ────────────────────────────────────────────────────────
-from .biocore import BioCode, BitPacker, PackedSequence, SeqType
-from .biocore import SequenceTypeError, SequenceValueError, TranslationError
+from .biocore import (
+    BioCode,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceTypeError,
+    SequenceValueError,
+    TranslationError,
+)
 
 # ── motor C (opcional) ────────────────────────────────────────────────────────
 try:
     from .engine._loader import C_AVAILABLE as _C_AVAILABLE
-    from .engine._loader import c_find_atg  as _c_find_atg
-    from .engine._loader import c_translate  as _c_translate
+    from .engine._loader import c_find_atg as _c_find_atg
+    from .engine._loader import c_translate as _c_translate
 except ImportError:
     _C_AVAILABLE = False
 
@@ -484,7 +491,8 @@ class SmartTranslator:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    import sys, time
+    import sys
+    import time
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
     from bioforge import SmartImporter, compute_stats
 
@@ -554,9 +562,9 @@ ATGAAACGCATTAGCACCACCATTACCACCACCATCACCATTACCACAGGTAACGGTGCGGGCTGA
         if caught:
             print(f"  ⚠  UserWarning: {caught[0].message}")
             if expect_warn:
-                print(f"  UserWarning raised as expected ✅")
+                print("  UserWarning raised as expected ✅")
         else:
-            print(f"  No warning (sequence ≥ 50 aa) ✅")
+            print("  No warning (sequence ≥ 50 aa) ✅")
 
         # Round-trip integrity
         aa_codes  = prot_seq.decode()

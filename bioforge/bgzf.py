@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -33,7 +32,6 @@ from .biocore import EngineError
 try:
     from .engine._loader import C_LIBDEFLATE_AVAILABLE as _C_LIBDEFLATE_AVAILABLE
     from .engine._loader import c_bgzf_compress as _c_bgzf_compress
-    from .engine._loader import c_is_bgzf as _c_is_bgzf
 except ImportError:                                    # pragma: no cover
     _C_LIBDEFLATE_AVAILABLE = False
 

@@ -13,12 +13,14 @@ Uso:
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import time
+
 import numpy as np
-from bioforge import SeqType, BitPacker, PackedSequence, NUC_LUT
-from bioforge import SmartTranslator
+
+from bioforge import NUC_LUT, BitPacker, PackedSequence, SeqType, SmartTranslator
 
 
 def stress_test():

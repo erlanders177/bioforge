@@ -11,12 +11,12 @@ Uso:
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from bioforge import BioCode, BitPacker, PackedSequence, SeqType, NUC_LUT
-from bioforge import SmartTranslator
 
+from bioforge import NUC_LUT, BitPacker, PackedSequence, SeqType, SmartTranslator
 
 NUC_CHARS = {0: 'A', 1: 'C', 2: 'G', 3: 'T'}
 AA_NAMES = {
@@ -49,7 +49,7 @@ def analizar_mi_adn(secuencia_texto):
         data=BitPacker.pack(codigos_nuc),
     )
 
-    print(f"\n--- DIAGNOSTICO ---")
+    print("\n--- DIAGNOSTICO ---")
     print(f"Longitud : {adn_empaquetado.n_symbols} bases")
     print(f"Empaquetado en {adn_empaquetado.packed_bytes} bytes")
 

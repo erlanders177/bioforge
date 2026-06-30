@@ -31,6 +31,15 @@ dev = [
     "pytest>=7.0",
     "pytest-benchmark>=4.0",
     "hypothesis>=6.0",
+    "pytest-cov>=4.0",      # cobertura: qué código NO prueban los tests
+    "ruff>=0.6",            # linter + formateador (Rust, ultrarrápido)
+    "mypy>=1.10",           # chequeo de tipos estático
+    "pyright>=1.1",         # chequeo de tipos (alternativa, motor de Pylance)
+    "pre-commit>=3.7",      # corre ruff/tests antes de cada commit
+]
+profile = [
+    "scalene>=1.5",         # profiler CPU+memoria línea por línea
+    "py-spy>=0.3",          # profiler de muestreo (ve hasta dentro del C)
 ]
 bench = [
     "biopython>=1.80",
@@ -88,3 +97,37 @@ repair-wheel-command = ""                 # .so autocontenido → sin "repair"
 # El .so solo depende de libs del sistema → delocate no tiene nada que hacer.
 before-all = "brew install libomp || true"
 repair-wheel-command = ""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ruff — linter + formateador. Config a medida de las reglas de oro del proyecto.
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100                 # tu línea más larga ~109; 100 es cómodo
+target-version = "py310"
+
+[tool.ruff.lint]
+# E4/E7/E9=errores reales · F=pyflakes (bugs) · W=warnings · I=orden de imports
+# · B=bugbear (trampas comunes). NO incluimos E5 (longitud) para no reformatear
+# código que ya funciona.
+select = ["E4", "E7", "E9", "F", "W", "I", "B"]
+ignore = [
+    "E701",  # varias sentencias en una línea (:) — estilo compacto deliberado
+    "E702",  # varias sentencias (;) — incl. el fix OBLIGATORIO de consola Windows
+    "E741",  # nombres ambiguos (l, I, O) — a veces útiles en notación matemática
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/visor.py" = ["E"]          # frontend de display, estilo libre permitido
+
+# ──────────────────────────────────────────────────────────────────────────────
+# mypy — chequeo de tipos. Arranque suave: el código aún no está muy anotado,
+# así que empezamos tolerantes y vamos subiendo el rigor con el tiempo.
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true     # numpy/ctypes sin stubs completos
+warn_unused_ignores = true
+warn_redundant_casts = true
+# Cuando quieras más rigor, sube esto a true progresivamente:
+disallow_untyped_defs = false
+check_untyped_defs = false

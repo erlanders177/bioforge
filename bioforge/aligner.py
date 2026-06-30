@@ -51,15 +51,24 @@ from typing import Literal
 
 import numpy as np
 
-from .biocore import BioCode, BitPacker, PackedSequence, SeqType
-from .biocore import _NUC_DECODE, _AA_DECODE, _NUC_DECODE_ARR, _AA_DECODE_ARR
-from .biocore import SequenceTypeError, SequenceValueError, AlignmentError
+from .biocore import (
+    _AA_DECODE,
+    _AA_DECODE_ARR,
+    _NUC_DECODE,
+    _NUC_DECODE_ARR,
+    AlignmentError,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceTypeError,
+    SequenceValueError,
+)
 
 try:
     from .engine._loader import C_AVAILABLE
-    from .engine._loader import c_nw_align   as _c_nw_align
-    from .engine._loader import c_sw_align   as _c_sw_align
-    from .engine._loader import c_nw_banded  as _c_nw_banded
+    from .engine._loader import c_nw_align as _c_nw_align
+    from .engine._loader import c_nw_banded as _c_nw_banded
+    from .engine._loader import c_sw_align as _c_sw_align
 except ImportError:
     C_AVAILABLE   = False
     _c_nw_align   = None  # type: ignore[assignment]
@@ -409,7 +418,7 @@ class SequenceAligner:
     def _detect_mutations(aligned_a: str, aligned_b: str) -> list[Mutation]:
         mutations: list[Mutation] = []
         pos_a = pos_b = 0
-        for sa, sb in zip(aligned_a, aligned_b):
+        for sa, sb in zip(aligned_a, aligned_b, strict=True):
             if sa == '-':
                 mutations.append(Mutation('insertion', pos_a, pos_b, '-', sb))
                 pos_b += 1
@@ -911,7 +920,7 @@ if __name__ == "__main__":
     print(f"  Alineamiento 1×1 (A vs A): score={r_tiny.score}  ✅")
 
     # ── Test 6: benchmark — 1 000 × 1 000 nt con 1 % mutaciones ───────────
-    print(f"\n  ── Test 6: benchmark 1 000 × 1 000 nt (1 % mutaciones) " + "─" * 8)
+    print("\n  ── Test 6: benchmark 1 000 × 1 000 nt (1 % mutaciones) " + "─" * 8)
     _rng    = np.random.default_rng(42)
     _bases  = np.array([0, 1, 2, 3], dtype=np.uint8)
     _ca     = _rng.choice(_bases, size=1000)
@@ -939,6 +948,6 @@ if __name__ == "__main__":
     print(f"  Identity    : {_rb.identity:.2%}")
     print(f"  Mutaciones  : {len(_rb.mutations)}  (esperadas ≈ 10)")
     assert abs(len(_rb.mutations) - 10) <= 2, "Mutaciones fuera de rango esperado"
-    print(f"  ✅  Benchmark superado")
+    print("  ✅  Benchmark superado")
 
     print(f"\n{'═' * W}\n")

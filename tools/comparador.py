@@ -16,10 +16,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from bioforge import SeqType, BitPacker, PackedSequence, NUC_LUT, AA_LUT
-from bioforge import SmartTranslator, SequenceAligner, format_alignment
-from bioforge.analyze import _AA_NAMES, _NUC_NAMES, _change_type
 
+from bioforge import (
+    AA_LUT,
+    NUC_LUT,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceAligner,
+    SmartTranslator,
+    format_alignment,
+)
+from bioforge.analyze import _AA_NAMES, _NUC_NAMES, _change_type
 
 # ── Colores ANSI ───────────────────────────────────────────────────────────────
 _GREEN  = "\033[92m"
@@ -40,10 +48,10 @@ def _b(t): return f"{_BOLD}{t}{_RESET}"
 
 def _leer_secuencia(numero: int) -> tuple[str, str]:
     print(f"\n{_b(f'  SECUENCIA {numero}')}")
-    print(f"  Nombre (opcional, Enter para omitir): ", end="")
+    print("  Nombre (opcional, Enter para omitir): ", end="")
     nombre = input().strip() or f"Secuencia_{numero}"
-    print(f"  Pega la secuencia (ADN o proteína, una o varias líneas).")
-    print(f"  Escribe FIN cuando termines:")
+    print("  Pega la secuencia (ADN o proteína, una o varias líneas).")
+    print("  Escribe FIN cuando termines:")
     print()
     lineas = []
     while True:

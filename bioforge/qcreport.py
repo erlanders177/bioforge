@@ -34,7 +34,7 @@ from typing import Optional
 
 import numpy as np
 
-from .biocore import SmartImporter, SequenceValueError
+from .biocore import SequenceValueError, SmartImporter
 
 # Posiciones máximas que se siguen en los gráficos por-posición. Las lecturas
 # más largas (p.ej. Nanopore) solo contribuyen sus primeras _MAXPOS bases a
@@ -193,7 +193,7 @@ def _hist_bars(hist: np.ndarray, lo: int, hi: int, step: int,
         buckets.append(int(hist[e: e + step].sum()))
     peak = max(buckets) if buckets else 0
     out = []
-    for e, c in zip(edges, buckets):
+    for e, c in zip(edges, buckets, strict=True):
         bar = "█" * int(round(width * c / peak)) if peak else ""
         out.append(f"    {e:>3}-{min(e+step-1, hi):<3} {unit} | {bar} {c:,}")
     return out

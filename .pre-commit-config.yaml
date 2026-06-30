@@ -1,0 +1,23 @@
+# Pre-commit — corre comprobaciones automáticas antes de cada `git commit`.
+# Instalar una vez:   pre-commit install
+# Ejecutar a mano:    pre-commit run --all-files
+#
+# Así ningún commit entra con imports muertos, bugs evidentes o formato roto.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff                 # linter (con --fix automático)
+        args: [--fix]
+      - id: ruff-format          # formateador (opcional; estilo consistente)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace  # quita espacios al final de línea
+      - id: end-of-file-fixer    # asegura un salto de línea final
+      - id: check-yaml           # valida los .yml (p.ej. el workflow de wheels)
+      - id: check-merge-conflict # evita commitear marcadores <<<<<<< de merge
+      - id: check-added-large-files
+        args: [--maxkb=2000]     # el engine.dll (~740 KB) pasa; avisa de >2 MB
