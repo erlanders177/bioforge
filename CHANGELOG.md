@@ -7,17 +7,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ## [2.2.1] — 2026-06-27
 
-Actualización pequeña: **sistema de errores unificado** (sin cambios de
-comportamiento; solo qué excepciones se lanzan).
+**Actualización de emergencia (hotfix).** Una auditoría línea por línea tras
+publicar v2.2.0 encontró un **deadlock**; este parche lo corrige, más dos
+arreglos de robustez y la unificación del sistema de errores.
+
+### Fixed
+- **Deadlock OpenMP (crítico)** en `bio_bgzf_decompress_parallel` y
+  `bio_bgzf_compress`: el `#pragma omp for` estaba dentro de un `if`; si a un
+  hilo le fallaba la reserva del (des)compresor, los demás quedaban colgados en
+  la barrera para siempre. Movido el bucle fuera del `if`.
+- **Conversor BGZF**: con entrada ya `.gz` y sin `-o`, el destino coincidía con
+  la entrada y la sobrescribía (pérdida de datos). Ahora se rechaza out == in.
+- **RAM en la vía rápida `.gz`**: guard de tamaño (>512 MB comprimido → ruta
+  secuencial de RAM constante) para no agotar memoria con archivos enormes.
 
 ### Changed
-- Toda la ruta de ingesta (parser streaming/lotes/paralelo, `.gz`/BGZF, conversor,
-  informe QC) lanza ahora excepciones de la jerarquía `BioForgeError`, cumpliendo
-  la promesa de "captura todos los errores del motor con un solo
-  `except BioForgeError`". Dos nuevas: `BioForgeIOError(BioForgeError, OSError)`
-  (apertura/lectura de archivo) y `EngineError(BioForgeError, RuntimeError)`
-  (parser/(de)compresión). Ambas heredan también del builtin estándar, así que el
-  código que ya atrapaba `OSError`/`RuntimeError` sigue funcionando.
+- **Sistema de errores unificado**: toda la ruta de ingesta lanza ahora
+  excepciones de la jerarquía `BioForgeError`, cumpliendo la promesa de "captura
+  todos los errores del motor con un solo `except BioForgeError`". Dos nuevas:
+  `BioForgeIOError(BioForgeError, OSError)` (apertura/lectura) y
+  `EngineError(BioForgeError, RuntimeError)` (parser/(de)compresión). Ambas
+  heredan también del builtin estándar, así que el código que ya atrapaba
+  `OSError`/`RuntimeError` sigue funcionando.
 
 ### Tests
 - 303 tests (+5): `tests/test_errors.py` — jerarquía completa, archivo inexistente
@@ -77,16 +88,6 @@ lo necesario. Incluye descompresión `.gz` rápida (libdeflate) y descompresión
 - `build.py` enlaza **estáticamente** OpenMP (libgomp), zlib y libdeflate dentro
   del DLL → motor C **autocontenido** (sin dependencias de runtime). Degrada con
   gracia: si libdeflate no está, compila con zlib; si zlib no está, sin `.gz`.
-
-### Fixed (auditoría línea por línea)
-- **Deadlock OpenMP** en `bio_bgzf_decompress_parallel` y `bio_bgzf_compress`:
-  el `#pragma omp for` estaba dentro de un `if`; si a un hilo le fallaba la
-  reserva del (des)compresor, los demás quedaban colgados en la barrera. Movido
-  el bucle fuera del `if`.
-- **Conversor BGZF**: con entrada ya `.gz` y sin `-o`, el destino coincidía con
-  la entrada y la sobrescribía (pérdida de datos). Ahora se rechaza out == in.
-- **RAM en la vía rápida `.gz`**: guard de tamaño (>512 MB comprimido → ruta
-  secuencial de RAM constante) para no agotar memoria con archivos enormes.
 
 ### Tests
 - 298 tests (desde 284): parser paralelo == secuencial (FASTQ fijo/variable,
