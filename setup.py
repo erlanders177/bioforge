@@ -53,7 +53,9 @@ class BuildWithEngine(build_py):
 
         env = os.environ.copy()
         env["BIOFORGE_PORTABLE"] = "1"   # wheels distribuidos → CPU genérica
-        print(">> Compilando el motor C (portátil) para el wheel...")
+        env["BIOFORGE_STATIC"] = "1"     # Linux/macOS → OpenMP estático (.so
+                                         # autocontenido, sin paso "repair")
+        print(">> Compilando el motor C (portátil, autocontenido) para el wheel...")
         try:
             res = subprocess.run([sys.executable, str(_BUILD_ENGINE)], env=env)
             ok = res.returncode == 0
@@ -89,6 +91,14 @@ try:
         def get_tag(self):
             # ABI-independiente (ctypes): py3-none-<plataforma>.
             _python, _abi, plat = super().get_tag()
+            # En Linux, el .so es autocontenido (OpenMP estático) y solo depende
+            # de la lista blanca de manylinux + glibc del contenedor, así que no
+            # hace falta `auditwheel`: etiquetamos manylinux directamente. El
+            # valor exacto lo fija cibuildwheel (BIOFORGE_MANYLINUX) según la
+            # imagen usada.
+            many = os.environ.get("BIOFORGE_MANYLINUX", "")
+            if many and plat.startswith("linux"):
+                plat = many
             return "py3", "none", plat
 
     cmdclass["bdist_wheel"] = BDistWheel

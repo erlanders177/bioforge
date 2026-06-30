@@ -32,3 +32,12 @@ build/
 dist/
 *.egg-info/
 *.whl
+
+# Objeto intermedio del motor (compilación en dos pasos)
+engine/engine.o
+bioforge/engine/engine.o
+
+# Grafos generados por codegraph (artefactos de análisis)
+codegraph.html
+bioforge_graph.html
+*.codegraph.csv

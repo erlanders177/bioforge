@@ -69,15 +69,22 @@ include = ["bioforge*"]
 build = "cp312-*"
 skip = "*-musllinux* *_i686 *-win32"
 build-frontend = "build"
+build-verbosity = 1                       # log de compilación visible en CI
 # Verificación de humo en cada plataforma: el motor C DEBE cargar.
 test-requires = "numpy"
 test-command = "python {project}/tools/ci_check.py"
 
 [tool.cibuildwheel.linux]
-# zlib viene en la imagen manylinux; libgomp viene con gcc (parseo paralelo).
-# libdeflate (.gz ~2×) se intenta instalar; si no, build.py degrada a zlib.
-before-all = "yum install -y zlib-devel libdeflate-devel || dnf install -y zlib-devel libdeflate-devel || true"
+# zlib-devel da las cabeceras; libgomp (con gcc) se enlaza ESTÁTICO en el .so
+# (ver build.py BIOFORGE_STATIC). El .so queda autocontenido salvo libs de la
+# lista blanca de manylinux → no hace falta auditwheel: lo saltamos y
+# etiquetamos manylinux2014 nosotros (BIOFORGE_MANYLINUX, ver setup.py).
+before-all = "yum install -y zlib-devel || true"
+environment = { BIOFORGE_MANYLINUX = "manylinux2014_x86_64" }
+repair-wheel-command = ""                 # .so autocontenido → sin "repair"
 
 [tool.cibuildwheel.macos]
-# clang necesita libomp (Homebrew) para OpenMP; libdeflate opcional (.gz ~2×).
-before-all = "brew install libomp libdeflate || true"
+# clang necesita libomp (Homebrew), que se enlaza ESTÁTICO; zlib es del sistema.
+# El .so solo depende de libs del sistema → delocate no tiene nada que hacer.
+before-all = "brew install libomp || true"
+repair-wheel-command = ""
