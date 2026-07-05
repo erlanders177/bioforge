@@ -33,6 +33,7 @@ from .biocore import (
     TranslationError,
     compute_stats,
 )
+from .genomemap import GenomeAligner, Mapping
 from .smart_translator import SmartTranslator
 
 __version__ = "2.3.0"
@@ -67,6 +68,9 @@ __all__ = [
     "format_alignment",
     "Mutation",
     "AlignmentResult",
+    # Genome mapper (v3.0)
+    "GenomeAligner",
+    "Mapping",
     # Pipeline
     "run",
     "build_report",
