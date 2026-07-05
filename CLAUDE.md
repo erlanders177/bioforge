@@ -4,12 +4,18 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **2.2.0**).
+Es un paquete instalable: `from bioforge import ...` (versión actual **2.3.0**,
+publicada en PyPI con wheels nativos Win/Linux/Mac).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
 - **L2** `bioforge/smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
 - **L3** `bioforge/aligner.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
+- **L4 (v3.0, en desarrollo)** mapeador de genomas / reads largos — seed-chain-align
+  estilo minimap2: `minimizers.py` (minimizers canónicos w,k), `refindex.py`
+  (índice por hash + searchsorted), `genomemap.py` (seeding → chaining DP →
+  extensión banded → `GenomeAligner.map` con salida PAF). Escala a genomas
+  donde el DP O(m·n) de L3 no llega.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
@@ -35,6 +41,10 @@ pack, GC, k-meros) ocurre en C o en una sola op NumPy sobre el lote.
 - `visor.py` — loops permitidos (frontend de display, no procesamiento)
 - `aligner._traceback` — loop O(m+n) permitido (dependencia de datos inevitable)
 - `aligner._fill_matrix` — UN loop O(m+n) sobre anti-diagonales (no O(m·n))
+- `minimizers.minimizers` — loop `range(k)` (Horner, O(k) fijo sobre vectores)
+- `genomemap._chain_one` — DP **por ancla** (no por símbolo), ventana acotada;
+  candidato a bajar a C. `_cigar` itera columnas alineadas (dependencia de datos,
+  como el traceback). Permitidos.
 
 ### 3. Nunca almacenar secuencias como str
 Las secuencias biológicas existen únicamente como `PackedSequence` con `data` uint8
@@ -110,6 +120,9 @@ bioforge/                  paquete instalable (from bioforge import ...)
                            SequenceBatch/ReadBatch (API columnar) — no tocar sin impacto global
   smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement
   aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman
+  minimizers.py            L4 — minimizers canónicos (w,k) vectorizados
+  refindex.py              L4 — índice de la referencia (hash ordenado + searchsorted)
+  genomemap.py             L4 — seed-chain-align: GenomeAligner.map → PAF
   analyze.py               pipeline CLI (dna/protein/both)
   qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
   bgzf.py                  conversor a BGZF (gzip por bloques, paralelo) — CLI bioforge-bgzip
