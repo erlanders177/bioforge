@@ -179,6 +179,7 @@ class SequenceAligner:
         seq_b: PackedSequence,
         mode:  Literal['global', 'semi-global'] = 'global',
         band:  int | None = None,
+        detect_mutations: bool = True,
     ) -> AlignmentResult:
         """
         Align seq_a (reference) against seq_b (query) — Needleman-Wunsch.
@@ -238,7 +239,8 @@ class SequenceAligner:
                 raise AlignmentError(f"band debe ser ≥ 1, se recibió {band}.")
             if C_AVAILABLE:
                 return cls._align_banded_c(
-                    codes_a, codes_b, m, n, band, mode, seq_a.seq_type
+                    codes_a, codes_b, m, n, band, mode, seq_a.seq_type,
+                    detect_mutations,
                 )
             # NumPy fallback: banded fill sobre matriz completa
             if m > cls._MAX_SAFE_LEN or n > cls._MAX_SAFE_LEN:
@@ -261,7 +263,8 @@ class SequenceAligner:
             )
 
         if C_AVAILABLE:
-            return cls._align_c(codes_a, codes_b, m, n, mode, seq_a.seq_type)
+            return cls._align_c(codes_a, codes_b, m, n, mode, seq_a.seq_type,
+                                detect_mutations)
 
         H = cls._fill_matrix(codes_a, codes_b, m, n, mode)
         return cls._traceback(H, codes_a, codes_b, m, n, mode, seq_a.seq_type)
@@ -361,6 +364,7 @@ class SequenceAligner:
         band: int,
         mode: str,
         seq_type: SeqType,
+        detect_mutations: bool = True,
     ) -> AlignmentResult:
         decode_bytes = (
             _NUC_DECODE_BYTES if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE_BYTES
@@ -370,7 +374,7 @@ class SequenceAligner:
             int(cls.MATCH), int(cls.MISMATCH), int(cls.GAP),
             band, mode,
         )
-        mutations = cls._detect_mutations(aligned_a, aligned_b)
+        mutations = cls._detect_mutations(aligned_a, aligned_b) if detect_mutations else []
         aln_len   = n_matches + n_mismatches + n_gaps
         identity  = n_matches / aln_len if aln_len else 0.0
         return AlignmentResult(
@@ -389,6 +393,7 @@ class SequenceAligner:
         n: int,
         mode: str,
         seq_type: SeqType,
+        detect_mutations: bool = True,
     ) -> AlignmentResult:
         decode_bytes = (
             _NUC_DECODE_BYTES if seq_type == SeqType.NUCLEOTIDE else _AA_DECODE_BYTES
@@ -398,7 +403,7 @@ class SequenceAligner:
             int(cls.MATCH), int(cls.MISMATCH), int(cls.GAP),
             mode,
         )
-        mutations = cls._detect_mutations(aligned_a, aligned_b)
+        mutations = cls._detect_mutations(aligned_a, aligned_b) if detect_mutations else []
         aln_len   = n_matches + n_mismatches + n_gaps
         identity  = n_matches / aln_len if aln_len else 0.0
         return AlignmentResult(

@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [3.1.0] — 2026-07-07
+
+**Optimización del mapeo (1/6).** El alineador puede saltar la detección de
+mutaciones cuando no se necesita.
+
+### Added
+- `SequenceAligner.align(..., detect_mutations=True)` — por defecto `True`
+  (compatible). Con `False`, no construye la lista de `Mutation` (identidad,
+  score, CIGAR y matches quedan igual).
+
+### Performance
+- El mapeador de genomas usa `detect_mutations=False` en la extensión (no las
+  necesita) → **~2,9 → ~2,3 ms/read** (~20% más rápido) en el micro-benchmark.
+
+---
+
 ## [3.0.0] — 2026-07-07
 
 **Level 4 — Genome mapper.** Un alineador de reads largos contra genomas al

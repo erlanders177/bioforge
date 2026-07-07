@@ -44,6 +44,23 @@ def _prot(seq: str, header: str = "h") -> PackedSequence:
 # §1  PROPIEDADES MATEMÁTICAS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def test_detect_mutations_flag():
+    """detect_mutations=False omite la lista de mutaciones sin tocar el resto."""
+    a = "ACGTACGTACGTACGTACGT"
+    b = "ACGTACGTTCGTACGTACGT"          # una sustitución
+    full = SequenceAligner.align(_nuc(a), _nuc(b))
+    fast = SequenceAligner.align(_nuc(a), _nuc(b), detect_mutations=False)
+    assert len(full.mutations) == 1
+    assert fast.mutations == []
+    # todo lo demás idéntico (identidad, score, matches)
+    assert fast.identity == full.identity
+    assert fast.score == full.score
+    assert fast.n_matches == full.n_matches
+    # y también en la ruta banded (la que usa el mapeador)
+    fastb = SequenceAligner.align(_nuc(a), _nuc(b), band=6, detect_mutations=False)
+    assert fastb.mutations == []
+
+
 def test_identical_sequences_perfect_score():
     """Dos secuencias idénticas → score máximo, identidad 1.0, 0 mutaciones."""
     seq = "ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCC"

@@ -308,7 +308,8 @@ def _extend(ref: str, read: str, ch: Chain) -> Optional[Mapping]:
     band = min(256, abs(len(ref_sub) - len(read_sub)) + 32)
     try:
         res = SequenceAligner.align(_pack(ref_sub), _pack(read_sub),
-                                    mode="global", band=band)
+                                    mode="global", band=band,
+                                    detect_mutations=False)   # el mapeo no las usa
         cigar, n_match, block = _cigar(res.aligned_a, res.aligned_b)
         identity = res.identity
     except Exception:                       # noqa: BLE001 — extensión best-effort
