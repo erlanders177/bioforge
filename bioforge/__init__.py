@@ -36,7 +36,7 @@ from .biocore import (
 from .genomemap import GenomeAligner, Mapping
 from .smart_translator import SmartTranslator
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [

@@ -9,7 +9,13 @@ import numpy as np
 import pytest
 
 from bioforge.biocore import SequenceValueError
-from bioforge.minimizers import MinimizerSketch, encode_bases, minimizers
+from bioforge.engine._loader import C_MINIMIZERS_AVAILABLE
+from bioforge.minimizers import (
+    MinimizerSketch,
+    _minimizers_numpy,
+    encode_bases,
+    minimizers,
+)
 
 _COMP = str.maketrans("ACGTacgt", "TGCAtgca")
 
@@ -121,6 +127,22 @@ def test_hash_canonico_es_el_menor():
 
 
 # ── Validación de argumentos ────────────────────────────────────────────────────
+
+@pytest.mark.skipif(not C_MINIMIZERS_AVAILABLE, reason="motor C no disponible")
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_c_igual_que_numpy(seed):
+    # El camino C y el fallback NumPy deben dar EXACTAMENTE lo mismo.
+    rng = np.random.default_rng(seed)
+    s = list("".join("ACGT"[i] for i in rng.integers(0, 4, 2000)))
+    for p in rng.integers(0, 2000, 25):        # unas cuantas N
+        s[p] = "N"
+    codes = encode_bases("".join(s))
+    c = minimizers(codes, k=15, w=10)          # ruta C (activa)
+    n = _minimizers_numpy(codes, 15, 10)       # fallback NumPy
+    assert np.array_equal(c.hashes, n.hashes)
+    assert np.array_equal(c.positions, n.positions)
+    assert np.array_equal(c.strands, n.strands)
+
 
 @pytest.mark.parametrize("k", [0, 32, -1])
 def test_k_invalido(k):

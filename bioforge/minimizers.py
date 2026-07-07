@@ -34,6 +34,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 from .biocore import SequenceValueError
+from .engine._loader import C_MINIMIZERS_AVAILABLE, c_minimizers
 
 # ── LUT ASCII → código 2-bit (A=0, C=1, G=2, T=3; cualquier otra cosa = 4) ──────
 _BASE_LUT = np.full(256, 4, dtype=np.uint8)
@@ -103,6 +104,16 @@ def minimizers(codes: np.ndarray, k: int = 15, w: int = 10) -> MinimizerSketch:
         raise SequenceValueError(f"w debe ser ≥ 1 (se recibió {w}).")
 
     codes = np.ascontiguousarray(codes, dtype=np.uint8)
+    # Motor C si está disponible (mucho más rápido en genomas grandes); si no,
+    # el fallback NumPy, que produce EXACTAMENTE lo mismo (verificado en tests).
+    if C_MINIMIZERS_AVAILABLE:
+        h, pos, strand = c_minimizers(codes, k, w)
+        return MinimizerSketch(h, pos, strand)
+    return _minimizers_numpy(codes, k, w)
+
+
+def _minimizers_numpy(codes: np.ndarray, k: int, w: int) -> MinimizerSketch:
+    """Fallback NumPy de :func:`minimizers` (idéntico al C bio_minimizers)."""
     L = codes.size
     n = L - k + 1                       # nº de k-mers en la secuencia
     if n <= 0:

@@ -18,6 +18,7 @@ _DLL_PATH   = _ENGINE_DIR / ("engine.dll" if sys.platform == "win32" else "engin
 _U8P  = ctypes.POINTER(ctypes.c_uint8)
 _I32P = ctypes.POINTER(ctypes.c_int32)
 _I64P = ctypes.POINTER(ctypes.c_int64)
+_U64P = ctypes.POINTER(ctypes.c_uint64)
 _F64P = ctypes.POINTER(ctypes.c_double)
 _I32  = ctypes.c_int32
 _I64  = ctypes.c_int64
@@ -222,11 +223,30 @@ def _check_chain() -> None:
         pass
 
 
+C_MINIMIZERS_AVAILABLE: bool = False
+
+def _check_minimizers() -> None:
+    """Minimizers (w,k) del alineador de genomas (v3). Opcional."""
+    global C_MINIMIZERS_AVAILABLE
+    if not C_AVAILABLE or _lib is None:
+        return
+    try:
+        _lib.bio_minimizers.restype = _I64
+        _lib.bio_minimizers.argtypes = [
+            _U8P, _I64, _I32, _I32,        # codes, n, k, w
+            _U64P, _I64P, _U8P,            # out_hash, out_pos, out_strand
+        ]
+        C_MINIMIZERS_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
 _check_parser()
 _check_batch()
 _check_parallel()
 _check_libdeflate()
 _check_chain()
+_check_minimizers()
 
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
@@ -345,6 +365,24 @@ def c_nw_banded(
         out_a.value.decode("ascii"), out_b.value.decode("ascii"),
         score.value, nm.value, nmi.value, ng.value,
     )
+
+
+def c_minimizers(codes: np.ndarray, k: int, w: int):
+    """Minimizers (w,k) canónicos en C. Devuelve (hashes, positions, strands)."""
+    codes = np.ascontiguousarray(codes, dtype=np.uint8)
+    n = int(codes.size)
+    nk = max(0, n - k + 1)
+    out_hash = np.empty(nk, dtype=np.uint64)
+    out_pos = np.empty(nk, dtype=np.int64)
+    out_strand = np.empty(nk, dtype=np.uint8)
+    cnt = _lib.bio_minimizers(
+        codes.ctypes.data_as(_U8P), _I64(n), _I32(int(k)), _I32(int(w)),
+        out_hash.ctypes.data_as(_U64P), out_pos.ctypes.data_as(_I64P),
+        out_strand.ctypes.data_as(_U8P),
+    )
+    if cnt < 0:
+        raise MemoryError("Motor C: fallo de memoria en minimizers")
+    return out_hash[:cnt], out_pos[:cnt], out_strand[:cnt]
 
 
 def c_chain_dp(xs: np.ndarray, ys: np.ndarray, k: int,

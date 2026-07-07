@@ -1579,3 +1579,87 @@ EXPORT void bio_chain_dp(const int64_t* x, const int64_t* y, int32_t n,
         prev[i] = bp;
     }
 }
+
+/* ── Minimizers (w,k) canónicos en C (alineador v3) ───────────────────────────
+   Réplica exacta del cálculo vectorizado de minimizers.py:
+     - k-mer directo/inverso por hash RODANTE (idéntico al Horner de NumPy),
+     - hash invertible _hash64 (mismo esquema), canónico = menor(hf,hr),
+     - mínimo por ventana deslizante de w k-mers (argmin más a la IZQUIERDA),
+     - dedup de posiciones consecutivas (== np.unique sobre pos no-decrecientes).
+   Escala a genomas donde sliding_window_view de NumPy se ahoga.
+
+   codes: uint8 2-bit (>=4 = base inválida). Salidas (tamaño ≥ n-k+1):
+   out_hash/out_pos/out_strand. Devuelve el nº de minimizers, o -1 si malloc. */
+static uint64_t _hash64_c(uint64_t x, uint64_t mask) {
+    x = x & mask;
+    x = (~x + (x << 21)) & mask;
+    x = x ^ (x >> 24);
+    x = ((x + (x << 3)) + (x << 8)) & mask;
+    x = x ^ (x >> 14);
+    x = ((x + (x << 2)) + (x << 4)) & mask;
+    x = x ^ (x >> 28);
+    x = (x + (x << 31)) & mask;
+    return x;
+}
+
+EXPORT int64_t bio_minimizers(const uint8_t* codes, int64_t n, int32_t k, int32_t w,
+                              uint64_t* out_hash, int64_t* out_pos,
+                              uint8_t* out_strand) {
+    int64_t nk = n - (int64_t)k + 1;
+    if (nk <= 0) return 0;
+
+    uint64_t* h  = (uint64_t*)malloc((size_t)nk * sizeof(uint64_t));
+    uint8_t*  st = (uint8_t*) malloc((size_t)nk * sizeof(uint8_t));
+    if (!h || !st) { free(h); free(st); return -1; }
+
+    const uint64_t SENT  = ~0ULL;
+    uint64_t mask  = (k >= 32) ? ~0ULL : ((1ULL << (2 * k)) - 1);
+    uint64_t shift = (uint64_t)(2 * (k - 1));
+    uint64_t fwd = 0, rev = 0;
+    int32_t  l = 0;                          /* bases válidas consecutivas */
+
+    for (int64_t i = 0; i < n; i++) {
+        uint8_t c = codes[i];
+        if (c < 4) {
+            uint64_t cc = c;
+            fwd = ((fwd << 2) | cc) & mask;
+            rev = (rev >> 2) | ((3ULL - cc) << shift);
+            l++;
+        } else {
+            l = 0; fwd = 0; rev = 0;
+        }
+        int64_t p = i - (int64_t)k + 1;       /* k-mer que termina en i */
+        if (p >= 0) {
+            if (l >= k) {
+                uint64_t hf = _hash64_c(fwd, mask);
+                uint64_t hr = _hash64_c(rev, mask);
+                if (hr < hf) { h[p] = hr; st[p] = 1; }
+                else         { h[p] = hf; st[p] = 0; }
+            } else {
+                h[p] = SENT; st[p] = 0;
+            }
+        }
+    }
+
+    int64_t count = 0, last = -1;
+    if (nk < w) {                             /* una sola ventana */
+        int64_t bi = 0;
+        for (int64_t j = 1; j < nk; j++) if (h[j] < h[bi]) bi = j;
+        if (h[bi] != SENT) {
+            out_hash[0] = h[bi]; out_pos[0] = bi; out_strand[0] = st[bi];
+            count = 1;
+        }
+    } else {
+        for (int64_t i = 0; i + w <= nk; i++) {
+            int64_t bi = i;                   /* argmin más a la izquierda */
+            for (int64_t j = i + 1; j < i + w; j++) if (h[j] < h[bi]) bi = j;
+            if (bi != last && h[bi] != SENT) {
+                out_hash[count] = h[bi]; out_pos[count] = bi;
+                out_strand[count] = st[bi];
+                count++; last = bi;
+            }
+        }
+    }
+    free(h); free(st);
+    return count;
+}

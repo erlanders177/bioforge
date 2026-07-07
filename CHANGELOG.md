@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [3.3.0] — 2026-07-07
+
+**Minimizers en C (3/6).** El cálculo de minimizers —el otro punto O(n·w) que
+quedaba en NumPy— pasa al motor C con hash rodante.
+
+### Performance
+- Indexar/muestrear una secuencia: **~17× más rápido** en 2 Mb (1219 → 70 ms).
+  Es lo que hacía falta para indexar genomas grandes sin ahogarse en memoria y
+  tiempo (`sliding_window_view` materializaba una vista (n, w)).
+
+### Added
+- `bio_minimizers` en el motor C (`C_MINIMIZERS_AVAILABLE`, `c_minimizers`).
+  Réplica exacta del cálculo NumPy (mismo hash, canónico y desempate) → C ==
+  fallback verificado con y sin bases N. `minimizers()` usa C si está; si no,
+  `_minimizers_numpy` (idéntico).
+
+---
+
 ## [3.2.0] — 2026-07-07
 
 **Mapeo por lotes en paralelo (2/6).**
