@@ -5,6 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [3.0.0] — 2026-07-07
+
+**Level 4 — Genome mapper.** Un alineador de reads largos contra genomas al
+estilo seed-chain-align (minimap2), que escala mucho más allá del DP O(m·n) del
+Level 3. Implementación propia desde cero de algoritmos publicados (ver
+`docs/references.md`).
+
+### Added
+- **`GenomeAligner.map(read)`** → mapeos en formato PAF, con hebra, identidad,
+  CIGAR y calidad de mapeo. API pública: `GenomeAligner`, `Mapping`.
+- **`minimizers.py`** — minimizers canónicos (w, k) vectorizados (hash invertible
+  estilo minimap2; exclusión de N; independiente de hebra).
+- **`refindex.py`** — índice de la referencia (tabla ordenada por hash +
+  `searchsorted`; filtrado de minimizers hiper-frecuentes vía `max_occ`).
+- **`genomemap.py`** — seeding (anclas en ambas hebras) → chaining (DP colineal)
+  → extensión banded (reutiliza el aligner) → salida PAF.
+- **Chaining DP en C** (`bio_chain_dp`) con fallback NumPy idéntico verificado.
+- `docs/references.md` — citación de las obras que inspiraron cada nivel.
+
+### Performance
+- Mapeo ~**9,4× más rápido** que la primera versión del chaining tras
+  vectorizar el bucle interno y portar el DP a C (14,5 → 2,9 ms/read en el
+  micro-benchmark de reads de 1000 bp; C 5× sobre NumPy).
+
+### Fixed
+- Scoring de cadenas secundarias: se calcula el score real del fragmento y se
+  suprimen solapamientos en el genoma (fragmentos redundantes del mismo locus).
+
+### Notes
+- Primera versión del Level 4: la extensión cubre la región de la cadena
+  (extremos soft-clipped) y la referencia es una sola secuencia. El benchmark
+  frente a herramientas de referencia y el mapeo por lotes en paralelo quedan
+  para 3.x.
+
+---
+
 ## [2.3.0] — 2026-06-30
 
 **Wheels nativos multiplataforma.** El motor C ahora se compila para Windows,

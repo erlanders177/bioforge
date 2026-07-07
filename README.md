@@ -234,6 +234,26 @@ for mut in result.mutations:
 # Mutation(kind='substitution', pos_a=18, pos_b=18, sym_a='A', sym_b='T')
 ```
 
+### Map long reads to a genome (Level 4 — seed-chain-align)
+
+Locate reads in a reference far beyond what the O(m·n) aligner can handle,
+minimap2-style: minimizer seeding → chaining (C DP) → banded extension.
+
+```python
+from bioforge import GenomeAligner
+
+mapper = GenomeAligner(reference_sequence, k=15, w=10)   # builds the index once
+
+for m in mapper.map(read):
+    print(m.to_paf())                # standard PAF, one line per mapping
+    # read1  1000  0  1000  +  chr1  4600000  733120  734118  980  998  60 ...
+    print(m.strand, m.target_start, f"{m.identity:.1%}")
+```
+
+Handles both strands, tolerates mismatches/indels, and reports a mapping
+quality. The chaining dynamic program runs in the C engine (with a NumPy
+fallback).
+
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
@@ -399,6 +419,29 @@ python check.py
 - [x] BGZF parallel-decompressible `.gz` + converter — `bioforge-bgzip`
 - [ ] Native per-platform wheels on PyPI (cibuildwheel)
 - [ ] Long-read / genome-scale aligner (k-mer seeding)
+
+---
+
+## References & inspiration
+
+BioForge's genome mapper (Level 4) is an **independent, from-scratch
+implementation** of well-established, published algorithms. No third-party
+source code is included or copied — only the *ideas* from the scientific
+literature, which is what publishing them is for. With gratitude to:
+
+- **Minimap2** — Li, H. (2018). *Minimap2: pairwise alignment for nucleotide
+  sequences.* Bioinformatics, 34(18), 3094–3100. The seed-chain-align strategy
+  and the chaining dynamic program that inspired `genomemap.py`.
+  ([paper](https://doi.org/10.1093/bioinformatics/bty191) ·
+  [MIT-licensed source](https://github.com/lh3/minimap2))
+- **Minimizers** — Roberts, M., Hayes, W., Hunt, B. R., Mount, S. M., &
+  Yorke, J. A. (2004). *Reducing storage requirements for biological sequence
+  comparison.* Bioinformatics, 20(18), 3363–3369. The (w, k) minimizer sampling
+  behind `minimizers.py`.
+- **Needleman–Wunsch** (1970) and **Smith–Waterman** (1981) — the classic
+  dynamic-programming alignments behind Level 3.
+
+BioForge is not affiliated with or endorsed by the authors of the above.
 
 ---
 
