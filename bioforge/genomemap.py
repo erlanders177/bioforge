@@ -31,7 +31,6 @@ en Python ya es correcto y rápido para el nº de anclas habitual.
 
 from __future__ import annotations
 
-import math
 from typing import NamedTuple, Optional
 
 import numpy as np
@@ -114,37 +113,42 @@ def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
     if n == 0:
         return []
     order = np.lexsort((y, x))          # ordenar por x, luego y
-    xs, ys = x[order], y[order]
+    xs = x[order].astype(np.int64)
+    ys = y[order].astype(np.int64)
 
     f = np.full(n, float(k), dtype=np.float64)
     prev = np.full(n, -1, dtype=np.int64)
+    kf = float(k)
+    # DP: el bucle EXTERNO es secuencial (f[i] depende de f[j<i]); el INTERNO
+    # sobre la ventana de predecesores va VECTORIZADO (aquí estaba el 92% del
+    # tiempo cuando era un for Python con min/abs por par de anclas).
     for i in range(n):
-        xi, yi = xs[i], ys[i]
-        best, bp = float(k), -1
-        lo = max(0, i - _WINDOW)
-        for j in range(i - 1, lo - 1, -1):
-            dx = xi - xs[j]
-            if dx > _MAX_GAP:
-                break                    # xs ordenado → más atrás aún más lejos
-            dy = yi - ys[j]
-            if dy <= 0 or dx <= 0 or dy > _MAX_GAP:
-                continue
-            gap = abs(int(dx) - int(dy))
-            if gap > _MAX_GAP:
-                continue
-            match = min(k, int(dx), int(dy))
-            cost = _GAP_W * gap + (math.log2(gap + 1) if gap else 0.0)
-            sc = f[j] + match - cost
-            if sc > best:
-                best, bp = sc, j
-        f[i], prev[i] = best, bp
+        lo = i - _WINDOW
+        if lo < 0:
+            lo = 0
+        if lo == i:                      # i == 0: sin predecesores
+            continue
+        dx = xs[i] - xs[lo:i]
+        dy = ys[i] - ys[lo:i]
+        gap = np.abs(dx - dy)
+        valid = ((dx > 0) & (dy > 0) & (dx <= _MAX_GAP)
+                 & (dy <= _MAX_GAP) & (gap <= _MAX_GAP))
+        if not valid.any():
+            continue
+        match = np.minimum(np.minimum(dx, dy), k).astype(np.float64)
+        logterm = np.where(gap > 0, np.log2(gap + 1.0), 0.0)
+        sc = np.where(valid, f[lo:i] + match - (_GAP_W * gap + logterm), -np.inf)
+        # en empate, el predecesor MÁS CERCANO (mayor j) → cadenas compactas
+        b = sc.size - 1 - int(sc[::-1].argmax())
+        if sc[b] > kf:
+            f[i], prev[i] = float(sc[b]), lo + b
 
     # Backtrack de cadenas no solapadas, por score descendente.
     used = np.zeros(n, dtype=bool)
     paths: list[tuple] = []
     for start in np.argsort(-f):
         if f[start] < min_score:
-            break
+            break                                # f desc: el resto también cae
         if used[start]:
             continue
         path = []
@@ -153,9 +157,14 @@ def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
             used[i] = True
             path.append(i)
             i = int(prev[i])
-        if len(path) >= _MIN_ANCHORS:
+        # Score REAL del fragmento extraído: f[start] menos el score acumulado
+        # hasta el punto donde se cortó (una ancla ya usada, o el inicio). Sin
+        # esto, un fragmento corto (cola de otra cadena) heredaría el score
+        # inflado de la cadena larga.
+        frag = float(f[start]) - (float(f[i]) if i != -1 else 0.0)
+        if len(path) >= _MIN_ANCHORS and frag >= min_score:
             path.reverse()                       # de inicio a fin
-            paths.append((float(f[start]), order[np.array(path)]))
+            paths.append((frag, order[np.array(path)]))
     return paths
 
 
@@ -188,7 +197,25 @@ def chain(anchors: Anchors, min_score: float = 40.0) -> list[Chain]:
                 anchor_ref=a_ref, anchor_read=a_read,
             ))
     out.sort(key=lambda c: c.score, reverse=True)
-    return out
+
+    # Supresión de solapamientos: una cadena de menor score que solapa >50% en
+    # el GENOMA con una ya aceptada (misma hebra) es un fragmento redundante del
+    # mismo locus → se descarta. Loci distintos (copias) tienen spans separados
+    # y se conservan ambos.
+    kept: list[Chain] = []
+    for c in out:
+        redundant = False
+        for kc in kept:
+            if c.strand != kc.strand:
+                continue
+            inter = min(c.ref_end, kc.ref_end) - max(c.ref_start, kc.ref_start)
+            shorter = min(c.ref_end - c.ref_start, kc.ref_end - kc.ref_start)
+            if shorter > 0 and inter > 0.5 * shorter:
+                redundant = True
+                break
+        if not redundant:
+            kept.append(c)
+    return kept
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -236,30 +263,23 @@ def _cigar(aln_ref: str, aln_read: str) -> tuple[str, int, int]:
     aln_ref/aln_read llevan '-' en los huecos. M=col sin hueco, I=inserción
     en el read (hueco en ref), D=deleción (hueco en el read).
     """
-    ops: list[str] = []
-    n_match = 0
-    for a, b in zip(aln_ref, aln_read, strict=True):
-        if a != "-" and b != "-":
-            op = "M"
-            if a == b:
-                n_match += 1
-        elif a == "-":
-            op = "I"
-        else:
-            op = "D"
-        ops.append(op)
-    # run-length encode
-    if not ops:
+    a = np.frombuffer(aln_ref.encode("ascii"), dtype=np.uint8)
+    b = np.frombuffer(aln_read.encode("ascii"), dtype=np.uint8)
+    if a.size == 0:
         return "", 0, 0
-    parts, run, cur = [], 1, ops[0]
-    for op in ops[1:]:
-        if op == cur:
-            run += 1
-        else:
-            parts.append(f"{run}{cur}")
-            cur, run = op, 1
-    parts.append(f"{run}{cur}")
-    return "".join(parts), n_match, len(ops)
+    gap = np.uint8(ord("-"))
+    ag, bg = a == gap, b == gap
+    n_match = int(np.count_nonzero(~ag & ~bg & (a == b)))
+    # op: 0=M, 1=I (hueco en ref), 2=D (hueco en el read)  — vectorizado
+    op = np.where(ag, 1, np.where(bg, 2, 0)).astype(np.int8)
+    change = np.ones(op.size, dtype=bool)
+    change[1:] = op[1:] != op[:-1]
+    starts = np.flatnonzero(change)
+    runs = np.diff(np.append(starts, op.size))
+    # el join recorre solo los TRAMOS (pocos), no las columnas
+    cigar = "".join(f"{int(r)}{'MID'[int(op[s])]}"
+                    for r, s in zip(runs, starts, strict=True))
+    return cigar, n_match, int(op.size)
 
 
 def _extend(ref: str, read: str, ch: Chain) -> Optional[Mapping]:
