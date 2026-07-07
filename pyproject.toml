@@ -84,12 +84,16 @@ test-requires = "numpy"
 test-command = "python {project}/tools/ci_check.py"
 
 [tool.cibuildwheel.linux]
+# Imagen manylinux_2_28 (AlmaLinux 8, con soporte): manylinux2014 (CentOS 7,
+# glibc 2.17) es EOL y numpy ya no publica wheels para él → pip intentaba
+# compilar numpy desde fuente y fallaba. glibc 2.28 cubre cualquier Linux ≥2018.
+manylinux-x86_64-image = "manylinux_2_28"
 # zlib-devel da las cabeceras; libgomp (con gcc) se enlaza ESTÁTICO en el .so
 # (ver build.py BIOFORGE_STATIC). El .so queda autocontenido salvo libs de la
 # lista blanca de manylinux → no hace falta auditwheel: lo saltamos y
-# etiquetamos manylinux2014 nosotros (BIOFORGE_MANYLINUX, ver setup.py).
-before-all = "yum install -y zlib-devel || true"
-environment = { BIOFORGE_MANYLINUX = "manylinux2014_x86_64" }
+# etiquetamos manylinux nosotros (BIOFORGE_MANYLINUX, ver setup.py).
+before-all = "yum install -y zlib-devel || dnf install -y zlib-devel || true"
+environment = { BIOFORGE_MANYLINUX = "manylinux_2_28_x86_64" }
 repair-wheel-command = ""                 # .so autocontenido → sin "repair"
 
 [tool.cibuildwheel.macos]
