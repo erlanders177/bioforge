@@ -31,6 +31,8 @@ en Python ya es correcto y rápido para el nº de anclas habitual.
 
 from __future__ import annotations
 
+import os
+from multiprocessing import Pool
 from typing import NamedTuple, Optional
 
 import numpy as np
@@ -337,6 +339,21 @@ def _mapq(chains: list[Chain], i: int) -> int:
     return int(max(0, min(60, round(60 * (1.0 - ratio)))))
 
 
+# ── Workers de multiprocessing (a nivel de módulo → picklables) ─────────────────
+_MP_ALIGNER: "Optional[GenomeAligner]" = None
+
+
+def _mp_init(aligner: "GenomeAligner") -> None:
+    """Inicializador de cada proceso: guarda el índice (se pasa una vez)."""
+    global _MP_ALIGNER
+    _MP_ALIGNER = aligner
+
+
+def _mp_worker(args) -> "list[Mapping]":
+    read, min_chain_score, max_hits = args
+    return _MP_ALIGNER.map(read, min_chain_score, max_hits)
+
+
 class GenomeAligner:
     """Mapeador de reads contra una referencia (seed-chain-align)."""
 
@@ -363,3 +380,31 @@ class GenomeAligner:
             if mp is not None:
                 mappings.append(mp._replace(mapq=_mapq(chains, i)))
         return mappings
+
+    def map_batch(self, reads, n_processes: int = 0,
+                  min_chain_score: float = 40.0,
+                  max_hits: int = 5) -> list[list[Mapping]]:
+        """Mapea muchos reads en PARALELO → lista de listas de Mapping.
+
+        Los reads son independientes (paralelismo perfecto). Usa procesos
+        (multiprocessing) porque el GIL impide que los hilos escalen: el trabajo
+        por read es mayoritariamente Python. El índice se pasa una vez a cada
+        proceso; el orden de salida coincide con el de ``reads``.
+
+        ``n_processes``: 0 = todos los núcleos · 1 = secuencial · N = N procesos.
+
+        Nota (Windows/macOS): el script que lo llame debe estar protegido por
+        ``if __name__ == "__main__":`` (requisito de multiprocessing). Si el
+        arranque de procesos falla, cae a secuencial con gracia.
+        """
+        reads = list(reads)
+        if n_processes == 1 or len(reads) <= 1:
+            return [self.map(r, min_chain_score, max_hits) for r in reads]
+        nt = (os.cpu_count() or 1) if n_processes <= 0 else n_processes
+        args = [(r, min_chain_score, max_hits) for r in reads]
+        chunk = max(1, len(reads) // (nt * 4))
+        try:
+            with Pool(processes=nt, initializer=_mp_init, initargs=(self,)) as pool:
+                return pool.map(_mp_worker, args, chunksize=chunk)
+        except Exception:                       # noqa: BLE001 — fallback secuencial
+            return [self.map(r, min_chain_score, max_hits) for r in reads]

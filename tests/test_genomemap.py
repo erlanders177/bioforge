@@ -129,6 +129,23 @@ def test_copias_multiples():
 
 # ── Salida PAF ──────────────────────────────────────────────────────────────────
 
+def test_map_batch_igual_que_secuencial():
+    genoma = _rng_seq(30_000, 20)
+    ga = GenomeAligner(genoma, k=15, w=10)
+    reads = [genoma[o : o + 400] for o in (1000, 5000, 12000, 20000)]
+    seq = [ga.map(r) for r in reads]
+
+    # ruta secuencial de la API (n_processes=1)
+    b1 = ga.map_batch(reads, n_processes=1)
+    assert [len(x) for x in b1] == [len(x) for x in seq]
+
+    # ruta paralela (procesos): mismo resultado y mismo orden
+    b2 = ga.map_batch(reads, n_processes=2)
+    assert len(b2) == len(reads)
+    for got, exp in zip(b2, seq, strict=True):
+        assert [m.target_start for m in got] == [m.target_start for m in exp]
+
+
 def test_formato_paf():
     genoma = _rng_seq(30_000, 16)
     ga = GenomeAligner(genoma, k=15, w=10)

@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [3.2.0] — 2026-07-07
+
+**Mapeo por lotes en paralelo (2/6).**
+
+### Added
+- `GenomeAligner.map_batch(reads, n_processes=0)` → mapea muchos reads en
+  paralelo (0 = todos los núcleos · 1 = secuencial · N = N procesos). Usa
+  **procesos** (multiprocessing): con hilos el GIL no deja escalar porque el
+  trabajo por read es mayoritariamente Python (medido: 1.0× con hilos). El
+  índice se pasa una vez a cada proceso; el orden de salida se conserva; cae a
+  secuencial con gracia si el arranque de procesos falla.
+
+### Performance
+- ~**1.6×** en 4 núcleos (2000 reads de 1000 bp). Escala con más reads, reads
+  más largos y más núcleos (el arranque de procesos se amortiza).
+
+### Notes
+- Requisito de multiprocessing: el script que llame a `map_batch` con
+  `n_processes != 1` debe estar bajo `if __name__ == "__main__":`.
+
+---
+
 ## [3.1.0] — 2026-07-07
 
 **Optimización del mapeo (1/6).** El alineador puede saltar la detección de
