@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [3.4.0] — 2026-07-07
+
+**Coste de hueco del chaining, fórmula de minimap2 (4/6).**
+
+### Changed
+- La penalización por hueco del chaining pasa a `γ(l) = 0.01·k·|l| + 0.5·log₂|l|`
+  (Li 2018), en vez de la aproximación anterior (`0.2·gap + log₂(gap+1)`). Mejora
+  la precisión al encadenar anclas con indels. Aplicado por igual en el motor C
+  y en el fallback NumPy → siguen dando el mismo resultado (verificado, f_diff 0).
+
+---
+
 ## [3.3.0] — 2026-07-07
 
 **Minimizers en C (3/6).** El cálculo de minimizers —el otro punto O(n·w) que

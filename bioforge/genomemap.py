@@ -101,16 +101,17 @@ class Chain(NamedTuple):
 # Parámetros de chaining (razonables; ajustables).
 _MAX_GAP = 5000      # distancia máxima entre anclas consecutivas
 _WINDOW  = 64        # nº de predecesores que se examinan por ancla
-_GAP_W   = 0.2       # peso lineal de la penalización por hueco
+_GAP_COEF = 0.01     # coste lineal de hueco = 0.01·k (fórmula de minimap2)
 _MIN_ANCHORS = 2
 
 
-def _chain_fill_numpy(xs: np.ndarray, ys: np.ndarray, k: int):
+def _chain_fill_numpy(xs: np.ndarray, ys: np.ndarray, k: int, gap_w: float):
     """Fallback NumPy del DP de chaining (idéntico al C bio_chain_dp).
 
     Bucle EXTERNO secuencial (f[i] depende de f[j<i]); bucle INTERNO sobre la
     ventana de predecesores vectorizado. En empate gana el predecesor más
-    cercano (mismo desempate que el C).
+    cercano (mismo desempate que el C). Coste de hueco estilo minimap2:
+    ``gap_w·|l| + 0.5·log2|l|``.
     """
     n = xs.size
     f = np.full(n, float(k), dtype=np.float64)
@@ -130,8 +131,8 @@ def _chain_fill_numpy(xs: np.ndarray, ys: np.ndarray, k: int):
         if not valid.any():
             continue
         match = np.minimum(np.minimum(dx, dy), k).astype(np.float64)
-        logterm = np.where(gap > 0, np.log2(gap + 1.0), 0.0)
-        sc = np.where(valid, f[lo:i] + match - (_GAP_W * gap + logterm), -np.inf)
+        logterm = np.where(gap > 0, 0.5 * np.log2(np.maximum(gap, 1)), 0.0)
+        sc = np.where(valid, f[lo:i] + match - (gap_w * gap + logterm), -np.inf)
         b = sc.size - 1 - int(sc[::-1].argmax())   # empate → predecesor cercano
         if sc[b] > kf:
             f[i], prev[i] = float(sc[b]), lo + b
@@ -153,11 +154,12 @@ def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
     ys = np.ascontiguousarray(y[order], dtype=np.int64)
 
     # Relleno del DP: C si está disponible (10-50× más rápido), si no NumPy.
+    gap_w = _GAP_COEF * k                     # 0.01·k (coste de hueco minimap2)
     if C_CHAIN_AVAILABLE:
-        f, prev = c_chain_dp(xs, ys, k, _MAX_GAP, _WINDOW, _GAP_W)
+        f, prev = c_chain_dp(xs, ys, k, _MAX_GAP, _WINDOW, gap_w)
         prev = prev.astype(np.int64)
     else:
-        f, prev = _chain_fill_numpy(xs, ys, k)
+        f, prev = _chain_fill_numpy(xs, ys, k, gap_w)
 
     # Backtrack de cadenas no solapadas, por score descendente.
     used = np.zeros(n, dtype=bool)

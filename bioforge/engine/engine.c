@@ -1570,8 +1570,9 @@ EXPORT void bio_chain_dp(const int64_t* x, const int64_t* y, int32_t n,
             if (gap > max_gap) continue;
             int64_t mn = (dx < dy) ? dx : dy;
             double match = (double)((mn < (int64_t)k) ? mn : (int64_t)k);
+            /* coste de hueco estilo minimap2: gap_w·|l| + 0.5·log2|l| (l≠0) */
             double cost  = gap_w * (double)gap;
-            if (gap > 0) cost += log2((double)gap + 1.0);
+            if (gap > 0) cost += 0.5 * log2((double)gap);
             double sc = f[j] + match - cost;
             if (sc > best) { best = sc; bp = j; }
         }
