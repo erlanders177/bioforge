@@ -37,6 +37,7 @@ import numpy as np
 
 from .aligner import SequenceAligner
 from .biocore import SeqType, SmartImporter
+from .engine._loader import C_CHAIN_AVAILABLE, c_chain_dp
 from .minimizers import encode_bases, minimizers
 from .refindex import ReferenceIndex
 
@@ -102,26 +103,17 @@ _GAP_W   = 0.2       # peso lineal de la penalización por hueco
 _MIN_ANCHORS = 2
 
 
-def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
-               min_score: float) -> list[tuple]:
-    """DP de chaining sobre un conjunto de anclas de UNA hebra.
+def _chain_fill_numpy(xs: np.ndarray, ys: np.ndarray, k: int):
+    """Fallback NumPy del DP de chaining (idéntico al C bio_chain_dp).
 
-    x = ref_pos, y = coordenada de chaining (ambas crecen a lo largo de una
-    alineación válida). Devuelve caminos (listas de índices) por score desc.
+    Bucle EXTERNO secuencial (f[i] depende de f[j<i]); bucle INTERNO sobre la
+    ventana de predecesores vectorizado. En empate gana el predecesor más
+    cercano (mismo desempate que el C).
     """
-    n = x.size
-    if n == 0:
-        return []
-    order = np.lexsort((y, x))          # ordenar por x, luego y
-    xs = x[order].astype(np.int64)
-    ys = y[order].astype(np.int64)
-
+    n = xs.size
     f = np.full(n, float(k), dtype=np.float64)
     prev = np.full(n, -1, dtype=np.int64)
     kf = float(k)
-    # DP: el bucle EXTERNO es secuencial (f[i] depende de f[j<i]); el INTERNO
-    # sobre la ventana de predecesores va VECTORIZADO (aquí estaba el 92% del
-    # tiempo cuando era un for Python con min/abs por par de anclas).
     for i in range(n):
         lo = i - _WINDOW
         if lo < 0:
@@ -138,10 +130,32 @@ def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
         match = np.minimum(np.minimum(dx, dy), k).astype(np.float64)
         logterm = np.where(gap > 0, np.log2(gap + 1.0), 0.0)
         sc = np.where(valid, f[lo:i] + match - (_GAP_W * gap + logterm), -np.inf)
-        # en empate, el predecesor MÁS CERCANO (mayor j) → cadenas compactas
-        b = sc.size - 1 - int(sc[::-1].argmax())
+        b = sc.size - 1 - int(sc[::-1].argmax())   # empate → predecesor cercano
         if sc[b] > kf:
             f[i], prev[i] = float(sc[b]), lo + b
+    return f, prev
+
+
+def _chain_one(x: np.ndarray, y: np.ndarray, k: int,
+               min_score: float) -> list[tuple]:
+    """DP de chaining sobre un conjunto de anclas de UNA hebra.
+
+    x = ref_pos, y = coordenada de chaining (ambas crecen a lo largo de una
+    alineación válida). Devuelve caminos (listas de índices) por score desc.
+    """
+    n = x.size
+    if n == 0:
+        return []
+    order = np.lexsort((y, x))          # ordenar por x, luego y
+    xs = np.ascontiguousarray(x[order], dtype=np.int64)
+    ys = np.ascontiguousarray(y[order], dtype=np.int64)
+
+    # Relleno del DP: C si está disponible (10-50× más rápido), si no NumPy.
+    if C_CHAIN_AVAILABLE:
+        f, prev = c_chain_dp(xs, ys, k, _MAX_GAP, _WINDOW, _GAP_W)
+        prev = prev.astype(np.int64)
+    else:
+        f, prev = _chain_fill_numpy(xs, ys, k)
 
     # Backtrack de cadenas no solapadas, por score descendente.
     used = np.zeros(n, dtype=bool)

@@ -17,8 +17,11 @@ _DLL_PATH   = _ENGINE_DIR / ("engine.dll" if sys.platform == "win32" else "engin
 # ── Tipos ctypes frecuentes ────────────────────────────────────────────────────
 _U8P  = ctypes.POINTER(ctypes.c_uint8)
 _I32P = ctypes.POINTER(ctypes.c_int32)
+_I64P = ctypes.POINTER(ctypes.c_int64)
+_F64P = ctypes.POINTER(ctypes.c_double)
 _I32  = ctypes.c_int32
 _I64  = ctypes.c_int64
+_F64  = ctypes.c_double
 _CHARP = ctypes.c_char_p
 
 # ── Carga del DLL ──────────────────────────────────────────────────────────────
@@ -200,10 +203,30 @@ def _check_libdeflate() -> None:
         pass
 
 
+C_CHAIN_AVAILABLE: bool = False
+
+def _check_chain() -> None:
+    """DP de chaining del alineador de genomas (v3). Opcional."""
+    global C_CHAIN_AVAILABLE
+    if not C_AVAILABLE or _lib is None:
+        return
+    try:
+        _lib.bio_chain_dp.restype = None
+        _lib.bio_chain_dp.argtypes = [
+            _I64P, _I64P, _I32,        # x, y, n
+            _I32, _I64, _I32, _F64,    # k, max_gap, window, gap_w
+            _F64P, _I32P,              # f (out), prev (out)
+        ]
+        C_CHAIN_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
 _check_parser()
 _check_batch()
 _check_parallel()
 _check_libdeflate()
+_check_chain()
 
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
@@ -322,6 +345,23 @@ def c_nw_banded(
         out_a.value.decode("ascii"), out_b.value.decode("ascii"),
         score.value, nm.value, nmi.value, ng.value,
     )
+
+
+def c_chain_dp(xs: np.ndarray, ys: np.ndarray, k: int,
+               max_gap: int, window: int, gap_w: float):
+    """DP de chaining en C. Rellena y devuelve (f, prev).
+
+    ``xs``/``ys`` deben ser int64 contiguos y estar ordenados por (x, y).
+    """
+    n = int(xs.size)
+    f = np.empty(n, dtype=np.float64)
+    prev = np.empty(n, dtype=np.int32)
+    _lib.bio_chain_dp(
+        xs.ctypes.data_as(_I64P), ys.ctypes.data_as(_I64P), _I32(n),
+        _I32(int(k)), _I64(int(max_gap)), _I32(int(window)), _F64(float(gap_w)),
+        f.ctypes.data_as(_F64P), prev.ctypes.data_as(_I32P),
+    )
+    return f, prev
 
 
 def c_parser_open(path: str) -> int:

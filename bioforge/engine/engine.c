@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 /* ── Lectura de archivos: gzip transparente si se compila con -DBIO_USE_ZLIB ──
    zlib gzopen/gzread leen tanto archivos planos como .gz (autodetección del
@@ -1535,4 +1536,46 @@ EXPORT int32_t bio_parse_mem_parallel(
     }
     free(outs);
     return (rc != 0) ? rc : total_rec;
+}
+
+/* ── Chaining DP (alineador v3) ───────────────────────────────────────────────
+   Rellena f[] (mejor score de cadena que TERMINA en i) y prev[] (predecesor)
+   para anclas ordenadas ascendentemente por (x, y). El backtracking y la
+   supresión de solapamientos se hacen en Python (baratos, O(n)).
+
+   x, y     : posiciones de las anclas (ref y coord. de chaining), int64.
+   n        : nº de anclas.  k : peso del ancla (longitud del k-mer).
+   max_gap  : distancia máxima entre anclas encadenables.
+   window   : nº de predecesores examinados por ancla.
+   gap_w    : peso lineal de la penalización por hueco.
+
+   Réplica exacta del DP vectorizado de genomemap.py (misma fórmula y mismo
+   desempate: al iterar j de i-1 hacia abajo con `>` estricto, en empate gana
+   el predecesor MÁS CERCANO). Así el resultado C == fallback NumPy. */
+EXPORT void bio_chain_dp(const int64_t* x, const int64_t* y, int32_t n,
+                         int32_t k, int64_t max_gap, int32_t window,
+                         double gap_w, double* f, int32_t* prev) {
+    for (int32_t i = 0; i < n; i++) {
+        double  best = (double)k;
+        int32_t bp   = -1;
+        int32_t lo   = i - window;
+        if (lo < 0) lo = 0;
+        for (int32_t j = i - 1; j >= lo; j--) {
+            int64_t dx = x[i] - x[j];
+            if (dx > max_gap) break;              /* ordenado → resto aún más lejos */
+            int64_t dy = y[i] - y[j];
+            if (dy <= 0 || dx <= 0 || dy > max_gap) continue;
+            int64_t gap = dx - dy;
+            if (gap < 0) gap = -gap;
+            if (gap > max_gap) continue;
+            int64_t mn = (dx < dy) ? dx : dy;
+            double match = (double)((mn < (int64_t)k) ? mn : (int64_t)k);
+            double cost  = gap_w * (double)gap;
+            if (gap > 0) cost += log2((double)gap + 1.0);
+            double sc = f[j] + match - cost;
+            if (sc > best) { best = sc; bp = j; }
+        }
+        f[i]    = best;
+        prev[i] = bp;
+    }
 }
