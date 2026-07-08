@@ -9,16 +9,23 @@ Ejecutar:
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays as np_arrays
 
 from bioforge import (
-    BitPacker, BioCode, PackedSequence, SeqType,
-    SmartImporter, compute_stats, NUC_LUT, AA_LUT,
-    BioForgeError, SequenceTypeError, SequenceValueError,
+    AA_LUT,
+    NUC_LUT,
+    BioCode,
+    BioForgeError,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceTypeError,
+    SequenceValueError,
+    SmartImporter,
+    compute_stats,
 )
-
 
 # ── Estrategias Hypothesis ─────────────────────────────────────────────────────
 
@@ -247,7 +254,6 @@ def test_igualdad_secuencias_distintas():
 
 def test_compute_stats_composicion():
     """compute_stats debe contar correctamente la composición de bases."""
-    from bioforge import compute_stats
     fasta = ">test\nAAAACCGT\n"
     seq   = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
     stats = compute_stats(seq)

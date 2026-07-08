@@ -38,7 +38,13 @@ from typing import NamedTuple, Optional
 import numpy as np
 
 from .aligner import SequenceAligner
-from .biocore import SeqType, SmartImporter
+from .biocore import (
+    AlignmentError,
+    SeqType,
+    SequenceTypeError,
+    SequenceValueError,
+    SmartImporter,
+)
 from .engine._loader import C_CHAIN_AVAILABLE, c_chain_dp
 from .minimizers import encode_bases, minimizers
 from .refindex import ReferenceIndex
@@ -335,15 +341,17 @@ def _extend(ref: str, read: str, ch: Chain, k: int,
     if not ref_sub or not read_sub:
         return None
 
-    band = min(256, abs(len(ref_sub) - len(read_sub)) + 32)
+    band = min(512, abs(len(ref_sub) - len(read_sub)) + 64)
     try:
         res = SequenceAligner.align(_pack(ref_sub), _pack(read_sub),
                                     mode="global", band=band,
                                     detect_mutations=False)   # el mapeo no las usa
-        cigar, n_match, block = _cigar(res.aligned_a, res.aligned_b)
-        identity = res.identity
-    except Exception:                       # noqa: BLE001 — extensión best-effort
-        cigar, n_match, block, identity = None, ch.n_anchors * k, re - rs, 1.0
+    except (AlignmentError, MemoryError):
+        # Extensión fallida (banda insuficiente, etc.): SIN mapeo. Nunca
+        # inventar identidad — un 100% falso es peor que no reportar nada.
+        return None
+    cigar, n_match, block = _cigar(res.aligned_a, res.aligned_b)
+    identity = res.identity
 
     # coords de query en el read ORIGINAL (hacia delante), aun en hebra inversa
     if ch.strand == 0:
@@ -403,6 +411,10 @@ class GenomeAligner:
     def __init__(self, reference, k: int = 15, w: int = 10,
                  max_occ: Optional[int] = 50, name: str = "ref"):
         contigs = self._normalize(reference, name)      # [(nombre, seq), ...]
+        if not contigs:
+            raise SequenceValueError("La referencia no contiene ninguna secuencia.")
+        if sum(len(s) for _, s in contigs) == 0:
+            raise SequenceValueError("La referencia está vacía.")
         sep = "N" * k                                   # rompe k-meros de frontera
         parts: list[str] = []
         self._names: list[str] = []
@@ -430,7 +442,13 @@ class GenomeAligner:
             return [(name, reference)]
         if isinstance(reference, dict):
             return list(reference.items())
-        return [(n, s) for n, s in reference]           # iterable de pares
+        try:
+            return [(n, s) for n, s in reference]       # iterable de pares
+        except (TypeError, ValueError) as exc:
+            raise SequenceTypeError(
+                "reference debe ser str, dict {nombre: secuencia} o un iterable "
+                f"de pares (nombre, secuencia); se recibió "
+                f"{type(reference).__name__!r}.") from exc
 
     @property
     def k(self) -> int:
@@ -459,6 +477,9 @@ class GenomeAligner:
     def map(self, read: str, min_chain_score: float = 40.0,
             max_hits: int = 5) -> list[Mapping]:
         """Mapea un read → lista de Mapping (primaria primero)."""
+        if not isinstance(read, str):
+            raise SequenceTypeError(
+                f"read debe ser str, se recibió {type(read).__name__!r}.")
         read = read.upper()
         anchors = seed(self.index, encode_bases(read))
         chains = chain(anchors, min_score=min_chain_score)[:max_hits]

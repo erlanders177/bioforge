@@ -21,10 +21,18 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from bioforge import BitPacker, PackedSequence, SeqType, SmartImporter
-from bioforge import BioForgeError, SequenceTypeError, SequenceValueError, AlignmentError
-from bioforge import AlignmentResult, Mutation, SequenceAligner, format_alignment
-
+from bioforge import (
+    AlignmentError,
+    AlignmentResult,
+    BioForgeError,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceAligner,
+    SequenceTypeError,
+    SmartImporter,
+    format_alignment,
+)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

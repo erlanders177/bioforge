@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [4.0.1] — 2026-07-08
+
+**Robustez y sistema de errores del mapeador** (antes de llevar la tubería a C).
+
+### Fixed
+- **La extensión ya no inventa `identity=1.0`** cuando la alineación falla:
+  devuelve "sin mapeo" (un 100% falso es peor que no reportar nada). El
+  `except` se acota a `(AlignmentError, MemoryError)` — antes capturaba
+  cualquier excepción y ocultaba bugs. Más holgura en la banda de la extensión.
+
+### Changed
+- **Sistema de errores unificado en el mapeador (regla #8):** las entradas
+  inválidas lanzan subclases de `BioForgeError` en vez de errores crudos de
+  Python. `SequenceTypeError` (read no-`str`, referencia de tipo inválido) y
+  `SequenceValueError` (referencia vacía / sin contigs).
+
+### Tests
+- +tests de robustez: reads en los extremos del genoma, que sobresalen, y
+  degenerados (vacío / < k / todo N); jerarquía de errores capturable como
+  `BioForgeError`. Limpieza de linter en la suite. 344 tests.
+
+---
+
 ## [4.0.0] — 2026-07-08
 
 **El mapeador de genomas, usable en datos reales.** Referencias

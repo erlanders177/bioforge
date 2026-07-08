@@ -8,11 +8,17 @@ hereda del builtin estándar correspondiente (compatibilidad hacia atrás).
 import pytest
 
 from bioforge import (
-    BioForgeError, SequenceTypeError, SequenceValueError,
-    TranslationError, AlignmentError, BioForgeIOError, EngineError,
-    SmartImporter, qcreport,
+    AlignmentError,
+    BioForgeError,
+    BioForgeIOError,
+    EngineError,
+    SequenceTypeError,
+    SequenceValueError,
+    SmartImporter,
+    TranslationError,
+    bgzf,
+    qcreport,
 )
-from bioforge import bgzf
 
 
 def test_hierarchy():

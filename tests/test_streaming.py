@@ -13,15 +13,18 @@ Ejecutar:
 """
 
 import gzip
-import os
 import random
 
 import numpy as np
 import pytest
 
 from bioforge import (
-    SmartImporter, SeqType, FastqRecord, SequenceBatch, ReadBatch,
+    FastqRecord,
+    ReadBatch,
+    SeqType,
+    SequenceBatch,
     SequenceTypeError,
+    SmartImporter,
 )
 
 QCHARS = "".join(chr(33 + q) for q in range(64))   # Phred 0..63
@@ -65,7 +68,7 @@ def test_stream_fasta_matches_from_file(tmp_path):
     got = list(SmartImporter.stream(str(p)))
 
     assert len(got) == len(ref) == len(recs)
-    for r, g, (h, s) in zip(ref, got, recs):
+    for r, g, (h, s) in zip(ref, got, recs, strict=True):
         assert g.header == h
         assert g.n_symbols == len(s)
         assert g.to_string() == s == r.to_string()
@@ -104,7 +107,7 @@ def test_stream_fastq_sequence_and_quality(tmp_path):
 
     got = list(SmartImporter.stream_fastq(str(p)))
     assert len(got) == len(recs)
-    for (h, s, q), rec in zip(recs, got):
+    for (_h, s, q), rec in zip(recs, got, strict=True):
         assert isinstance(rec, FastqRecord)
         assert rec.sequence.to_string() == s
         assert list(rec.quality) == q
@@ -112,7 +115,7 @@ def test_stream_fastq_sequence_and_quality(tmp_path):
 
 
 def test_fastqrecord_quality_helpers():
-    from bioforge import PackedSequence, BitPacker
+    from bioforge import BitPacker, PackedSequence
     codes = np.array([0, 1, 2, 3], dtype=np.uint8)
     seq = PackedSequence("h", SeqType.NUCLEOTIDE, 4, BitPacker.pack(codes))
     rec = FastqRecord(sequence=seq, quality=np.array([10, 20, 30, 40], np.uint8))
@@ -315,7 +318,7 @@ def test_columnar_equals_per_record_fastq(tmp_path):
         columnar.extend(b[i] for i in range(len(b)))
 
     assert len(per_record) == len(columnar) == len(recs)
-    for a, c in zip(per_record, columnar):
+    for a, c in zip(per_record, columnar, strict=True):
         assert a.sequence.to_string() == c.sequence.to_string()
         assert list(a.quality) == list(c.quality)
         assert a.sequence.header == c.sequence.header

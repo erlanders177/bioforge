@@ -15,7 +15,9 @@ import pytest
 
 from bioforge import SmartImporter, bgzf
 from bioforge.engine._loader import (
-    C_LIBDEFLATE_AVAILABLE, C_PARALLEL_AVAILABLE, c_is_bgzf,
+    C_LIBDEFLATE_AVAILABLE,
+    C_PARALLEL_AVAILABLE,
+    c_is_bgzf,
 )
 
 _bg = pytest.mark.skipif(

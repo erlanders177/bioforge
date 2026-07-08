@@ -20,12 +20,17 @@ import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from hypothesis.extra.numpy import arrays as np_arrays
 
-from bioforge import BitPacker, PackedSequence, SeqType, SmartImporter
-from bioforge import BioForgeError, SequenceTypeError, TranslationError
-from bioforge import SmartTranslator
-
+from bioforge import (
+    BioForgeError,
+    BitPacker,
+    PackedSequence,
+    SeqType,
+    SequenceTypeError,
+    SmartImporter,
+    SmartTranslator,
+    TranslationError,
+)
 
 # ── Estrategias Hypothesis ─────────────────────────────────────────────────────
 

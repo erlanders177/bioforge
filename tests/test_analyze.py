@@ -15,13 +15,12 @@ Ejecutar:
     pytest tests/test_analyze.py -v
 """
 
-import sys
 from pathlib import Path
+
 import pytest
 
-from bioforge import SeqType, BioForgeError, SequenceTypeError, SequenceValueError
-from bioforge.analyze import run, build_report, AnalysisResult, _change_type, main
-
+from bioforge import BioForgeError, SeqType, SequenceTypeError, SequenceValueError
+from bioforge.analyze import _change_type, build_report, main, run
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §0  FIXTURES — archivos FASTA temporales

@@ -7,7 +7,13 @@ mutaciones, reads que no mapean, copias múltiples y formato PAF.
 """
 
 import numpy as np
+import pytest
 
+from bioforge.biocore import (
+    BioForgeError,
+    SequenceTypeError,
+    SequenceValueError,
+)
 from bioforge.genomemap import (
     Anchors,
     Chain,
@@ -194,6 +200,49 @@ def test_multicontig_lista_de_pares():
     ga = GenomeAligner([("A", a), ("B", b)], k=15, w=10)
     assert ga.n_contigs == 2
     assert ga.map(b[3000:3400])[0].target_name == "B"
+
+
+# ── Robustez / sistema de errores (regla #8: todo fallo → BioForgeError) ────────
+
+def test_map_valida_tipo_de_read():
+    ga = GenomeAligner(_rng_seq(2000, 40), k=15, w=10)
+    with pytest.raises(SequenceTypeError):
+        ga.map(12345)                        # no es str
+    with pytest.raises(BioForgeError):       # y capturable como BioForgeError
+        ga.map(None)
+
+
+def test_referencia_vacia_falla():
+    with pytest.raises(SequenceValueError):
+        GenomeAligner("", k=15, w=10)        # cadena vacía
+    with pytest.raises(SequenceValueError):
+        GenomeAligner({}, k=15, w=10)        # sin contigs
+    with pytest.raises(SequenceValueError):
+        GenomeAligner({"a": "", "b": ""}, k=15, w=10)   # contigs vacíos
+    with pytest.raises(SequenceTypeError):
+        GenomeAligner(12345, k=15, w=10)                # tipo inválido
+
+
+def test_read_en_los_extremos_del_genoma():
+    g = _rng_seq(5000, 41)
+    ga = GenomeAligner(g, k=15, w=10)
+    # read al inicio (posición 0)
+    m0 = ga.map(g[0:400])
+    assert m0 and m0[0].target_start == 0
+    # read hasta el final
+    mE = ga.map(g[4600:5000])
+    assert mE and mE[0].target_end == 5000
+    # read que sobresale por el final → mapea la parte válida, sin petar
+    over = g[4700:5000] + _rng_seq(200, 99)
+    mo = ga.map(over)
+    assert isinstance(mo, list)              # no lanza; devuelve lista
+
+
+def test_read_degenerado_no_peta():
+    ga = GenomeAligner(_rng_seq(3000, 43), k=15, w=10)
+    assert ga.map("") == []                  # vacío
+    assert ga.map("ACGT") == []              # más corto que k
+    assert ga.map("N" * 500) == []           # todo inválido
 
 
 def test_formato_paf():
