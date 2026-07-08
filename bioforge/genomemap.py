@@ -45,7 +45,15 @@ from .biocore import (
     SequenceValueError,
     SmartImporter,
 )
-from .engine._loader import C_CHAIN_AVAILABLE, c_chain_dp
+from .engine._loader import (
+    C_CHAIN_AVAILABLE,
+    C_INDEX_AVAILABLE,
+    c_chain_dp,
+    c_index_build,
+    c_index_free,
+    c_map_batch,
+    c_map_read,
+)
 from .minimizers import encode_bases, minimizers
 from .refindex import ReferenceIndex
 
@@ -433,8 +441,22 @@ class GenomeAligner:
         self.reference = "".join(parts)                 # concatenado (con N)
         self._starts = np.array(self._starts_list, dtype=np.int64)
         self.name = self._names[0] if len(self._names) == 1 else "multi"
-        self.index = ReferenceIndex.from_sequence(self.reference, k=k, w=w,
-                                                  max_occ=max_occ)
+        self._ref_codes = encode_bases(self.reference)
+        self.index = ReferenceIndex(self._ref_codes, k=k, w=w, max_occ=max_occ)
+
+        # Índice opaco en C: el pipeline entero (seed-chain-align) corre en C sin
+        # marshalling por consulta. Se construye UNA vez y vive tras un handle.
+        # Si el motor C no está, todo cae al camino NumPy (idéntico, verificado).
+        self._c_index: Optional[int] = None
+        if C_INDEX_AVAILABLE:
+            try:
+                self._c_index = c_index_build(
+                    self._ref_codes, k, w, (max_occ or 0),
+                    self._starts,
+                    np.array(self._lengths, dtype=np.int64),
+                )
+            except MemoryError:
+                self._c_index = None
 
     @staticmethod
     def _normalize(reference, name: str) -> "list[tuple[str, str]]":
@@ -474,6 +496,48 @@ class GenomeAligner:
             target_end=min(mp.target_end - cstart, clen),
         )
 
+    def __del__(self):
+        h = getattr(self, "_c_index", None)
+        if h:
+            try:
+                c_index_free(h)
+            except Exception:       # noqa: BLE001 — el intérprete puede estar cerrando
+                pass
+            self._c_index = None
+
+    def __getstate__(self):
+        # El handle C es un puntero crudo, no picklable ni válido entre procesos.
+        st = self.__dict__.copy()
+        st["_c_index"] = None
+        return st
+
+    def __setstate__(self, st):
+        self.__dict__.update(st)
+        if C_INDEX_AVAILABLE and self._c_index is None:
+            try:
+                self._c_index = c_index_build(
+                    self._ref_codes, self.index.k, self.index.w,
+                    (self.index.max_occ or 0), self._starts,
+                    np.array(self._lengths, dtype=np.int64))
+            except MemoryError:
+                self._c_index = None
+
+    def _mapping_from_dict(self, d: dict, query_len: int) -> Mapping:
+        """Construye un Mapping (coords locales al contig) desde la salida C."""
+        ci = d["contig"]
+        cstart, clen = self._starts_list[ci], self._lengths[ci]
+        return Mapping(
+            query_len=query_len,
+            query_start=d["query_start"], query_end=d["query_end"],
+            strand="+" if d["strand"] == 0 else "-",
+            target_len=clen,
+            target_start=d["target_start"] - cstart,
+            target_end=min(d["target_end"] - cstart, clen),
+            num_matches=d["num_matches"], block_len=d["block_len"],
+            mapq=d["mapq"], identity=d["identity"], chain_score=d["chain_score"],
+            cigar=d["cigar"], target_name=self._names[ci],
+        )
+
     def map(self, read: str, min_chain_score: float = 40.0,
             max_hits: int = 5) -> list[Mapping]:
         """Mapea un read → lista de Mapping (primaria primero)."""
@@ -481,6 +545,14 @@ class GenomeAligner:
             raise SequenceTypeError(
                 f"read debe ser str, se recibió {type(read).__name__!r}.")
         read = read.upper()
+
+        # Camino C: pipeline entero (seed-chain-align) en una sola llamada.
+        if self._c_index:
+            dicts = c_map_read(self._c_index, encode_bases(read),
+                               max_hits, min_chain_score)
+            return [self._mapping_from_dict(d, len(read)) for d in dicts]
+
+        # Fallback NumPy (idéntico, verificado con parity tests).
         anchors = seed(self.index, encode_bases(read))
         chains = chain(anchors, min_score=min_chain_score)[:max_hits]
         mappings: list[Mapping] = []
@@ -511,6 +583,22 @@ class GenomeAligner:
         arranque de procesos falla, cae a secuencial con gracia.
         """
         reads = list(reads)
+
+        # Camino C: OpenMP dentro del motor (sin GIL, sin coste de procesos).
+        # Una sola llamada mapea todo el lote en paralelo. Es la vía rápida.
+        if self._c_index and len(reads) > 1:
+            for r in reads:
+                if not isinstance(r, str):
+                    raise SequenceTypeError(
+                        f"cada read debe ser str, se recibió {type(r).__name__!r}.")
+            ups = [r.upper() for r in reads]
+            enc = [encode_bases(r) for r in ups]
+            nt = 0 if n_processes <= 0 else n_processes
+            batch = c_map_batch(self._c_index, enc, max_hits, min_chain_score,
+                                n_threads=nt)
+            return [[self._mapping_from_dict(d, len(r)) for d in maps]
+                    for r, maps in zip(ups, batch, strict=True)]
+
         if n_processes == 1 or len(reads) <= 1:
             return [self.map(r, min_chain_score, max_hits) for r in reads]
         nt = (os.cpu_count() or 1) if n_processes <= 0 else n_processes

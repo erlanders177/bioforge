@@ -1799,3 +1799,374 @@ EXPORT void bio_index_free(void* handle) {
 EXPORT int64_t bio_index_n_minimizers(void* handle) {
     return handle ? ((BioIndex*)handle)->n_min : -1;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MAP_READ — pipeline entero de mapeo en C  (fases C2 + C3)
+   ─────────────────────────────────────────────────────────────────────────
+   Réplica fiel de GenomeAligner.map (genomemap.py): seeding → chaining (DP +
+   backtrack + supresión) → extensión banded del read completo → Mapping.
+   Todo en una sola llamada C, sin marshalling por consulta: la vía a competir
+   en velocidad. Parámetros y desempates calcados del pipeline Python para que
+   los resultados sean idénticos (verificado con parity tests).
+
+   Constantes del mapeador (idénticas a genomemap.py):
+     MAX_GAP=5000, WINDOW=64, GAP_COEF=0.01, MIN_ANCHORS=2.
+   Puntuación de la extensión (idéntica a SequenceAligner): +2/-1/-2, global.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+#define MAP_MAX_GAP     5000
+#define MAP_WINDOW      64
+#define MAP_GAP_COEF    0.01
+#define MAP_MIN_ANCHORS 2
+#define MAP_MATCH        2
+#define MAP_MISMATCH   (-1)
+#define MAP_GAP        (-2)
+
+/* struct de salida (layout replicado en ctypes; doubles/int64 primero). */
+typedef struct {
+    double  identity;
+    double  chain_score;
+    int64_t target_start;     /* coords GLOBALES; Python las localiza al contig */
+    int64_t target_end;
+    int32_t query_start, query_end;
+    int32_t strand;           /* 0=+  1=- */
+    int32_t num_matches, block_len, mapq;
+    int32_t contig;           /* índice de contig */
+    int32_t cigar_off, cigar_len;
+} MapOut;
+
+typedef struct { int64_t x, y, rpos, qpos; } CAnc;
+typedef struct { double f; int32_t i; } FIdx;
+typedef struct {
+    double  score;
+    int32_t strand, n_anchors;
+    int64_t ref_start, ref_end, read_start, read_end, d;
+} CChain;
+
+static int _cmp_anc(const void* a, const void* b) {
+    const CAnc* pa = (const CAnc*)a; const CAnc* pb = (const CAnc*)b;
+    if (pa->x != pb->x) return pa->x < pb->x ? -1 : 1;
+    if (pa->y != pb->y) return pa->y < pb->y ? -1 : 1;
+    return 0;
+}
+static int _cmp_fidx(const void* a, const void* b) {
+    const FIdx* pa = (const FIdx*)a; const FIdx* pb = (const FIdx*)b;
+    if (pa->f != pb->f) return pa->f > pb->f ? -1 : 1;    /* score desc */
+    return pa->i < pb->i ? -1 : (pa->i > pb->i ? 1 : 0);  /* desempate: idx asc */
+}
+static int _cmp_cchain(const void* a, const void* b) {
+    const CChain* pa = (const CChain*)a; const CChain* pb = (const CChain*)b;
+    if (pa->score != pb->score) return pa->score > pb->score ? -1 : 1;
+    if (pa->ref_start != pb->ref_start) return pa->ref_start < pb->ref_start ? -1 : 1;
+    return 0;
+}
+
+static int64_t _lower_bound(const uint64_t* a, int64_t n, uint64_t key) {
+    int64_t lo = 0, hi = n;
+    while (lo < hi) { int64_t mid = (lo + hi) >> 1;
+        if (a[mid] < key) lo = mid + 1; else hi = mid; }
+    return lo;
+}
+static int64_t _upper_bound(const uint64_t* a, int64_t n, uint64_t key) {
+    int64_t lo = 0, hi = n;
+    while (lo < hi) { int64_t mid = (lo + hi) >> 1;
+        if (a[mid] <= key) lo = mid + 1; else hi = mid; }
+    return lo;
+}
+
+static int _cmp_i64(const void* a, const void* b) {
+    int64_t x = *(const int64_t*)a, y = *(const int64_t*)b;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+/* mediana como np.median + int(): media de los dos centrales si n par,
+   truncada hacia cero (== cast a int64). tmp se ordena in situ. */
+static int64_t _median_trunc(int64_t* tmp, int32_t n) {
+    qsort(tmp, (size_t)n, sizeof(int64_t), _cmp_i64);
+    if (n & 1) return tmp[n / 2];
+    double m = ((double)tmp[n / 2 - 1] + (double)tmp[n / 2]) / 2.0;
+    return (int64_t)m;                       /* trunca hacia cero, como int() */
+}
+
+/* Chaining de UNA hebra: rellena chains[] (desde *nc) y devuelve nº añadido.
+   rpos/qpos: anclas de la hebra (sin ordenar). Réplica de _chain_one+chain. */
+static int _chain_strand(const int64_t* rpos, const int64_t* qpos, int32_t na,
+                         int32_t strand, int32_t Lr, int32_t k, double min_score,
+                         CChain* chains, int32_t* nc) {
+    if (na == 0) return 0;
+    CAnc* anc = (CAnc*)malloc((size_t)na * sizeof(CAnc));
+    int64_t* xs = (int64_t*)malloc((size_t)na * sizeof(int64_t));
+    int64_t* ys = (int64_t*)malloc((size_t)na * sizeof(int64_t));
+    double*  f  = (double*) malloc((size_t)na * sizeof(double));
+    int32_t* pv = (int32_t*)malloc((size_t)na * sizeof(int32_t));
+    FIdx*    fi = (FIdx*)   malloc((size_t)na * sizeof(FIdx));
+    uint8_t* used = (uint8_t*)calloc((size_t)na, 1);
+    int32_t* path = (int32_t*)malloc((size_t)na * sizeof(int32_t));
+    int64_t* med  = (int64_t*)malloc((size_t)na * sizeof(int64_t));
+    if (!anc || !xs || !ys || !f || !pv || !fi || !used || !path || !med) {
+        free(anc); free(xs); free(ys); free(f); free(pv);
+        free(fi); free(used); free(path); free(med); return -1;
+    }
+    for (int32_t i = 0; i < na; i++) {
+        anc[i].rpos = rpos[i]; anc[i].qpos = qpos[i];
+        anc[i].x = rpos[i];
+        anc[i].y = (strand == 0) ? qpos[i] : (int64_t)(Lr - k) - qpos[i];
+    }
+    qsort(anc, (size_t)na, sizeof(CAnc), _cmp_anc);   /* lexsort((y,x)) */
+    for (int32_t i = 0; i < na; i++) { xs[i] = anc[i].x; ys[i] = anc[i].y; }
+
+    double gap_w = MAP_GAP_COEF * (double)k;
+    bio_chain_dp(xs, ys, na, k, MAP_MAX_GAP, MAP_WINDOW, gap_w, f, pv);
+
+    for (int32_t i = 0; i < na; i++) { fi[i].f = f[i]; fi[i].i = i; }
+    qsort(fi, (size_t)na, sizeof(FIdx), _cmp_fidx);   /* argsort(-f) */
+
+    int added = 0;
+    for (int32_t s = 0; s < na; s++) {
+        if (fi[s].f < min_score) break;               /* f desc → resto también */
+        int32_t start = fi[s].i;
+        if (used[start]) continue;
+        int32_t plen = 0, i = start;
+        while (i != -1 && !used[i]) { used[i] = 1; path[plen++] = i; i = pv[i]; }
+        double frag = fi[s].f - ((i != -1) ? f[i] : 0.0);
+        if (plen < MAP_MIN_ANCHORS || frag < min_score) continue;
+
+        /* spans + diagonal (median), sobre las anclas del camino */
+        int64_t rmin = anc[path[0]].rpos, rmax = rmin;
+        int64_t qmin = anc[path[0]].qpos, qmax = qmin;
+        for (int32_t t = 0; t < plen; t++) {
+            int64_t rp = anc[path[t]].rpos, qp = anc[path[t]].qpos;
+            if (rp < rmin) rmin = rp; if (rp > rmax) rmax = rp;
+            if (qp < qmin) qmin = qp; if (qp > qmax) qmax = qp;
+            med[t] = (strand == 0) ? (rp - qp) : (rp + qp);
+        }
+        int64_t d = _median_trunc(med, plen);
+        if (strand != 0) d -= (int64_t)(Lr - k);
+
+        CChain* c = &chains[*nc];
+        c->score = frag; c->strand = strand; c->n_anchors = plen;
+        c->ref_start = rmin; c->ref_end = rmax + k;
+        c->read_start = qmin; c->read_end = qmax + k;
+        c->d = d;
+        (*nc)++; added++;
+    }
+    free(anc); free(xs); free(ys); free(f); free(pv);
+    free(fi); free(used); free(path); free(med);
+    return added;
+}
+
+/* Nucleótido decode para la extensión (0..3=ACGT, 4+=N). */
+static const char _MAP_DECODE[32] =
+    "ACGTNNNNNNNNNNNNNNNNNNNNNNNNNNNN";
+
+static int32_t _map_one(BioIndex* ix, const uint8_t* read_codes, int32_t Lr,
+                        int32_t max_hits, double min_score,
+                        MapOut* out, int32_t max_out,
+                        char* cigar_buf, int32_t cigar_cap) {
+    if (!ix || Lr < ix->k) return 0;
+    int32_t k = ix->k, w = ix->w;
+
+    /* ── SEEDING: minimizers del read → lookup → anclas ──────────────────── */
+    int64_t nk = (int64_t)Lr - k + 1;
+    uint64_t* qh = (uint64_t*)malloc((size_t)nk * sizeof(uint64_t));
+    int64_t*  qp = (int64_t*) malloc((size_t)nk * sizeof(int64_t));
+    uint8_t*  qs = (uint8_t*) malloc((size_t)nk);
+    if (!qh || !qp || !qs) { free(qh); free(qp); free(qs); return -1; }
+    int64_t nm = bio_minimizers(read_codes, Lr, k, w, qh, qp, qs);
+    if (nm < 0) { free(qh); free(qp); free(qs); return -1; }
+
+    /* nº total de coincidencias (para dimensionar los arrays de anclas) */
+    int64_t ntot = 0;
+    for (int64_t j = 0; j < nm; j++) {
+        int64_t lo = _lower_bound(ix->hashes, ix->n_min, qh[j]);
+        int64_t hi = _upper_bound(ix->hashes, ix->n_min, qh[j]);
+        ntot += hi - lo;
+    }
+    /* anclas separadas por hebra relativa */
+    int64_t* r0 = (int64_t*)malloc((size_t)(ntot ? ntot : 1) * sizeof(int64_t));
+    int64_t* q0 = (int64_t*)malloc((size_t)(ntot ? ntot : 1) * sizeof(int64_t));
+    int64_t* r1 = (int64_t*)malloc((size_t)(ntot ? ntot : 1) * sizeof(int64_t));
+    int64_t* q1 = (int64_t*)malloc((size_t)(ntot ? ntot : 1) * sizeof(int64_t));
+    if (!r0 || !q0 || !r1 || !q1) {
+        free(qh); free(qp); free(qs); free(r0); free(q0); free(r1); free(q1);
+        return -1;
+    }
+    int64_t n0 = 0, n1 = 0;
+    for (int64_t j = 0; j < nm; j++) {
+        int64_t lo = _lower_bound(ix->hashes, ix->n_min, qh[j]);
+        int64_t hi = _upper_bound(ix->hashes, ix->n_min, qh[j]);
+        for (int64_t t = lo; t < hi; t++) {
+            uint8_t rel = (uint8_t)(qs[j] ^ ix->strands[t]);
+            if (rel == 0) { r0[n0] = ix->positions[t]; q0[n0] = qp[j]; n0++; }
+            else          { r1[n1] = ix->positions[t]; q1[n1] = qp[j]; n1++; }
+        }
+    }
+    free(qh); free(qp); free(qs);
+
+    /* ── CHAINING (ambas hebras) ─────────────────────────────────────────── */
+    int64_t cap = n0 + n1 + 1;
+    CChain* chains = (CChain*)malloc((size_t)cap * sizeof(CChain));
+    if (!chains) { free(r0); free(q0); free(r1); free(q1); return -1; }
+    int32_t nc = 0;
+    int a0 = _chain_strand(r0, q0, (int32_t)n0, 0, Lr, k, min_score, chains, &nc);
+    int a1 = _chain_strand(r1, q1, (int32_t)n1, 1, Lr, k, min_score, chains, &nc);
+    free(r0); free(q0); free(r1); free(q1);
+    if (a0 < 0 || a1 < 0) { free(chains); return -1; }
+
+    qsort(chains, (size_t)nc, sizeof(CChain), _cmp_cchain);   /* score desc */
+
+    /* supresión de solapamientos (>50% en ref, misma hebra) */
+    CChain* kept = (CChain*)malloc((size_t)(nc ? nc : 1) * sizeof(CChain));
+    if (!kept) { free(chains); return -1; }
+    int32_t nkept = 0;
+    for (int32_t c = 0; c < nc; c++) {
+        int redundant = 0;
+        for (int32_t kk = 0; kk < nkept; kk++) {
+            if (chains[c].strand != kept[kk].strand) continue;
+            int64_t inter = (chains[c].ref_end < kept[kk].ref_end ? chains[c].ref_end : kept[kk].ref_end)
+                          - (chains[c].ref_start > kept[kk].ref_start ? chains[c].ref_start : kept[kk].ref_start);
+            int64_t la = chains[c].ref_end - chains[c].ref_start;
+            int64_t lb = kept[kk].ref_end - kept[kk].ref_start;
+            int64_t shorter = la < lb ? la : lb;
+            if (shorter > 0 && (double)inter > 0.5 * (double)shorter) { redundant = 1; break; }
+        }
+        if (!redundant) kept[nkept++] = chains[c];
+    }
+    free(chains);
+    if (nkept > max_hits) nkept = max_hits;
+
+    /* ── EXTENSIÓN del read completo (banded NW) por cadena ──────────────── */
+    uint8_t* oriented = (uint8_t*)malloc((size_t)Lr);      /* read orientado */
+    char* aa = (char*)malloc((size_t)(2 * Lr + 4 * MAP_WINDOW + 1024));
+    char* bb = (char*)malloc((size_t)(2 * Lr + 4 * MAP_WINDOW + 1024));
+    if (!oriented || !aa || !bb) { free(kept); free(oriented); free(aa); free(bb); return -1; }
+
+    int32_t nout = 0, cig_used = 0;
+    for (int32_t c = 0; c < nkept && nout < max_out; c++) {
+        CChain* ch = &kept[c];
+        /* contig de la cadena → límites de la ventana */
+        int64_t ci = _upper_bound((const uint64_t*)ix->ctg_starts, ix->n_contigs,
+                                  (uint64_t)ch->ref_start) - 1;
+        if (ci < 0) ci = 0;
+        int64_t cstart = ix->ctg_starts[ci];
+        int64_t cend   = cstart + ix->ctg_lengths[ci];
+
+        int64_t d = ch->d;
+        int64_t rs = d > cstart ? d : cstart;
+        int64_t re = (d + Lr < cend) ? d + Lr : cend;
+        if (re - rs < 1) continue;
+
+        /* read orientado (revcomp si hebra inversa) */
+        if (ch->strand == 0) {
+            for (int32_t i = 0; i < Lr; i++) oriented[i] = read_codes[i];
+        } else {
+            for (int32_t i = 0; i < Lr; i++) {
+                uint8_t cc = read_codes[Lr - 1 - i];
+                oriented[i] = (cc < 4) ? (uint8_t)(3 - cc) : 4;
+            }
+        }
+        int32_t m_len = (int32_t)(re - rs);
+        int32_t n_len = (int32_t)(re - rs);         /* read_sub = oriented[rs-d : re-d] */
+        const uint8_t* ref_sub  = ix->ref_codes + rs;
+        const uint8_t* read_sub = oriented + (rs - d);
+
+        int32_t diff = m_len - n_len; if (diff < 0) diff = -diff;
+        int32_t band = diff + 64; if (band > 512) band = 512;
+
+        int32_t score, mt, mm, gp;
+        int32_t pos = _nw_banded_core(ref_sub, m_len, read_sub, n_len, _MAP_DECODE,
+                                      MAP_MATCH, MAP_MISMATCH, MAP_GAP, band, 0,
+                                      aa, bb, &score, &mt, &mm, &gp);
+        if (pos < 0) continue;                      /* extensión fallida → sin mapeo */
+        int32_t block = mt + mm + gp;
+        double identity = block ? (double)mt / (double)block : 0.0;
+
+        /* CIGAR run-length (M / I=hueco en ref / D=hueco en read) */
+        int32_t coff = cig_used;
+        int32_t t = 0;
+        while (t < pos) {
+            char op = (aa[t] == '-') ? 'I' : ((bb[t] == '-') ? 'D' : 'M');
+            int32_t run = 1;
+            while (t + run < pos) {
+                char o2 = (aa[t+run] == '-') ? 'I' : ((bb[t+run] == '-') ? 'D' : 'M');
+                if (o2 != op) break;
+                run++;
+            }
+            if (cig_used > cigar_cap - 16) { cig_used = coff; break; }  /* sin sitio */
+            cig_used += sprintf(cigar_buf + cig_used, "%d%c", run, op);
+            t += run;
+        }
+
+        /* coords de query en el read ORIGINAL (hacia delante) */
+        int32_t q_start, q_end;
+        if (ch->strand == 0) { q_start = (int32_t)(rs - d); q_end = (int32_t)(re - d); }
+        else { q_start = (int32_t)(Lr - (re - d)); q_end = (int32_t)(Lr - (rs - d)); }
+
+        /* mapq (idéntico a _mapq): usa el ranking en kept[:max_hits] */
+        int32_t mapq;
+        if (c > 0) mapq = 5;
+        else if (nkept < 2) mapq = 60;
+        else {
+            double ratio = kept[0].score ? kept[1].score / kept[0].score : 0.0;
+            double v = rint(60.0 * (1.0 - ratio));
+            if (v < 0) v = 0; if (v > 60) v = 60;
+            mapq = (int32_t)v;
+        }
+
+        MapOut* o = &out[nout++];
+        o->identity = identity; o->chain_score = ch->score;
+        o->target_start = rs; o->target_end = re;
+        o->query_start = q_start; o->query_end = q_end;
+        o->strand = ch->strand;
+        o->num_matches = mt; o->block_len = block; o->mapq = mapq;
+        o->contig = (int32_t)ci;
+        o->cigar_off = coff; o->cigar_len = cig_used - coff;
+    }
+    free(kept); free(oriented); free(aa); free(bb);
+    return nout;
+}
+
+/* Mapea UN read (cubierta delgada sobre _map_one). */
+EXPORT int32_t bio_map_read(void* handle, const uint8_t* read_codes, int32_t Lr,
+                            int32_t max_hits, double min_score,
+                            MapOut* out, int32_t max_out,
+                            char* cigar_buf, int32_t cigar_cap) {
+    BioIndex* ix = (BioIndex*)handle;
+    if (!ix) return 0;
+    return _map_one(ix, read_codes, Lr, max_hits, min_score,
+                    out, max_out, cigar_buf, cigar_cap);
+}
+
+/* ── MAP_BATCH — mapea muchos reads en paralelo (OpenMP, sin GIL) ─────────────
+   reads_concat : codes 2-bit de todos los reads concatenados.
+   read_off     : n_reads+1 offsets → read i = reads_concat[read_off[i]..[i+1]).
+   out          : n_reads*max_hits MapOut (read i escribe en out[i*max_hits..]).
+   counts       : n_reads → nº de mapeos de cada read.
+   cigar_buf    : buffer compartido; cig_off[i] delimita la región del read i.
+                  Los cigar_off de salida quedan ABSOLUTOS (índices en cigar_buf).
+   Cada read es independiente → paralelismo perfecto. Devuelve 0, o <0 si error. */
+EXPORT int32_t bio_map_batch(void* handle, const uint8_t* reads_concat,
+                             const int64_t* read_off, int32_t n_reads,
+                             int32_t max_hits, double min_score,
+                             MapOut* out, int32_t* counts,
+                             char* cigar_buf, const int64_t* cig_off,
+                             int32_t n_threads) {
+    BioIndex* ix = (BioIndex*)handle;
+    if (!ix) return -1;
+    int32_t err = 0;
+#ifdef _OPENMP
+    if (n_threads > 0) omp_set_num_threads(n_threads);
+    #pragma omp parallel for schedule(dynamic, 16)
+#endif
+    for (int32_t i = 0; i < n_reads; i++) {
+        int32_t Lr = (int32_t)(read_off[i+1] - read_off[i]);
+        int32_t cap = (int32_t)(cig_off[i+1] - cig_off[i]);
+        MapOut* oi = out + (int64_t)i * max_hits;
+        int32_t cnt = _map_one(ix, reads_concat + read_off[i], Lr, max_hits,
+                               min_score, oi, max_hits,
+                               cigar_buf + cig_off[i], cap);
+        if (cnt < 0) { err = 1; counts[i] = 0; continue; }
+        for (int32_t j = 0; j < cnt; j++) oi[j].cigar_off += (int32_t)cig_off[i];
+        counts[i] = cnt;
+    }
+    return err ? -1 : 0;
+}

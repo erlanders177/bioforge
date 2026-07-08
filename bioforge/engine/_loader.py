@@ -25,6 +25,33 @@ _I64  = ctypes.c_int64
 _F64  = ctypes.c_double
 _CHARP = ctypes.c_char_p
 
+
+class MapOut(ctypes.Structure):
+    """Un mapeo devuelto por bio_map_read (layout replicado del struct C).
+
+    Orden de campos idéntico al de engine.c (doubles/int64 primero para evitar
+    padding sorpresa). Las coords de target son GLOBALES; la cubierta Python las
+    localiza al contig y adjunta el nombre.
+    """
+    _fields_ = [
+        ("identity",     ctypes.c_double),
+        ("chain_score",  ctypes.c_double),
+        ("target_start", ctypes.c_int64),
+        ("target_end",   ctypes.c_int64),
+        ("query_start",  ctypes.c_int32),
+        ("query_end",    ctypes.c_int32),
+        ("strand",       ctypes.c_int32),
+        ("num_matches",  ctypes.c_int32),
+        ("block_len",    ctypes.c_int32),
+        ("mapq",         ctypes.c_int32),
+        ("contig",       ctypes.c_int32),
+        ("cigar_off",    ctypes.c_int32),
+        ("cigar_len",    ctypes.c_int32),
+    ]
+
+
+_MAPOUTP = ctypes.POINTER(MapOut)
+
 # ── Carga del DLL ──────────────────────────────────────────────────────────────
 _lib: ctypes.CDLL | None = None
 C_AVAILABLE: bool = False
@@ -259,6 +286,21 @@ def _check_index() -> None:
         _lib.bio_index_free.argtypes = [ctypes.c_void_p]
         _lib.bio_index_n_minimizers.restype  = _I64
         _lib.bio_index_n_minimizers.argtypes = [ctypes.c_void_p]
+
+        _lib.bio_map_read.restype  = _I32
+        _lib.bio_map_read.argtypes = [
+            ctypes.c_void_p, _U8P, _I32,     # handle, read_codes, Lr
+            _I32, _F64,                      # max_hits, min_score
+            _MAPOUTP, _I32,                  # out, max_out
+            _CHARP, _I32,                    # cigar_buf, cigar_cap
+        ]
+        _lib.bio_map_batch.restype  = _I32
+        _lib.bio_map_batch.argtypes = [
+            ctypes.c_void_p, _U8P, _I64P, _I32,   # handle, reads, read_off, n_reads
+            _I32, _F64,                           # max_hits, min_score
+            _MAPOUTP, _I32P,                      # out, counts
+            _CHARP, _I64P, _I32,                  # cigar_buf, cig_off, n_threads
+        ]
         C_INDEX_AVAILABLE = True
     except (AttributeError, OSError):
         pass
@@ -439,6 +481,104 @@ def c_index_free(handle: int) -> None:
 def c_index_n_minimizers(handle: int) -> int:
     """nº de minimizers del índice (verificación de paridad)."""
     return int(_lib.bio_index_n_minimizers(ctypes.c_void_p(handle)))
+
+
+def c_map_read(handle: int, read_codes: np.ndarray, max_hits: int,
+               min_score: float) -> list[dict]:
+    """Mapea un read entero en C (seed-chain-align). Devuelve lista de dicts.
+
+    Cada dict lleva los campos numéricos del mapeo (coords de target GLOBALES)
+    más ``contig`` (índice) y ``cigar`` (str). La cubierta Python los convierte
+    a Mapping localizando al contig y adjuntando el nombre.
+    """
+    codes = np.ascontiguousarray(read_codes, dtype=np.uint8)
+    Lr = int(codes.size)
+    max_out = int(max_hits)
+    out = (MapOut * max_out)()
+    cigar_cap = max_out * (2 * Lr + 1200) + 1024
+    cbuf = ctypes.create_string_buffer(cigar_cap)
+    n = _lib.bio_map_read(
+        ctypes.c_void_p(handle), codes.ctypes.data_as(_U8P), _I32(Lr),
+        _I32(max_out), _F64(float(min_score)),
+        out, _I32(max_out), cbuf, _I32(cigar_cap),
+    )
+    if n < 0:
+        raise MemoryError("Motor C: fallo en bio_map_read")
+    raw = cbuf.raw
+    results: list[dict] = []
+    for i in range(n):
+        o = out[i]
+        cig = raw[o.cigar_off:o.cigar_off + o.cigar_len].decode("ascii")
+        results.append({
+            "identity": o.identity, "chain_score": o.chain_score,
+            "target_start": o.target_start, "target_end": o.target_end,
+            "query_start": o.query_start, "query_end": o.query_end,
+            "strand": o.strand, "num_matches": o.num_matches,
+            "block_len": o.block_len, "mapq": o.mapq,
+            "contig": o.contig, "cigar": cig,
+        })
+    return results
+
+
+def _map_out_to_dict(o: "MapOut", cigar: str) -> dict:
+    return {
+        "identity": o.identity, "chain_score": o.chain_score,
+        "target_start": o.target_start, "target_end": o.target_end,
+        "query_start": o.query_start, "query_end": o.query_end,
+        "strand": o.strand, "num_matches": o.num_matches,
+        "block_len": o.block_len, "mapq": o.mapq,
+        "contig": o.contig, "cigar": cigar,
+    }
+
+
+def c_map_batch(handle: int, read_codes_list, max_hits: int, min_score: float,
+                n_threads: int = 0) -> list[list[dict]]:
+    """Mapea muchos reads en paralelo en C (OpenMP). Devuelve lista de listas.
+
+    ``read_codes_list`` : iterable de arrays uint8 (codes 2-bit) por read.
+    ``n_threads``       : 0 = todos los núcleos · N = N hilos.
+    Cada read escribe hasta ``max_hits`` mapeos; los cigars van a un buffer
+    compartido delimitado por read. Sin GIL: el trabajo pesado ocurre en C.
+    """
+    reads = [np.ascontiguousarray(r, dtype=np.uint8) for r in read_codes_list]
+    n = len(reads)
+    if n == 0:
+        return []
+    lens = np.fromiter((r.size for r in reads), dtype=np.int64, count=n)
+    read_off = np.empty(n + 1, dtype=np.int64)
+    read_off[0] = 0
+    np.cumsum(lens, out=read_off[1:])
+    concat = np.concatenate(reads) if n else np.empty(0, np.uint8)
+
+    mh = int(max_hits)
+    # región de cigar por read: cota generosa (el C trunca con seguridad si no cabe)
+    cig_sizes = (mh * (2 * lens + 1200) + 1024).astype(np.int64)
+    cig_off = np.empty(n + 1, dtype=np.int64)
+    cig_off[0] = 0
+    np.cumsum(cig_sizes, out=cig_off[1:])
+
+    out = (MapOut * (n * mh))()
+    counts = np.zeros(n, dtype=np.int32)
+    cbuf = ctypes.create_string_buffer(int(cig_off[-1]))
+    rc = _lib.bio_map_batch(
+        ctypes.c_void_p(handle),
+        concat.ctypes.data_as(_U8P), read_off.ctypes.data_as(_I64P), _I32(n),
+        _I32(mh), _F64(float(min_score)),
+        out, counts.ctypes.data_as(_I32P),
+        cbuf, cig_off.ctypes.data_as(_I64P), _I32(int(n_threads)),
+    )
+    if rc < 0:
+        raise MemoryError("Motor C: fallo en bio_map_batch")
+    raw = cbuf.raw
+    results: list[list[dict]] = []
+    for i in range(n):
+        maps = []
+        for j in range(int(counts[i])):
+            o = out[i * mh + j]
+            cig = raw[o.cigar_off:o.cigar_off + o.cigar_len].decode("ascii")
+            maps.append(_map_out_to_dict(o, cig))
+        results.append(maps)
+    return results
 
 
 def c_chain_dp(xs: np.ndarray, ys: np.ndarray, k: int,
