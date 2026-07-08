@@ -4,21 +4,27 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **2.3.0**,
+Es un paquete instalable: `from bioforge import ...` (versión actual **5.0.0**,
 publicada en PyPI con wheels nativos Win/Linux/Mac).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
 - **L2** `bioforge/smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
 - **L3** `bioforge/aligner.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
-- **L4 (v4.0)** mapeador de genomas / reads largos — seed-chain-align estilo
-  minimap2: `minimizers.py` (minimizers canónicos w,k, en C), `refindex.py`
-  (índice por hash + searchsorted), `genomemap.py` (seeding → chaining DP en C →
-  extensión banded del read completo → `GenomeAligner.map`/`map_batch` con salida
-  PAF). Referencia **multi-cromosoma** (dict o pares nombre/seq; coords locales).
-  ⚠️ Correcto pero **aún no compite en velocidad con minimap2** (~1-2 órdenes por
-  debajo en mapeo; índice rápido). Plan: mover TODA la tubería de mapeo a C
-  (cubierta Python fina) — objetivo para promocionar. NO promocionar velocidad aún.
+- **L4 (v5.0)** mapeador de genomas / reads largos — seed-chain-align estilo
+  minimap2, **tubería ENTERA en C tras un índice opaco** (cubierta Python fina):
+  `bio_index_build` (índice opaco: tabla de minimizers ordenada + codes de la
+  referencia + fronteras de contigs), `bio_map_read` (minimizers → lookup →
+  chaining DP+backtrack+supresión → extensión banded del read completo → `Mapping`,
+  todo en una llamada C), `bio_map_batch` (lote en paralelo con OpenMP, sin GIL).
+  `GenomeAligner.map`/`map_batch` enrutan por C con **fallback NumPy idéntico**
+  (verificado con paridad exacta). Módulos Python `minimizers.py`/`refindex.py`/
+  `genomemap.py` siguen como fallback y utilidades. Multi-cromosoma; salida PAF.
+  ⚠️ Correcto pero **aún no compite en velocidad con minimap2** (~30-50× por debajo
+  en 1 hilo; el 88% del tiempo es la alineación base a base escalar, que ya estaba
+  en C → pasar seed/chain a C solo dio 1.7×). Plan **v6.0**: **SIMD** (KSW2/SSE) en
+  el DP banded — el 8-16× que falta. Medir vs minimap2 real (WSL) antes de promover.
+  NO promocionar velocidad aún.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía

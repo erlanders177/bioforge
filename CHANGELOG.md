@@ -5,6 +5,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [5.0.0] — 2026-07-08
+
+**La tubería de mapeo entera en C, tras un índice opaco.** El motor deja de
+orquestar el mapeo desde Python: ahora seed-chain-align corre completo en C y
+Python es solo una cubierta fina. Es el paso arquitectónico que pedía el
+roadmap; la velocidad *aún* no rivaliza con minimap2 (ver nota honesta abajo).
+
+### Added
+- **Índice opaco de la referencia en C** (`bio_index_build`). Se construye una
+  sola vez y retiene la tabla de minimizers ordenada por hash (búsqueda binaria),
+  una copia de los codes de la referencia (para la extensión) y las fronteras de
+  contigs. Python solo guarda el handle → sin re-serializar el índice por consulta.
+- **`bio_map_read`** — pipeline entero de un read en una sola llamada C:
+  minimizers → lookup → chaining (DP + backtrack + supresión de solapamientos) →
+  extensión banded del read completo → `Mapping`. Réplica fiel del camino Python.
+- **`bio_map_batch`** — mapea un lote de reads en paralelo con **OpenMP**, sin
+  GIL y sin coste de procesos. `GenomeAligner.map_batch` lo usa cuando hay motor C
+  (antes: `multiprocessing`, que exigía guard `if __name__ == "__main__"`).
+
+### Changed
+- `GenomeAligner` construye el índice C en `__init__` y enruta `map`/`map_batch`
+  por C, con **fallback NumPy transparente** (idéntico, verificado). Handle liberado
+  en `__del__`; excluido del pickling (`__getstate__`) por ser un puntero crudo.
+
+### Tests
+- Paridad **exacta** del camino C contra el pipeline NumPy, campo por campo
+  (coords, CIGAR, identidad, mapq) en 200+ reads directos/inversos/mutados,
+  multi-contig, copias múltiples y bordes. +tests del índice C. **354 tests**.
+
+### Rendimiento (honesto — sin promocionar)
+- El pipeline entero en C da **~1.7× en 1 hilo** (el DP banded de la extensión
+  *ya* estaba en C: es el 88% del tiempo). `map_batch` escala ~2.3× en 4 núcleos.
+- Sigue **~30-50× por debajo de minimap2 en 1 hilo** (~0.8 vs ~20-40 Mb/s). El
+  muro es la alineación base a base escalar. El siguiente paso (v6.0) es **SIMD**
+  (KSW2/SSE) sobre ese DP — el 8-16× que falta. **No se promociona velocidad.**
+
+---
+
 ## [4.0.1] — 2026-07-08
 
 **Robustez y sistema de errores del mapeador** (antes de llevar la tubería a C).
