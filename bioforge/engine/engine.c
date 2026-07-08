@@ -1664,3 +1664,138 @@ EXPORT int64_t bio_minimizers(const uint8_t* codes, int64_t n, int32_t k, int32_
     free(h); free(st);
     return count;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ÍNDICE OPACO DE LA REFERENCIA  (mapeador v5 — pipeline entero en C)
+   ─────────────────────────────────────────────────────────────────────────
+   Fase C1. Construye UNA sola vez, en C, la estructura que el mapeo consulta
+   miles de veces: tabla de minimizers ordenada por hash (para búsqueda binaria),
+   copia de los codes de la referencia (para la extensión banded) y las fronteras
+   de los contigs. El handle es opaco: Python solo guarda el void* y lo pasa a
+   bio_map_read / bio_map_batch (fases siguientes). Así el índice "vive" en C y
+   no se re-serializa por consulta — el cuello de botella del pipeline en Python.
+
+   Réplica exacta de ReferenceIndex: mismos minimizers (bio_minimizers), mismo
+   filtro max_occ (descarta hashes con más de max_occ apariciones). El orden
+   entre hashes iguales no afecta al resultado (el lookup reúne TODAS las
+   coincidencias de cada hash; el chaining reordena por (x,y) después).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    uint64_t h;
+    int64_t  pos;
+    uint8_t  strand;
+} MinEntry;
+
+static int _cmp_min(const void* a, const void* b) {
+    uint64_t ha = ((const MinEntry*)a)->h;
+    uint64_t hb = ((const MinEntry*)b)->h;
+    return (ha < hb) ? -1 : (ha > hb) ? 1 : 0;
+}
+
+typedef struct {
+    int32_t   k, w;
+    int64_t   ref_len;
+    int64_t   n_min;          /* nº de minimizers tras filtrar max_occ */
+    uint64_t* hashes;         /* ordenados ascendentemente */
+    int64_t*  positions;
+    uint8_t*  strands;
+    uint8_t*  ref_codes;      /* copia de los codes 2-bit (>=4 = N); para extensión */
+    int32_t   n_contigs;
+    int64_t*  ctg_starts;     /* inicio global de cada contig */
+    int64_t*  ctg_lengths;
+} BioIndex;
+
+EXPORT void bio_index_free(void* handle);   /* fwd: bio_index_build lo usa al fallar */
+
+/* Construye el índice. Devuelve un handle opaco (void*), o NULL si falla malloc.
+   ref_codes: codes 2-bit de la referencia concatenada (n bases).
+   max_occ<=0 → sin filtro; en otro caso descarta hashes con count > max_occ. */
+EXPORT void* bio_index_build(const uint8_t* ref_codes, int64_t n,
+                             int32_t k, int32_t w, int32_t max_occ,
+                             const int64_t* ctg_starts, const int64_t* ctg_lengths,
+                             int32_t n_contigs) {
+    BioIndex* ix = (BioIndex*)calloc(1, sizeof(BioIndex));
+    if (!ix) return NULL;
+    ix->k = k; ix->w = w; ix->ref_len = n;
+
+    int64_t nk = n - (int64_t)k + 1;
+    if (nk < 0) nk = 0;
+    size_t alloc_nk = (size_t)(nk ? nk : 1);
+
+    uint64_t* rh = (uint64_t*)malloc(alloc_nk * sizeof(uint64_t));
+    int64_t*  rp = (int64_t*) malloc(alloc_nk * sizeof(int64_t));
+    uint8_t*  rs = (uint8_t*) malloc(alloc_nk);
+    if (!rh || !rp || !rs) { free(rh); free(rp); free(rs); free(ix); return NULL; }
+
+    int64_t m = bio_minimizers(ref_codes, n, k, w, rh, rp, rs);
+    if (m < 0) { free(rh); free(rp); free(rs); free(ix); return NULL; }
+
+    MinEntry* e = (MinEntry*)malloc((size_t)(m ? m : 1) * sizeof(MinEntry));
+    if (!e) { free(rh); free(rp); free(rs); free(ix); return NULL; }
+    for (int64_t i = 0; i < m; i++) {
+        e[i].h = rh[i]; e[i].pos = rp[i]; e[i].strand = rs[i];
+    }
+    free(rh); free(rp); free(rs);
+    qsort(e, (size_t)m, sizeof(MinEntry), _cmp_min);
+
+    /* Contar cuántos sobreviven al filtro max_occ (runs de hash igual). */
+    int64_t kept = 0;
+    for (int64_t i = 0; i < m; ) {
+        int64_t j = i + 1;
+        while (j < m && e[j].h == e[i].h) j++;
+        int64_t cnt = j - i;
+        if (max_occ <= 0 || cnt <= (int64_t)max_occ) kept += cnt;
+        i = j;
+    }
+
+    ix->hashes    = (uint64_t*)malloc((size_t)(kept ? kept : 1) * sizeof(uint64_t));
+    ix->positions = (int64_t*) malloc((size_t)(kept ? kept : 1) * sizeof(int64_t));
+    ix->strands   = (uint8_t*) malloc((size_t)(kept ? kept : 1));
+    if (!ix->hashes || !ix->positions || !ix->strands) {
+        free(e); bio_index_free(ix); return NULL;
+    }
+    int64_t o = 0;
+    for (int64_t i = 0; i < m; ) {
+        int64_t j = i + 1;
+        while (j < m && e[j].h == e[i].h) j++;
+        int64_t cnt = j - i;
+        if (max_occ <= 0 || cnt <= (int64_t)max_occ) {
+            for (int64_t t = i; t < j; t++) {
+                ix->hashes[o] = e[t].h; ix->positions[o] = e[t].pos;
+                ix->strands[o] = e[t].strand; o++;
+            }
+        }
+        i = j;
+    }
+    ix->n_min = kept;
+    free(e);
+
+    /* Copia de los codes (C es dueño; liberados en bio_index_free) + contigs. */
+    ix->ref_codes = (uint8_t*)malloc((size_t)(n ? n : 1));
+    if (!ix->ref_codes) { bio_index_free(ix); return NULL; }
+    if (n > 0) memcpy(ix->ref_codes, ref_codes, (size_t)n);
+
+    ix->n_contigs   = n_contigs;
+    ix->ctg_starts  = (int64_t*)malloc((size_t)(n_contigs ? n_contigs : 1) * sizeof(int64_t));
+    ix->ctg_lengths = (int64_t*)malloc((size_t)(n_contigs ? n_contigs : 1) * sizeof(int64_t));
+    if (!ix->ctg_starts || !ix->ctg_lengths) { bio_index_free(ix); return NULL; }
+    if (n_contigs > 0) {
+        memcpy(ix->ctg_starts,  ctg_starts,  (size_t)n_contigs * sizeof(int64_t));
+        memcpy(ix->ctg_lengths, ctg_lengths, (size_t)n_contigs * sizeof(int64_t));
+    }
+    return ix;
+}
+
+EXPORT void bio_index_free(void* handle) {
+    if (!handle) return;
+    BioIndex* ix = (BioIndex*)handle;
+    free(ix->hashes); free(ix->positions); free(ix->strands);
+    free(ix->ref_codes); free(ix->ctg_starts); free(ix->ctg_lengths);
+    free(ix);
+}
+
+/* nº de minimizers del índice (para verificar paridad con ReferenceIndex). */
+EXPORT int64_t bio_index_n_minimizers(void* handle) {
+    return handle ? ((BioIndex*)handle)->n_min : -1;
+}

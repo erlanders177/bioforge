@@ -241,12 +241,36 @@ def _check_minimizers() -> None:
         pass
 
 
+C_INDEX_AVAILABLE: bool = False
+
+def _check_index() -> None:
+    """Índice opaco de la referencia (mapeador v5, pipeline en C). Opcional."""
+    global C_INDEX_AVAILABLE
+    if not C_AVAILABLE or _lib is None:
+        return
+    try:
+        ctypes.c_void_p.in_dll(_lib, "bio_index_build")
+        _lib.bio_index_build.restype = ctypes.c_void_p
+        _lib.bio_index_build.argtypes = [
+            _U8P, _I64, _I32, _I32, _I32,    # ref_codes, n, k, w, max_occ
+            _I64P, _I64P, _I32,              # ctg_starts, ctg_lengths, n_contigs
+        ]
+        _lib.bio_index_free.restype  = None
+        _lib.bio_index_free.argtypes = [ctypes.c_void_p]
+        _lib.bio_index_n_minimizers.restype  = _I64
+        _lib.bio_index_n_minimizers.argtypes = [ctypes.c_void_p]
+        C_INDEX_AVAILABLE = True
+    except (AttributeError, OSError):
+        pass
+
+
 _check_parser()
 _check_batch()
 _check_parallel()
 _check_libdeflate()
 _check_chain()
 _check_minimizers()
+_check_index()
 
 
 # ── Wrappers Python ────────────────────────────────────────────────────────────
@@ -383,6 +407,38 @@ def c_minimizers(codes: np.ndarray, k: int, w: int):
     if cnt < 0:
         raise MemoryError("Motor C: fallo de memoria en minimizers")
     return out_hash[:cnt], out_pos[:cnt], out_strand[:cnt]
+
+
+def c_index_build(ref_codes: np.ndarray, k: int, w: int, max_occ: int,
+                  ctg_starts: np.ndarray, ctg_lengths: np.ndarray) -> int:
+    """Construye el índice opaco de la referencia en C. Devuelve un handle (int).
+
+    ``ref_codes`` : codes 2-bit uint8 de la referencia concatenada (>=4 = N).
+    ``max_occ``   : 0 = sin filtro; >0 = descarta hashes con más de max_occ hits.
+    Lanza MemoryError si el índice no cabe en memoria.
+    """
+    codes = np.ascontiguousarray(ref_codes, dtype=np.uint8)
+    cs = np.ascontiguousarray(ctg_starts, dtype=np.int64)
+    cl = np.ascontiguousarray(ctg_lengths, dtype=np.int64)
+    handle = _lib.bio_index_build(
+        codes.ctypes.data_as(_U8P), _I64(int(codes.size)),
+        _I32(int(k)), _I32(int(w)), _I32(int(max_occ)),
+        cs.ctypes.data_as(_I64P), cl.ctypes.data_as(_I64P), _I32(int(cs.size)),
+    )
+    if not handle:
+        raise MemoryError("Motor C: fallo al construir el índice de la referencia")
+    return handle
+
+
+def c_index_free(handle: int) -> None:
+    """Libera el índice opaco."""
+    if handle:
+        _lib.bio_index_free(ctypes.c_void_p(handle))
+
+
+def c_index_n_minimizers(handle: int) -> int:
+    """nº de minimizers del índice (verificación de paridad)."""
+    return int(_lib.bio_index_n_minimizers(ctypes.c_void_p(handle)))
 
 
 def c_chain_dp(xs: np.ndarray, ys: np.ndarray, k: int,
