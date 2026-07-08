@@ -242,17 +242,26 @@ minimap2-style: minimizer seeding → chaining (C DP) → banded extension.
 ```python
 from bioforge import GenomeAligner
 
-mapper = GenomeAligner(reference_sequence, k=15, w=10)   # builds the index once
+# Single sequence, or a whole multi-contig genome:
+mapper = GenomeAligner({"chr1": chr1_seq, "chr2": chr2_seq, "plasmid": p_seq})
 
 for m in mapper.map(read):
     print(m.to_paf())                # standard PAF, one line per mapping
-    # read1  1000  0  1000  +  chr1  4600000  733120  734118  980  998  60 ...
-    print(m.strand, m.target_start, f"{m.identity:.1%}")
+    print(m.target_name, m.strand, m.target_start, f"{m.identity:.1%}")
+
+# Map many reads in parallel (uses processes):
+results = mapper.map_batch(reads, n_processes=0)   # 0 = all cores
 ```
 
-Handles both strands, tolerates mismatches/indels, and reports a mapping
-quality. The chaining dynamic program runs in the C engine (with a NumPy
-fallback).
+Handles multi-chromosome references (reports the contig + local coordinates),
+both strands, aligns the full read, tolerates mismatches/indels, and reports a
+mapping quality. The minimizer and chaining kernels run in the C engine (with
+NumPy fallbacks).
+
+> **Speed, honestly:** indexing is fast, but read mapping is not yet
+> competitive with hand-tuned C mappers like minimap2 — the mapping pipeline is
+> being moved into the C engine. Use BioForge's mapper where its strengths fit:
+> pure-Python/NumPy core, tiny footprint, `pip install` and go, no C toolchain.
 
 ### Full mutation analysis pipeline (DNA + protein)
 

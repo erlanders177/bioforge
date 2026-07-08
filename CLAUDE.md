@@ -11,11 +11,14 @@ Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
 - **L2** `bioforge/smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
 - **L3** `bioforge/aligner.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
-- **L4 (v3.0, en desarrollo)** mapeador de genomas / reads largos — seed-chain-align
-  estilo minimap2: `minimizers.py` (minimizers canónicos w,k), `refindex.py`
-  (índice por hash + searchsorted), `genomemap.py` (seeding → chaining DP →
-  extensión banded → `GenomeAligner.map` con salida PAF). Escala a genomas
-  donde el DP O(m·n) de L3 no llega.
+- **L4 (v4.0)** mapeador de genomas / reads largos — seed-chain-align estilo
+  minimap2: `minimizers.py` (minimizers canónicos w,k, en C), `refindex.py`
+  (índice por hash + searchsorted), `genomemap.py` (seeding → chaining DP en C →
+  extensión banded del read completo → `GenomeAligner.map`/`map_batch` con salida
+  PAF). Referencia **multi-cromosoma** (dict o pares nombre/seq; coords locales).
+  ⚠️ Correcto pero **aún no compite en velocidad con minimap2** (~1-2 órdenes por
+  debajo en mapeo; índice rápido). Plan: mover TODA la tubería de mapeo a C
+  (cubierta Python fina) — objetivo para promocionar. NO promocionar velocidad aún.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía

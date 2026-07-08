@@ -255,12 +255,19 @@ class Mapping(NamedTuple):
     identity:     float
     chain_score:  float
     cigar:        Optional[str]
+    target_name:  str = "ref"  # nombre del contig/cromosoma al que mapea
 
-    def to_paf(self, query_name: str = "query", target_name: str = "ref") -> str:
-        """Serializa a una línea PAF (el formato de minimap2)."""
+    def to_paf(self, query_name: str = "query",
+               target_name: Optional[str] = None) -> str:
+        """Serializa a una línea PAF (el formato de minimap2).
+
+        Si no se pasa ``target_name``, se usa el del propio mapeo (el contig al
+        que mapeó, útil con referencias multi-cromosoma).
+        """
+        tname = target_name if target_name is not None else self.target_name
         fields = [
             query_name, self.query_len, self.query_start, self.query_end,
-            self.strand, target_name, self.target_len,
+            self.strand, tname, self.target_len,
             self.target_start, self.target_end,
             self.num_matches, self.block_len, self.mapq,
         ]
@@ -300,12 +307,31 @@ def _cigar(aln_ref: str, aln_read: str) -> tuple[str, int, int]:
     return cigar, n_match, int(op.size)
 
 
-def _extend(ref: str, read: str, ch: Chain) -> Optional[Mapping]:
-    """Fase 5: alinea (banded) la región de la cadena y arma el Mapping."""
-    ref_sub = ref[ch.ref_start:ch.ref_end]
-    read_sub = read[ch.read_start:ch.read_end]
-    if ch.strand == 1:
-        read_sub = _revcomp(read_sub)
+def _extend(ref: str, read: str, ch: Chain, k: int,
+            cstart: int, cend: int) -> Optional[Mapping]:
+    """Fase 5: alinea el READ COMPLETO contra la referencia y arma el Mapping.
+
+    La ventana de referencia se sitúa por la diagonal de la cadena
+    (``d`` = posición ref donde cae el inicio del read) y se recorta al contig
+    ``[cstart, cend)``. Así la alineación cubre todo el read (no solo la región
+    de la cadena); si el read sobresale por un borde del contig, esa parte queda
+    recortada (soft-clip) de forma natural.
+    """
+    Lr = len(read)
+    if ch.strand == 0:
+        d = int(np.median(ch.anchor_ref - ch.anchor_read))
+        oriented = read
+    else:
+        # hebra inversa: se alinea revcomp(read) hacia delante; diagonal:
+        d = int(np.median(ch.anchor_ref + ch.anchor_read)) - (Lr - k)
+        oriented = _revcomp(read)
+
+    rs = max(cstart, d)
+    re = min(cend, d + Lr)
+    if re - rs < 1:
+        return None
+    ref_sub = ref[rs:re]
+    read_sub = oriented[rs - d:re - d]        # porción del read dentro de la ventana
     if not ref_sub or not read_sub:
         return None
 
@@ -317,15 +343,20 @@ def _extend(ref: str, read: str, ch: Chain) -> Optional[Mapping]:
         cigar, n_match, block = _cigar(res.aligned_a, res.aligned_b)
         identity = res.identity
     except Exception:                       # noqa: BLE001 — extensión best-effort
-        cigar, n_match, block, identity = None, ch.n_anchors * ch.k, \
-            ch.ref_end - ch.ref_start, 1.0
+        cigar, n_match, block, identity = None, ch.n_anchors * k, re - rs, 1.0
+
+    # coords de query en el read ORIGINAL (hacia delante), aun en hebra inversa
+    if ch.strand == 0:
+        q_start, q_end = rs - d, re - d
+    else:
+        q_start, q_end = Lr - (re - d), Lr - (rs - d)
 
     return Mapping(
-        query_len=len(read),
-        query_start=ch.read_start, query_end=ch.read_end,
+        query_len=Lr,
+        query_start=q_start, query_end=q_end,
         strand="+" if ch.strand == 0 else "-",
         target_len=len(ref),
-        target_start=ch.ref_start, target_end=ch.ref_end,
+        target_start=rs, target_end=re,
         num_matches=n_match, block_len=block,
         mapq=0, identity=identity, chain_score=ch.score, cigar=cigar,
     )
@@ -357,18 +388,73 @@ def _mp_worker(args) -> "list[Mapping]":
 
 
 class GenomeAligner:
-    """Mapeador de reads contra una referencia (seed-chain-align)."""
+    """Mapeador de reads contra una referencia (seed-chain-align).
 
-    def __init__(self, reference: str, k: int = 15, w: int = 10,
+    La referencia puede ser:
+      • una cadena (un solo contig), o
+      • un dict ``{nombre: secuencia}`` o iterable de ``(nombre, secuencia)``
+        para varios cromosomas/contigs (genomas reales).
+
+    Multi-contig: los contigs se concatenan con separadores de ``N`` (que los
+    minimizers excluyen → ningún k-mer cruza fronteras). Se indexa el conjunto y
+    al mapear la posición global se traduce a (contig, posición local).
+    """
+
+    def __init__(self, reference, k: int = 15, w: int = 10,
                  max_occ: Optional[int] = 50, name: str = "ref"):
-        self.reference = reference.upper()
-        self.name = name
+        contigs = self._normalize(reference, name)      # [(nombre, seq), ...]
+        sep = "N" * k                                   # rompe k-meros de frontera
+        parts: list[str] = []
+        self._names: list[str] = []
+        self._starts_list: list[int] = []
+        self._lengths: list[int] = []
+        g = 0
+        for i, (nm, seq) in enumerate(contigs):
+            seq = seq.upper()
+            if i > 0:
+                parts.append(sep); g += len(sep)
+            self._names.append(str(nm))
+            self._starts_list.append(g)
+            self._lengths.append(len(seq))
+            parts.append(seq); g += len(seq)
+
+        self.reference = "".join(parts)                 # concatenado (con N)
+        self._starts = np.array(self._starts_list, dtype=np.int64)
+        self.name = self._names[0] if len(self._names) == 1 else "multi"
         self.index = ReferenceIndex.from_sequence(self.reference, k=k, w=w,
                                                   max_occ=max_occ)
+
+    @staticmethod
+    def _normalize(reference, name: str) -> "list[tuple[str, str]]":
+        if isinstance(reference, str):
+            return [(name, reference)]
+        if isinstance(reference, dict):
+            return list(reference.items())
+        return [(n, s) for n, s in reference]           # iterable de pares
 
     @property
     def k(self) -> int:
         return self.index.k
+
+    @property
+    def n_contigs(self) -> int:
+        return len(self._names)
+
+    def _contig_of(self, gpos: int) -> int:
+        """Índice del contig que contiene la posición global ``gpos``."""
+        i = int(np.searchsorted(self._starts, gpos, side="right")) - 1
+        return max(0, i)
+
+    def _localize(self, mp: Mapping) -> Mapping:
+        """Traduce coords globales de un mapeo a (contig, coords locales)."""
+        ci = self._contig_of(mp.target_start)
+        cstart, clen = self._starts_list[ci], self._lengths[ci]
+        return mp._replace(
+            target_name=self._names[ci],
+            target_len=clen,
+            target_start=mp.target_start - cstart,
+            target_end=min(mp.target_end - cstart, clen),
+        )
 
     def map(self, read: str, min_chain_score: float = 40.0,
             max_hits: int = 5) -> list[Mapping]:
@@ -378,9 +464,13 @@ class GenomeAligner:
         chains = chain(anchors, min_score=min_chain_score)[:max_hits]
         mappings: list[Mapping] = []
         for i, ch in enumerate(chains):
-            mp = _extend(self.reference, read, ch)
+            # Contig de la cadena → sus límites acotan la ventana de extensión.
+            ci = self._contig_of(ch.ref_start)
+            cstart = self._starts_list[ci]
+            cend = cstart + self._lengths[ci]
+            mp = _extend(self.reference, read, ch, self.k, cstart, cend)
             if mp is not None:
-                mappings.append(mp._replace(mapq=_mapq(chains, i)))
+                mappings.append(self._localize(mp._replace(mapq=_mapq(chains, i))))
         return mappings
 
     def map_batch(self, reads, n_processes: int = 0,

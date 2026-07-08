@@ -5,6 +5,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [4.0.0] — 2026-07-08
+
+**El mapeador de genomas, usable en datos reales.** Referencias
+multi-cromosoma y alineación del read completo.
+
+### Added
+- **Referencia multi-cromosoma.** `GenomeAligner` acepta una cadena (un contig)
+  **o** un `dict {nombre: secuencia}` / iterable de `(nombre, secuencia)` para
+  varios cromosomas/plásmidos/contigs. Los contigs se concatenan con
+  separadores `N` (los minimizers los excluyen → ningún k-mer cruza fronteras).
+  Los mapeos reportan el contig (`Mapping.target_name`) y **coordenadas
+  locales**; el PAF sale con el nombre correcto. `GenomeAligner.n_contigs`.
+
+### Changed
+- **Extensión del read completo.** La alineación cubre ahora todo el read (antes
+  solo la región de la cadena): mejor cobertura, posición exacta, y soft-clip
+  natural si el read sobresale por un borde del contig. `Mapping` gana el campo
+  `target_name`.
+
+### Notes
+- **Honestidad de velocidad:** correcto y funcional, pero el mapeo **aún no
+  compite en velocidad con minimap2** (~1–2 órdenes de magnitud más lento; el
+  índice sí es rápido). El siguiente gran paso es llevar toda la tubería de
+  mapeo a C. No se promociona como rival de velocidad todavía.
+
+---
+
 ## [3.4.0] — 2026-07-07
 
 **Coste de hueco del chaining, fórmula de minimap2 (4/6).**

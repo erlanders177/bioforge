@@ -146,6 +146,56 @@ def test_map_batch_igual_que_secuencial():
         assert [m.target_start for m in got] == [m.target_start for m in exp]
 
 
+def test_multicontig_mapea_al_contig_correcto():
+    rng = np.random.default_rng(30)
+    chr1 = "".join("ACGT"[i] for i in rng.integers(0, 4, 40_000))
+    chr2 = "".join("ACGT"[i] for i in rng.integers(0, 4, 25_000))
+    plas = "".join("ACGT"[i] for i in rng.integers(0, 4, 6_000))
+    ga = GenomeAligner({"chr1": chr1, "chr2": chr2, "plasmid": plas}, k=15, w=10)
+    assert ga.n_contigs == 3
+
+    # read de chr2: contig y coords LOCALES correctas
+    mp = ga.map(chr2[12_000:12_500])[0]
+    assert mp.target_name == "chr2"
+    assert mp.target_len == len(chr2)
+    assert mp.target_start - mp.query_start == 12_000     # diagonal local
+    assert mp.identity > 0.99
+
+    # read del plasmid en hebra inversa
+    mp = ga.map(_revcomp(plas[2_000:2_400]))[0]
+    assert mp.target_name == "plasmid"
+    assert mp.strand == "-"
+    assert mp.target_start < 2_400 and mp.target_end > 0
+
+    # el PAF lleva el contig correcto sin pasar target_name
+    assert ga.map(chr1[5_000:5_500])[0].to_paf().split("\t")[5] == "chr1"
+
+
+def test_extension_cubre_el_read_entero():
+    # La extensión alinea el read COMPLETO (no solo la región de la cadena).
+    genoma = _rng_seq(60_000, 33)
+    ga = GenomeAligner(genoma, k=15, w=10)
+    o, Lr = 25_000, 500
+    mp = ga.map(genoma[o : o + Lr])[0]
+    assert mp.query_start == 0            # empieza en el inicio del read…
+    assert mp.query_end == Lr             # …y llega al final
+    assert mp.target_start == o           # posición exacta (no + offset de minimizer)
+    assert mp.identity > 0.99
+    # con mutaciones también cubre el read entero
+    read = _mutate(genoma[o : o + 600], n_mut=12, seed_=2)
+    mp = ga.map(read)[0]
+    assert mp.query_start == 0 and mp.query_end == 600
+
+
+def test_multicontig_lista_de_pares():
+    # también acepta un iterable de (nombre, secuencia)
+    a = _rng_seq(8000, 31)
+    b = _rng_seq(8000, 32)
+    ga = GenomeAligner([("A", a), ("B", b)], k=15, w=10)
+    assert ga.n_contigs == 2
+    assert ga.map(b[3000:3400])[0].target_name == "B"
+
+
 def test_formato_paf():
     genoma = _rng_seq(30_000, 16)
     ga = GenomeAligner(genoma, k=15, w=10)
