@@ -42,6 +42,9 @@ Two core rules:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
+│  Level 4 — genomemap · minimizers · refindex   Genome mapper  │
+│  seed-chain-align (minimap2-style) · whole pipeline in C      │
+├──────────────────────────────────────────────────────────────┤
 │  Level 3 — bioforge/aligner.py           NW alignment         │
 │  Anti-diagonal wavefront O(m+n) · mutation detection         │
 ├──────────────────────────────────────────────────────────────┤
@@ -52,7 +55,7 @@ Two core rules:
 │  BitPacker · PackedSequence · SmartImporter · LUTs           │
 ├──────────────────────────────────────────────────────────────┤
 │  C engine — bioforge/engine/engine.c     Optional backend     │
-│  GCC -O3 -march=native -fopenmp · auto-loaded via ctypes     │
+│  GCC -O3 -fopenmp · auto-loaded via ctypes · NumPy fallback  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -76,22 +79,33 @@ State  Symbol            State  Symbol
 ## Installation
 
 ```bash
+pip install bioforge
+```
+
+Native wheels ship for **Windows, Linux and macOS** with the C engine
+pre-compiled inside — no compiler needed. On any other platform BioForge falls
+back to the pure-NumPy path automatically.
+
+**From source** (latest `main`):
+```bash
 git clone https://github.com/erlanders177/bioforge.git
 cd bioforge
-pip install -r requirements.txt      # only needs NumPy
+pip install -e .          # only needs NumPy
 ```
 
 **Requirements**
 - Python ≥ 3.10
 - NumPy ≥ 1.24 — the only runtime dependency
-- The C engine ships pre-compiled (`engine.dll`, zlib statically linked). If it
-  can't load on your platform, BioForge falls back to NumPy automatically.
+- The C engine ships pre-compiled (OpenMP, zlib and libdeflate statically linked
+  inside the binary). If it can't load on your platform, BioForge falls back to
+  NumPy automatically.
 
-**Optional — compile the C engine** (27–29× faster on translation and alignment):
+**Optional — recompile the C engine** (needed only if you build from source on an
+unsupported platform, or change `engine.c`):
 ```bash
 python bioforge/engine/build.py
 ```
-Requires GCC. On Windows: [MinGW-w64](https://www.mingw-w64.org/). On Linux/Mac: `sudo apt install gcc` / `brew install gcc`.  
+Requires GCC. On Windows: [MinGW-w64](https://www.mingw-w64.org/) / MSYS2. On Linux/Mac: `sudo apt install gcc` / `brew install gcc`.  
 If not compiled, BioForge falls back to NumPy automatically — no code changes needed.
 
 For development and testing:
@@ -237,7 +251,9 @@ for mut in result.mutations:
 ### Map long reads to a genome (Level 4 — seed-chain-align)
 
 Locate reads in a reference far beyond what the O(m·n) aligner can handle,
-minimap2-style: minimizer seeding → chaining (C DP) → banded extension.
+minimap2-style: minimizer seeding → chaining → banded extension of the full read.
+The **entire pipeline runs in C** behind an opaque index handle; Python is a thin
+cover (with a verified, identical NumPy fallback).
 
 ```python
 from bioforge import GenomeAligner
@@ -249,19 +265,21 @@ for m in mapper.map(read):
     print(m.to_paf())                # standard PAF, one line per mapping
     print(m.target_name, m.strand, m.target_start, f"{m.identity:.1%}")
 
-# Map many reads in parallel (uses processes):
+# Map many reads in parallel — OpenMP inside the C engine (GIL-free):
 results = mapper.map_batch(reads, n_processes=0)   # 0 = all cores
 ```
 
 Handles multi-chromosome references (reports the contig + local coordinates),
 both strands, aligns the full read, tolerates mismatches/indels, and reports a
-mapping quality. The minimizer and chaining kernels run in the C engine (with
-NumPy fallbacks).
+mapping quality. Built once, the C index is reused for every query;
+`map_batch` maps the whole batch in a single C call parallelised with OpenMP.
 
-> **Speed, honestly:** indexing is fast, but read mapping is not yet
-> competitive with hand-tuned C mappers like minimap2 — the mapping pipeline is
-> being moved into the C engine. Use BioForge's mapper where its strengths fit:
-> pure-Python/NumPy core, tiny footprint, `pip install` and go, no C toolchain.
+> **Speed, honestly:** the whole mapping pipeline now lives in C, but it is **not
+> yet competitive with hand-tuned mappers like minimap2** (~30–50× slower
+> single-threaded). The remaining bottleneck is the scalar base-level DP; the next
+> milestone is SIMD (KSW2/SSE) alignment. Use BioForge's mapper where its
+> strengths fit today: tiny footprint, `pip install` and go, correct PAF output,
+> transparent NumPy fallback — not where raw mapping throughput is the priority.
 
 ### Full mutation analysis pipeline (DNA + protein)
 
@@ -308,13 +326,17 @@ bioforge/               Python package — all core modules
   biocore.py            Level 1 — 5-bit storage engine
   smart_translator.py   Level 2 — DNA → protein translation
   aligner.py            Level 3 — pairwise alignment + mutation detection
+  minimizers.py         Level 4 — canonical (w, k) minimizers (C + NumPy)
+  refindex.py           Level 4 — reference minimizer index (hash-sorted lookup)
+  genomemap.py          Level 4 — GenomeAligner: seed-chain-align → PAF
   analyze.py            Full pipeline: DNA + protein analysis, report generation
   qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
   bgzf.py               BGZF converter (parallel block gzip) — bioforge-bgzip
   engine/
-    engine.c            C source — pack, unpack, NW align, translate (GCC -O3)
-    engine.dll          Compiled C backend (Windows)
+    engine.c            C source — pack/unpack, NW, translate, parser, mapper
+    engine.dll          Compiled C backend (Windows; .so on Linux/macOS)
     _loader.py          ctypes wrapper with automatic NumPy fallback
+    build.py            Compiles the DLL/SO (auto-detects GCC)
 
 check.py                Non-programmer verifier (runs all checks automatically)
 conftest.py             Pytest fixtures shared across all tests
@@ -332,6 +354,10 @@ tests/
   test_analyze.py       Pipeline: full integration tests + CLI tests
   test_streaming.py     Streaming/batch parser + columnar API (Sequence/ReadBatch)
   test_qcreport.py      FASTQ quality report (qcreport.py)
+  test_minimizers.py    L4: canonical minimizers (C == NumPy parity)
+  test_refindex.py      L4: reference index lookup
+  test_genomemap.py     L4: seed-chain-align, multi-contig, PAF, robustness
+  test_cindex.py        L4: opaque C index parity (bio_index_build)
 
 docs/
   architecture.md       Design rules, levels, encoding details
@@ -383,7 +409,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (269 tests)
+# Full test suite (354 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -401,8 +427,9 @@ python check.py
 |------------|--------|
 | Aligner memory (full NW) | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Use `band=N` for large sequences. |
 | Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
-| C engine | Pre-compiled `.dll`/`.so` not included. Run `python bioforge/engine/build.py` to compile. Requires GCC. |
+| C engine | Ships pre-compiled in the PyPI wheels. Building from source on an unsupported platform needs GCC (`python bioforge/engine/build.py`). |
 | Banded NW (NumPy fallback) | Without the C engine, banded NW uses the full matrix with NEG_INF masking — same result, standard RAM. |
+| Genome mapper speed | Correct and fully in C, but ~30–50× slower than minimap2 single-threaded. The scalar base-level DP is the bottleneck; SIMD alignment is the next milestone (v6.0). |
 
 ---
 
@@ -426,8 +453,11 @@ python check.py
 - [x] Fast FASTQ quality report (FastQC-style) — `bioforge-qc` / `bioforge.qcreport`
 - [x] Adaptive multi-core dispatcher — `n_threads=`: parallel parse + libdeflate `.gz`
 - [x] BGZF parallel-decompressible `.gz` + converter — `bioforge-bgzip`
-- [ ] Native per-platform wheels on PyPI (cibuildwheel)
-- [ ] Long-read / genome-scale aligner (k-mer seeding)
+- [x] Native per-platform wheels on PyPI (cibuildwheel) — `pip install bioforge`
+- [x] Long-read / genome-scale aligner — `GenomeAligner` (seed-chain-align, PAF)
+- [x] Whole mapping pipeline in C behind an opaque index — `bio_map_read` / `bio_map_batch` (OpenMP)
+- [ ] **SIMD (KSW2/SSE) base-level alignment** — close the gap to minimap2 *(v6.0)*
+- [ ] Head-to-head benchmark vs minimap2 on real genomes (WSL)
 
 ---
 
