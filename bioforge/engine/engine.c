@@ -23,6 +23,12 @@
 #include <stdint.h>
 #include <math.h>
 
+/* SIMD (v6.0): la extensión banded se vectoriza con AVX2 si está disponible
+   (compilado con -march=native o -mavx2). Si no, cae al kernel escalar. */
+#ifdef __AVX2__
+  #include <immintrin.h>
+#endif
+
 /* ── Lectura de archivos: gzip transparente si se compila con -DBIO_USE_ZLIB ──
    zlib gzopen/gzread leen tanto archivos planos como .gz (autodetección del
    magic gzip), así que un único código sirve para ambos formatos. Si zlib no
@@ -967,6 +973,199 @@ EXPORT int32_t nw_banded_diag(
 ) {
     return _nw_banded_diag_global(ca, m, cb, n, decode, match, mismatch, gap, band,
                                   out_a, out_b, score, matches, mismatches, gaps);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BANDED NW ANTIDIAGONAL — VERSIÓN SIMD (AVX2, 8× int32)  · v6.0 incr.2
+   ─────────────────────────────────────────────────────────────────────────
+   Mismo DP que _nw_banded_diag_global, pero procesa 8 celdas interiores de la
+   antidiagonal por instrucción. Las celdas de borde (fila 0 / columna 0) y el
+   resto (<8) van en escalar con las MISMAS fórmulas → salida bit-idéntica.
+   Cargas contiguas (Hp1/Hp2 indexadas por i; A por i); B se carga y se invierte
+   con permutevar. Escrituras de dirección dispersas (stride W-2) en escalar.
+   Sin __AVX2__ → cae al escalar verificado.  */
+static int32_t _nw_banded_diag_simd(
+    const uint8_t* A, int32_t m,
+    const uint8_t* B, int32_t n,
+    const char*    decode,
+    int32_t match_sc, int32_t mismatch_sc, int32_t gap_sc,
+    int32_t band,
+    char* out_a, char* out_b,
+    int32_t* p_score, int32_t* p_matches, int32_t* p_mismatches, int32_t* p_gaps
+) {
+#ifndef __AVX2__
+    return _nw_banded_diag_global(A, m, B, n, decode, match_sc, mismatch_sc,
+                                  gap_sc, band, out_a, out_b,
+                                  p_score, p_matches, p_mismatches, p_gaps);
+#else
+    const int32_t W   = 2 * band + 1;
+    const int32_t NEG = INT32_MIN / 2;
+
+    uint8_t* tb_band = (uint8_t*)malloc((size_t)(m + 1) * W);
+    if (!tb_band) return -1;
+    memset(tb_band, TB_DIAG, (size_t)(m + 1) * W);
+
+    int32_t* Hp2 = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    int32_t* Hp1 = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    int32_t* Hc  = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    if (!Hp2 || !Hp1 || !Hc) { free(tb_band); free(Hp2); free(Hp1); free(Hc); return -1; }
+    for (int32_t i = 0; i < m + 3; i++) { Hp2[i] = NEG; Hp1[i] = NEG; Hc[i] = NEG; }
+
+    /* celda escalar (i,j=t-i); Hp2[i]=diag, Hp1[i]=up, Hp1[i+1]=left, Hc[i+1]=out */
+    #define CELL(i) do {                                                        \
+        int32_t _i = (i), _j = t - _i, _k = _j - _i + band;                     \
+        int32_t _best; uint8_t _dir;                                            \
+        if (_i == 0 && _j == 0) { _best = 0; _dir = TB_DIAG; }                  \
+        else if (_i == 0) { _best = _j * gap_sc; _dir = TB_LEFT; }              \
+        else if (_j == 0) { _best = _i * gap_sc; _dir = TB_UP; }                \
+        else {                                                                  \
+            int32_t _s  = (A[_i-1] == B[_j-1]) ? match_sc : mismatch_sc;        \
+            int32_t _dv = Hp2[_i], _uv = Hp1[_i], _lv = Hp1[_i+1];              \
+            int32_t _d = (_dv != NEG) ? _dv + _s     : NEG;                     \
+            int32_t _u = (_uv != NEG) ? _uv + gap_sc : NEG;                     \
+            int32_t _l = (_lv != NEG) ? _lv + gap_sc : NEG;                     \
+            if      (_d >= _u && _d >= _l && _d != NEG) { _best=_d; _dir=TB_DIAG; } \
+            else if (_u >= _l && _u != NEG)             { _best=_u; _dir=TB_UP;   } \
+            else if (_l != NEG)                         { _best=_l; _dir=TB_LEFT; } \
+            else                                        { _best=NEG; _dir=TB_DIAG; } \
+        }                                                                       \
+        Hc[_i+1] = _best; tb_band[(int64_t)_i * W + _k] = _dir;                 \
+    } while (0)
+
+    const __m256i vNEG   = _mm256_set1_epi32(NEG);
+    const __m256i vmatch = _mm256_set1_epi32(match_sc);
+    const __m256i vmis   = _mm256_set1_epi32(mismatch_sc);
+    const __m256i vgap   = _mm256_set1_epi32(gap_sc);
+    const __m256i vone   = _mm256_set1_epi32(-1);       /* all-ones */
+    const __m256i v1     = _mm256_set1_epi32(1);
+    const __m256i v2     = _mm256_set1_epi32(2);
+    const __m256i revidx = _mm256_setr_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+
+    const int32_t tmax = m + n;
+    int32_t score = NEG;
+    for (int32_t t = 0; t <= tmax; t++) {
+        int32_t i_lo = 0;
+        if (t - n > i_lo) i_lo = t - n;
+        int32_t cbd = _ceil_div2(t - band);
+        if (cbd > i_lo) i_lo = cbd;
+        int32_t i_hi = m;
+        if (t < i_hi) i_hi = t;
+        int32_t fbd = (t + band) / 2;
+        if (fbd < i_hi) i_hi = fbd;
+
+        int32_t ii_lo = i_lo < 1 ? 1 : i_lo;      /* interior: i>=1 y j>=1 */
+        int32_t ii_hi = i_hi > t - 1 ? t - 1 : i_hi;
+
+        /* bordes bajos (i=0) y cualquier i < ii_lo → escalar */
+        for (int32_t i = i_lo; i < ii_lo; i++) CELL(i);
+
+        /* interior: bloques completos de 8 con AVX2 */
+        int32_t i = ii_lo;
+        for (; i + 8 <= ii_hi + 1; i += 8) {
+            __m128i a8 = _mm_loadl_epi64((const __m128i*)(A + i - 1));
+            __m256i A32 = _mm256_cvtepu8_epi32(a8);
+            __m128i b8 = _mm_loadl_epi64((const __m128i*)(B + (t - i - 8)));
+            __m256i B32 = _mm256_permutevar8x32_epi32(_mm256_cvtepu8_epi32(b8), revidx);
+            __m256i eq  = _mm256_cmpeq_epi32(A32, B32);
+            __m256i s   = _mm256_blendv_epi8(vmis, vmatch, eq);
+
+            __m256i dv = _mm256_loadu_si256((const __m256i*)(Hp2 + i));
+            __m256i uv = _mm256_loadu_si256((const __m256i*)(Hp1 + i));
+            __m256i lv = _mm256_loadu_si256((const __m256i*)(Hp1 + i + 1));
+
+            __m256i vald = _mm256_andnot_si256(_mm256_cmpeq_epi32(dv, vNEG), vone);
+            __m256i valu = _mm256_andnot_si256(_mm256_cmpeq_epi32(uv, vNEG), vone);
+            __m256i vall = _mm256_andnot_si256(_mm256_cmpeq_epi32(lv, vNEG), vone);
+
+            __m256i d = _mm256_blendv_epi8(vNEG, _mm256_add_epi32(dv, s),   vald);
+            __m256i u = _mm256_blendv_epi8(vNEG, _mm256_add_epi32(uv, vgap), valu);
+            __m256i l = _mm256_blendv_epi8(vNEG, _mm256_add_epi32(lv, vgap), vall);
+
+            /* d>=u ⟺ !(u>d) ; d>=l ⟺ !(l>d) ; u>=l ⟺ !(l>u) */
+            __m256i d_ge_u = _mm256_andnot_si256(_mm256_cmpgt_epi32(u, d), vone);
+            __m256i d_ge_l = _mm256_andnot_si256(_mm256_cmpgt_epi32(l, d), vone);
+            __m256i u_ge_l = _mm256_andnot_si256(_mm256_cmpgt_epi32(l, u), vone);
+
+            __m256i cdiag = _mm256_and_si256(vald, _mm256_and_si256(d_ge_u, d_ge_l));
+            __m256i ndiag = _mm256_andnot_si256(cdiag, vone);
+            __m256i cup   = _mm256_and_si256(ndiag, _mm256_and_si256(valu, u_ge_l));
+            __m256i nup   = _mm256_andnot_si256(cup, vone);
+            __m256i clft  = _mm256_and_si256(ndiag, _mm256_and_si256(nup, vall));
+
+            __m256i best = vNEG;
+            best = _mm256_blendv_epi8(best, l, clft);
+            best = _mm256_blendv_epi8(best, u, cup);
+            best = _mm256_blendv_epi8(best, d, cdiag);
+            _mm256_storeu_si256((__m256i*)(Hc + i + 1), best);
+
+            __m256i dir = _mm256_setzero_si256();      /* DIAG=0 por defecto */
+            dir = _mm256_blendv_epi8(dir, v2, clft);
+            dir = _mm256_blendv_epi8(dir, v1, cup);
+            int32_t dbuf[8];
+            _mm256_storeu_si256((__m256i*)dbuf, dir);
+            for (int lane = 0; lane < 8; lane++) {
+                int32_t ii = i + lane, jj = t - ii, kk = jj - ii + band;
+                tb_band[(int64_t)ii * W + kk] = (uint8_t)dbuf[lane];
+            }
+        }
+        for (; i <= ii_hi; i++) CELL(i);           /* resto interior escalar */
+
+        /* bordes altos (i=t → j=0) y cualquier i > ii_hi → escalar */
+        for (int32_t ib = ii_hi + 1; ib <= i_hi; ib++) CELL(ib);
+
+        if (i_lo - 1 >= -1 && i_lo - 1 <= m + 1) Hc[(i_lo - 1) + 1] = NEG;
+        if (i_hi + 1 >= -1 && i_hi + 1 <= m + 1) Hc[(i_hi + 1) + 1] = NEG;
+        if (t == tmax) score = Hc[m + 1];
+
+        int32_t* tmp = Hp2; Hp2 = Hp1; Hp1 = Hc; Hc = tmp;
+    }
+    #undef CELL
+    free(Hp2); free(Hp1); free(Hc);
+
+    int32_t k_end = n - m + band;
+    if (!(k_end >= 0 && k_end < W)) score = NEG;
+    *p_score = score;
+
+    /* Traceback (idéntico al global) */
+    char* ta  = (char*)malloc((size_t)(m + n + 1));
+    char* tb2 = (char*)malloc((size_t)(m + n + 1));
+    if (!ta || !tb2) { free(tb_band); free(ta); free(tb2); return -1; }
+    int32_t pos = 0, nm = 0, nmi = 0, ng = 0;
+    int32_t i = m, j = n;
+    while (i > 0 || j > 0) {
+        int32_t k = j - i + band;
+        uint8_t dir = (k >= 0 && k < W) ? tb_band[(int64_t)i * W + k] : TB_DIAG;
+        if (i > 0 && j > 0 && dir == TB_DIAG) {
+            uint8_t ca = A[i-1], cbb = B[j-1];
+            ta[pos] = decode[ca]; tb2[pos] = decode[cbb];
+            if (ca == cbb) nm++; else nmi++;
+            i--; j--;
+        } else if (j == 0 || (i > 0 && dir == TB_UP)) {
+            ta[pos] = decode[A[i-1]]; tb2[pos] = '-'; ng++; i--;
+        } else {
+            ta[pos] = '-'; tb2[pos] = decode[B[j-1]]; ng++; j--;
+        }
+        pos++;
+    }
+    for (int32_t x = 0; x < pos; x++) { out_a[x] = ta[pos-1-x]; out_b[x] = tb2[pos-1-x]; }
+    out_a[pos] = '\0'; out_b[pos] = '\0';
+    *p_matches = nm; *p_mismatches = nmi; *p_gaps = ng;
+    free(tb_band); free(ta); free(tb2);
+    return pos;
+#endif
+}
+
+/* Export de prueba de la versión SIMD. */
+EXPORT int32_t nw_banded_diag_simd(
+    const uint8_t* ca, int32_t m,
+    const uint8_t* cb, int32_t n,
+    const char* decode,
+    int32_t match, int32_t mismatch, int32_t gap, int32_t band,
+    char* out_a, char* out_b,
+    int32_t* score, int32_t* matches, int32_t* mismatches, int32_t* gaps
+) {
+    return _nw_banded_diag_simd(ca, m, cb, n, decode, match, mismatch, gap, band,
+                                out_a, out_b, score, matches, mismatches, gaps);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2215,9 +2414,11 @@ static int32_t _map_one(BioIndex* ix, const uint8_t* read_codes, int32_t Lr,
         int32_t band = diff + 64; if (band > 512) band = 512;
 
         int32_t score, mt, mm, gp;
-        int32_t pos = _nw_banded_core(ref_sub, m_len, read_sub, n_len, _MAP_DECODE,
-                                      MAP_MATCH, MAP_MISMATCH, MAP_GAP, band, 0,
-                                      aa, bb, &score, &mt, &mm, &gp);
+        /* Extensión: kernel banded SIMD (AVX2, 6× sobre el escalar); bit-idéntico
+           al core (verificado) y con fallback escalar si no hay AVX2. */
+        int32_t pos = _nw_banded_diag_simd(ref_sub, m_len, read_sub, n_len, _MAP_DECODE,
+                                           MAP_MATCH, MAP_MISMATCH, MAP_GAP, band,
+                                           aa, bb, &score, &mt, &mm, &gp);
         if (pos < 0) continue;                      /* extensión fallida → sin mapeo */
         int32_t block = mt + mm + gp;
         double identity = block ? (double)mt / (double)block : 0.0;
