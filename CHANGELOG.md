@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.2.0] — 2026-07-09
+
+**Extensión SIMD int16 (16 carriles) — recorta el gap de 1 hilo.** El kernel
+antidiagonal gana una variante de 16 bits que procesa el doble de celdas por
+instrucción cuando los scores caben (reads ≤ 12 000 bp); reads más largos siguen
+en int32. Multinúcleo sigue a la par de minimap2.
+
+### Added
+- **`_nw_banded_diag_simd_i16`** — versión AVX2 int16 (16× carriles) del kernel
+  banded antidiagonal, con inversión de 16 int16 (shuffle por-carril + swap de
+  mitades). Un dispatcher enruta por tamaño: int16 (m,n ≤ 12000) → int32 (8×) →
+  escalar (sin AVX2). Bit-idéntica al escalar (mismo DP y empate).
+
+### Performance (honesto — WSL, 4.8 Mb, 6000 reads, 5% error, minimap2 -a)
+- Kernel extensión 2000×2000: **1.42×** sobre int32 (el 2× teórico se diluye por
+  costes fijos: malloc, traceback, bordes, que no vectorizan).
+- 1 hilo: BioForge ~1.87 vs minimap2 ~2.2 Mb/s → **~1.18×** por detrás (antes ~1.3×).
+- 4 núcleos: **a la par / por delante** (~4.3-5.0 vs ~4.3-4.9). Ambos mapean 6000.
+- El resto del gap de 1 hilo se reparte entre seeding (~25%) y chaining (~34%);
+  cerrarlo del todo es rendimiento decreciente.
+
+### Tests
+- Paridad kernel int16↔core **0/muchos** (incl. N, bordes, banda estrecha);
+  **valgrind 0 errores / 0 fugas** sobre el int16 (WSL, con su inversión de 16
+  carriles). **361 tests**.
+
+---
+
 ## [6.1.0] — 2026-07-09
 
 **Salida columnar en `map_batch` — el multinúcleo alcanza a minimap2.** Se elimina

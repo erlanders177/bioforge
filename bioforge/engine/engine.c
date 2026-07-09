@@ -984,7 +984,7 @@ EXPORT int32_t nw_banded_diag(
    Cargas contiguas (Hp1/Hp2 indexadas por i; A por i); B se carga y se invierte
    con permutevar. Escrituras de dirección dispersas (stride W-2) en escalar.
    Sin __AVX2__ → cae al escalar verificado.  */
-static int32_t _nw_banded_diag_simd(
+static int32_t _nw_banded_diag_simd_i32(
     const uint8_t* A, int32_t m,
     const uint8_t* B, int32_t n,
     const char*    decode,
@@ -1155,7 +1155,201 @@ static int32_t _nw_banded_diag_simd(
 #endif
 }
 
-/* Export de prueba de la versión SIMD. */
+/* ── VERSIÓN SIMD int16 (AVX2, 16× carriles) · v6.2 ───────────────────────────
+   Idéntica al DP int32 pero con enteros de 16 bits → DOBLE de celdas por
+   instrucción. Válida solo si los scores caben sin desbordar: para m,n ≤ ~12000
+   (score máx 2·L ≈ 24000 < 32767; NEG=-16384 < cualquier score real). El
+   dispatcher enruta reads más largos al int32. Bit-idéntica (mismo DP y empate).
+   La inversión de 16 int16 = shuffle por-carril (128b) + swap de mitades. */
+static int32_t _nw_banded_diag_simd_i16(
+    const uint8_t* A, int32_t m,
+    const uint8_t* B, int32_t n,
+    const char*    decode,
+    int32_t match_sc, int32_t mismatch_sc, int32_t gap_sc,
+    int32_t band,
+    char* out_a, char* out_b,
+    int32_t* p_score, int32_t* p_matches, int32_t* p_mismatches, int32_t* p_gaps
+) {
+#ifndef __AVX2__
+    return _nw_banded_diag_global(A, m, B, n, decode, match_sc, mismatch_sc,
+                                  gap_sc, band, out_a, out_b,
+                                  p_score, p_matches, p_mismatches, p_gaps);
+#else
+    const int32_t W   = 2 * band + 1;
+    const int32_t NEG = -16384;                 /* < cualquier score real (m,n≤12000) */
+
+    uint8_t* tb_band = (uint8_t*)malloc((size_t)(m + 1) * W);
+    if (!tb_band) return -1;
+    memset(tb_band, TB_DIAG, (size_t)(m + 1) * W);
+
+    int16_t* Hp2 = (int16_t*)malloc((size_t)(m + 3) * sizeof(int16_t));
+    int16_t* Hp1 = (int16_t*)malloc((size_t)(m + 3) * sizeof(int16_t));
+    int16_t* Hc  = (int16_t*)malloc((size_t)(m + 3) * sizeof(int16_t));
+    if (!Hp2 || !Hp1 || !Hc) { free(tb_band); free(Hp2); free(Hp1); free(Hc); return -1; }
+    for (int32_t i = 0; i < m + 3; i++) { Hp2[i] = (int16_t)NEG; Hp1[i] = (int16_t)NEG; Hc[i] = (int16_t)NEG; }
+
+    #define CELL16(ii) do {                                                    \
+        int32_t _i = (ii), _j = t - _i, _k = _j - _i + band;                   \
+        int32_t _best; uint8_t _dir;                                           \
+        if (_i == 0 && _j == 0) { _best = 0; _dir = TB_DIAG; }                 \
+        else if (_i == 0) { _best = _j * gap_sc; _dir = TB_LEFT; }             \
+        else if (_j == 0) { _best = _i * gap_sc; _dir = TB_UP; }               \
+        else {                                                                 \
+            int32_t _s  = (A[_i-1] == B[_j-1]) ? match_sc : mismatch_sc;        \
+            int32_t _dv = Hp2[_i], _uv = Hp1[_i], _lv = Hp1[_i+1];             \
+            int32_t _d = (_dv != NEG) ? _dv + _s     : NEG;                    \
+            int32_t _u = (_uv != NEG) ? _uv + gap_sc : NEG;                    \
+            int32_t _l = (_lv != NEG) ? _lv + gap_sc : NEG;                    \
+            if      (_d >= _u && _d >= _l && _d != NEG) { _best=_d; _dir=TB_DIAG; } \
+            else if (_u >= _l && _u != NEG)             { _best=_u; _dir=TB_UP;   } \
+            else if (_l != NEG)                         { _best=_l; _dir=TB_LEFT; } \
+            else                                        { _best=NEG; _dir=TB_DIAG; } \
+        }                                                                      \
+        Hc[_i+1] = (int16_t)_best; tb_band[(int64_t)_i * W + _k] = _dir;        \
+    } while (0)
+
+    const __m256i vNEG   = _mm256_set1_epi16((short)NEG);
+    const __m256i vmatch = _mm256_set1_epi16((short)match_sc);
+    const __m256i vmis   = _mm256_set1_epi16((short)mismatch_sc);
+    const __m256i vgap   = _mm256_set1_epi16((short)gap_sc);
+    const __m256i vone   = _mm256_set1_epi16(-1);
+    const __m256i v1     = _mm256_set1_epi16(1);
+    const __m256i v2     = _mm256_set1_epi16(2);
+    const __m256i rev16  = _mm256_setr_epi8(14,15,12,13,10,11,8,9,6,7,4,5,2,3,0,1,
+                                            14,15,12,13,10,11,8,9,6,7,4,5,2,3,0,1);
+
+    const int32_t tmax = m + n;
+    int32_t score = NEG;
+    for (int32_t t = 0; t <= tmax; t++) {
+        int32_t i_lo = 0;
+        if (t - n > i_lo) i_lo = t - n;
+        int32_t cbd = _ceil_div2(t - band);
+        if (cbd > i_lo) i_lo = cbd;
+        int32_t i_hi = m;
+        if (t < i_hi) i_hi = t;
+        int32_t fbd = (t + band) / 2;
+        if (fbd < i_hi) i_hi = fbd;
+
+        int32_t ii_lo = i_lo < 1 ? 1 : i_lo;
+        int32_t ii_hi = i_hi > t - 1 ? t - 1 : i_hi;
+
+        for (int32_t i = i_lo; i < ii_lo; i++) CELL16(i);
+
+        int32_t i = ii_lo;
+        for (; i + 16 <= ii_hi + 1; i += 16) {
+            __m256i A16 = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*)(A + i - 1)));
+            __m256i Bl  = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*)(B + (t - i - 16))));
+            Bl = _mm256_shuffle_epi8(Bl, rev16);
+            __m256i B16 = _mm256_permute2x128_si256(Bl, Bl, 0x01);   /* invierte 16 int16 */
+            __m256i eq  = _mm256_cmpeq_epi16(A16, B16);
+            __m256i s   = _mm256_blendv_epi8(vmis, vmatch, eq);
+
+            __m256i dv = _mm256_loadu_si256((const __m256i*)(Hp2 + i));
+            __m256i uv = _mm256_loadu_si256((const __m256i*)(Hp1 + i));
+            __m256i lv = _mm256_loadu_si256((const __m256i*)(Hp1 + i + 1));
+
+            __m256i vald = _mm256_andnot_si256(_mm256_cmpeq_epi16(dv, vNEG), vone);
+            __m256i valu = _mm256_andnot_si256(_mm256_cmpeq_epi16(uv, vNEG), vone);
+            __m256i vall = _mm256_andnot_si256(_mm256_cmpeq_epi16(lv, vNEG), vone);
+
+            __m256i d = _mm256_blendv_epi8(vNEG, _mm256_add_epi16(dv, s),    vald);
+            __m256i u = _mm256_blendv_epi8(vNEG, _mm256_add_epi16(uv, vgap), valu);
+            __m256i l = _mm256_blendv_epi8(vNEG, _mm256_add_epi16(lv, vgap), vall);
+
+            __m256i d_ge_u = _mm256_andnot_si256(_mm256_cmpgt_epi16(u, d), vone);
+            __m256i d_ge_l = _mm256_andnot_si256(_mm256_cmpgt_epi16(l, d), vone);
+            __m256i u_ge_l = _mm256_andnot_si256(_mm256_cmpgt_epi16(l, u), vone);
+
+            __m256i cdiag = _mm256_and_si256(vald, _mm256_and_si256(d_ge_u, d_ge_l));
+            __m256i ndiag = _mm256_andnot_si256(cdiag, vone);
+            __m256i cup   = _mm256_and_si256(ndiag, _mm256_and_si256(valu, u_ge_l));
+            __m256i nup   = _mm256_andnot_si256(cup, vone);
+            __m256i clft  = _mm256_and_si256(ndiag, _mm256_and_si256(nup, vall));
+
+            __m256i best = vNEG;
+            best = _mm256_blendv_epi8(best, l, clft);
+            best = _mm256_blendv_epi8(best, u, cup);
+            best = _mm256_blendv_epi8(best, d, cdiag);
+            _mm256_storeu_si256((__m256i*)(Hc + i + 1), best);
+
+            __m256i dir = _mm256_setzero_si256();
+            dir = _mm256_blendv_epi8(dir, v2, clft);
+            dir = _mm256_blendv_epi8(dir, v1, cup);
+            int16_t dbuf[16];
+            _mm256_storeu_si256((__m256i*)dbuf, dir);
+            for (int lane = 0; lane < 16; lane++) {
+                int32_t ii = i + lane, jj = t - ii, kk = jj - ii + band;
+                tb_band[(int64_t)ii * W + kk] = (uint8_t)dbuf[lane];
+            }
+        }
+        for (; i <= ii_hi; i++) CELL16(i);
+
+        for (int32_t ib = ii_hi + 1; ib <= i_hi; ib++) CELL16(ib);
+
+        if (i_lo - 1 >= -1 && i_lo - 1 <= m + 1) Hc[(i_lo - 1) + 1] = (int16_t)NEG;
+        if (i_hi + 1 >= -1 && i_hi + 1 <= m + 1) Hc[(i_hi + 1) + 1] = (int16_t)NEG;
+        if (t == tmax) score = Hc[m + 1];
+
+        int16_t* tmp = Hp2; Hp2 = Hp1; Hp1 = Hc; Hc = tmp;
+    }
+    #undef CELL16
+    free(Hp2); free(Hp1); free(Hc);
+
+    /* Fuera de banda: mismo sentinela que el core int32 (paridad exacta del score). */
+    int32_t k_end = n - m + band;
+    if (!(k_end >= 0 && k_end < W)) score = INT32_MIN / 2;
+    *p_score = score;
+
+    char* ta  = (char*)malloc((size_t)(m + n + 1));
+    char* tb2 = (char*)malloc((size_t)(m + n + 1));
+    if (!ta || !tb2) { free(tb_band); free(ta); free(tb2); return -1; }
+    int32_t pos = 0, nm = 0, nmi = 0, ng = 0;
+    int32_t i = m, j = n;
+    while (i > 0 || j > 0) {
+        int32_t k = j - i + band;
+        uint8_t dir = (k >= 0 && k < W) ? tb_band[(int64_t)i * W + k] : TB_DIAG;
+        if (i > 0 && j > 0 && dir == TB_DIAG) {
+            uint8_t ca = A[i-1], cbb = B[j-1];
+            ta[pos] = decode[ca]; tb2[pos] = decode[cbb];
+            if (ca == cbb) nm++; else nmi++;
+            i--; j--;
+        } else if (j == 0 || (i > 0 && dir == TB_UP)) {
+            ta[pos] = decode[A[i-1]]; tb2[pos] = '-'; ng++; i--;
+        } else {
+            ta[pos] = '-'; tb2[pos] = decode[B[j-1]]; ng++; j--;
+        }
+        pos++;
+    }
+    for (int32_t x = 0; x < pos; x++) { out_a[x] = ta[pos-1-x]; out_b[x] = tb2[pos-1-x]; }
+    out_a[pos] = '\0'; out_b[pos] = '\0';
+    *p_matches = nm; *p_mismatches = nmi; *p_gaps = ng;
+    free(tb_band); free(ta); free(tb2);
+    return pos;
+#endif
+}
+
+/* Dispatcher: int16 (16×) si cabe sin desbordar, si no int32 (8×) o escalar. */
+static int32_t _nw_banded_diag_simd(
+    const uint8_t* A, int32_t m,
+    const uint8_t* B, int32_t n,
+    const char*    decode,
+    int32_t match_sc, int32_t mismatch_sc, int32_t gap_sc,
+    int32_t band,
+    char* out_a, char* out_b,
+    int32_t* p_score, int32_t* p_matches, int32_t* p_mismatches, int32_t* p_gaps
+) {
+#ifdef __AVX2__
+    if (m <= 12000 && n <= 12000)
+        return _nw_banded_diag_simd_i16(A, m, B, n, decode, match_sc, mismatch_sc,
+                                        gap_sc, band, out_a, out_b,
+                                        p_score, p_matches, p_mismatches, p_gaps);
+#endif
+    return _nw_banded_diag_simd_i32(A, m, B, n, decode, match_sc, mismatch_sc,
+                                    gap_sc, band, out_a, out_b,
+                                    p_score, p_matches, p_mismatches, p_gaps);
+}
+
+/* Export de prueba de la versión SIMD (usa el dispatcher: int16/int32/escalar). */
 EXPORT int32_t nw_banded_diag_simd(
     const uint8_t* ca, int32_t m,
     const uint8_t* cb, int32_t n,
