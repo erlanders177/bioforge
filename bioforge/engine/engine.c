@@ -2497,7 +2497,9 @@ EXPORT int32_t bio_map_batch(void* handle, const uint8_t* reads_concat,
     if (!ix) return -1;
     int32_t err = 0;
 #ifdef _OPENMP
-    if (n_threads > 0) omp_set_num_threads(n_threads);
+    /* n_threads>0 → ese nº; <=0 → todos los núcleos. Se fija SIEMPRE para no
+       heredar un contador reducido de una llamada previa (bug de escalado). */
+    omp_set_num_threads(n_threads > 0 ? n_threads : omp_get_num_procs());
     #pragma omp parallel for schedule(dynamic, 16)
 #endif
     for (int32_t i = 0; i < n_reads; i++) {
