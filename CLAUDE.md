@@ -104,6 +104,16 @@ estándar adecuado (compatibilidad). Jerarquía (en `biocore.py`):
 **uso/argumento** (p.ej. `mode` inválido, salida==entrada) sí pueden ser
 `ValueError` plano, como ya hace `analyze.py`.
 
+### 9. Actualizar el README en cada versión — ANTES de taggear
+El `README.md` es el escaparate público (GitHub **y** la página de PyPI, que se
+construye del tag). En cada versión, actualizar el README **en el mismo commit de
+release, antes de crear el tag**, para que GitHub y PyPI muestren siempre el
+estado real. Cifras clave, cuenta de tests, roadmap y limitaciones deben cuadrar
+con el código. **Nunca** dejar contradicciones (p.ej. "30-50× más lento" cuando
+ya se es competitivo): la honestidad del escaparate es tan importante como la del
+benchmark. Si el README se corrige *después* de un tag, PyPI seguirá mostrando el
+viejo hasta la siguiente versión → publicar un parche solo-docs para sincronizar.
+
 ---
 
 ## Números correctos del proyecto

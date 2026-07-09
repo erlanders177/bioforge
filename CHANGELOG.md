@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.2.1] — 2026-07-10
+
+**README al día (solo docs).** Sincroniza el escaparate público con el estado
+real de v6.x — sin cambios de código. Se publica para que la página de PyPI (que
+se construye del tag) deje de mostrar el README antiguo con "~30–50× slower than
+minimap2", que ya no es cierto y contradecía el estado real.
+
+### Docs
+- README: nota de velocidad honesta (a la par de minimap2 en multinúcleo, ~1.18×
+  en 1 hilo a escala E. coli con reads simulados) + caveats + comando exacto para
+  reproducir el benchmark. Roadmap actualizado (SIMD/columnar/benchmark hechos;
+  añadido el frente evolutivo). Fila "Genome mapping vs minimap2" en Key numbers.
+  Cuenta de tests 354 → 361.
+
+---
+
 ## [6.2.0] — 2026-07-09
 
 **Extensión SIMD int16 (16 carriles) — recorta el gap de 1 hilo.** El kernel
