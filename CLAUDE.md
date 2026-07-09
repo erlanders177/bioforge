@@ -20,11 +20,14 @@ Niveles implementados y validados:
   `GenomeAligner.map`/`map_batch` enrutan por C con **fallback NumPy idéntico**
   (verificado con paridad exacta). Módulos Python `minimizers.py`/`refindex.py`/
   `genomemap.py` siguen como fallback y utilidades. Multi-cromosoma; salida PAF.
-  ⚠️ Correcto pero **aún no compite en velocidad con minimap2** (~30-50× por debajo
-  en 1 hilo; el 88% del tiempo es la alineación base a base escalar, que ya estaba
-  en C → pasar seed/chain a C solo dio 1.7×). Plan **v6.0**: **SIMD** (KSW2/SSE) en
-  el DP banded — el 8-16× que falta. Medir vs minimap2 real (WSL) antes de promover.
-  NO promocionar velocidad aún.
+  ⚠️ Correcto pero **aún no compite en velocidad con minimap2**. Head-to-head
+  real medido en WSL (`tools/bench_vs_minimap2.py`, 4.8 Mb, 2000 reads, 5% error,
+  minimap2 -a): **~4× por debajo en 1 hilo** (minimap2 1.35 vs BioForge 0.34 Mb/s),
+  NO los ~30-50× que se estimaban de memoria. Ambos mapean los 2000. minimap2
+  escala mejor a gran escala (nuestro multihilo apenas da 1.5× por la cola serial
+  de reconstruir Mapping en Python). El 88% de nuestro tiempo es la extensión base
+  a base escalar. Plan **v6.0**: **SIMD** (KSW2/SSE) en el DP banded — con un 3-4×
+  ahí, en cargas de este tamaño rozaríamos a minimap2 en 1 hilo. NO promocionar aún.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía

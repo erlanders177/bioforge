@@ -34,11 +34,16 @@ ocultar — es la naturaleza del problema, y decirlo es lo que nos hace serios.
 
 ### v6.0 — SIMD en la alineación base a base  *(EN CURSO)*
 El muro de velocidad del mapeador es el DP banded escalar (~88% del tiempo, ya
-en C → por eso pasar seed/chain a C solo dio 1.7×). El 8-16× que falta está en
-**SIMD (KSW2/SSE)**: procesar la antidiagonal en lotes de 8-16 celdas por
-instrucción. Con eso el objetivo es entrar en el rango de "rival digno".
-- Prerrequisito: **WSL + minimap2** para el benchmark cabeza a cabeza honesto
-  (y valgrind/ASan de verdad).
+en C → por eso pasar seed/chain a C solo dio 1.7×). La solución: **SIMD
+(KSW2/SSE)** — procesar la antidiagonal en lotes de 8-16 celdas por instrucción.
+- **Baseline honesto medido (WSL, `tools/bench_vs_minimap2.py`, 4.8 Mb, 2000
+  reads, 5% error, minimap2 -a):** gap real **~4× en 1 hilo** (minimap2 1.35 vs
+  BioForge 0.34 Mb/s), ambos mapean los 2000. NO los ~30-50× estimados de memoria.
+  A gran escala minimap2 se separa (su multihilo escala; el nuestro apenas 1.5×
+  por la cola serial de reconstruir Mapping en Python — otra palanca a atacar).
+- **Objetivo realista:** con un 3-4× del SIMD en la extensión, rozar/igualar a
+  minimap2 en 1 hilo en cargas de este tamaño. Entorno WSL ya montado (minimap2,
+  gcc, valgrind).
 - La red `test_cmap_parity.py` protege la corrección durante la reescritura.
 
 ### Mejorar el comparador
