@@ -274,12 +274,18 @@ both strands, aligns the full read, tolerates mismatches/indels, and reports a
 mapping quality. Built once, the C index is reused for every query;
 `map_batch` maps the whole batch in a single C call parallelised with OpenMP.
 
-> **Speed, honestly:** the whole mapping pipeline now lives in C, but it is **not
-> yet competitive with hand-tuned mappers like minimap2** (~30–50× slower
-> single-threaded). The remaining bottleneck is the scalar base-level DP; the next
-> milestone is SIMD (KSW2/SSE) alignment. Use BioForge's mapper where its
-> strengths fit today: tiny footprint, `pip install` and go, correct PAF output,
-> transparent NumPy fallback — not where raw mapping throughput is the priority.
+> **Speed, honestly.** The whole pipeline runs in C (SIMD banded extension +
+> OpenMP batch). In a same-machine head-to-head (`tools/bench_vs_minimap2.py`,
+> 4.8 Mb genome, 6000 simulated reads at 5% error, `minimap2 -a`), BioForge is
+> **on par with minimap2 on multiple cores** (~4.3–5.0 vs ~4.3–4.9 Mb/s, sometimes
+> ahead) and **~1.18× behind single-threaded** (~1.87 vs ~2.2 Mb/s) — both map all
+> reads. Please reproduce it yourself and tell me where it breaks.
+>
+> Honest caveats: this is *E. coli* scale with simulated reads; minimap2 — years
+> of hand-tuning, by a team — may well pull ahead at human-genome scale, on real
+> noisy data, or with many cores. This is not "we beat minimap2"; it's "a
+> from-scratch, `pip install`-and-go engine got competitive," and the goal from
+> here is a niche it *doesn't* occupy (see Roadmap).
 
 ### Full mutation analysis pipeline (DNA + protein)
 
