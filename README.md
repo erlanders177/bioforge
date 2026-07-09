@@ -28,6 +28,7 @@ Two core rules:
 | Memory (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
 | Translation throughput | **~5 M amino acids / second** (NumPy) · **~27× faster** with C engine |
 | NW alignment 1000×1000 nt | **~165 ms** (NumPy) · **~29× faster** with C engine |
+| Genome mapping vs minimap2 | **on par on multi-core**, ~1.18× behind single-thread — *E. coli* scale, `minimap2 -a` (reproduce: `tools/bench_vs_minimap2.py`) |
 | FASTA ingestion (C batch parser) | **~80 M bases / second** |
 | FASTQ ingestion (C batch parser) | **~14 M bases / s · ~94 K reads / s** |
 | QC filter 200 K reads (columnar) | **0.28 s** — **18.6× faster** than per-record |
@@ -287,6 +288,16 @@ mapping quality. Built once, the C index is reused for every query;
 > from-scratch, `pip install`-and-go engine got competitive," and the goal from
 > here is a niche it *doesn't* occupy (see Roadmap).
 
+**Reproduce the benchmark yourself** (Linux/WSL, with `minimap2` installed):
+
+```bash
+pip install bioforge
+git clone https://github.com/erlanders177/bioforge.git && cd bioforge
+python3 tools/bench_vs_minimap2.py --genome 4800000 --reads 6000 --error 0.05
+# prints Mb/s for minimap2 and BioForge at 1 thread and all cores, same reads.
+# Numbers are relative to your machine — report back what you get.
+```
+
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
@@ -415,7 +426,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (354 tests)
+# Full test suite (361 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -435,7 +446,7 @@ python check.py
 | Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
 | C engine | Ships pre-compiled in the PyPI wheels. Building from source on an unsupported platform needs GCC (`python bioforge/engine/build.py`). |
 | Banded NW (NumPy fallback) | Without the C engine, banded NW uses the full matrix with NEG_INF masking — same result, standard RAM. |
-| Genome mapper speed | Correct and fully in C, but ~30–50× slower than minimap2 single-threaded. The scalar base-level DP is the bottleneck; SIMD alignment is the next milestone (v6.0). |
+| Genome mapper — tested scale | Benchmarked on par with minimap2 on multi-core and ~1.18× behind single-threaded at *E. coli* scale with simulated reads (`tools/bench_vs_minimap2.py`). Not yet validated at human-genome scale or on real noisy data, where minimap2 may pull ahead. |
 
 ---
 
@@ -462,8 +473,12 @@ python check.py
 - [x] Native per-platform wheels on PyPI (cibuildwheel) — `pip install bioforge`
 - [x] Long-read / genome-scale aligner — `GenomeAligner` (seed-chain-align, PAF)
 - [x] Whole mapping pipeline in C behind an opaque index — `bio_map_read` / `bio_map_batch` (OpenMP)
-- [ ] **SIMD (KSW2/SSE) base-level alignment** — close the gap to minimap2 *(v6.0)*
-- [ ] Head-to-head benchmark vs minimap2 on real genomes (WSL)
+- [x] SIMD banded extension (AVX2, int32 + int16) — `_nw_banded_diag_simd` *(v6.0 / v6.2)*
+- [x] Columnar `map_batch` output → full multi-core scaling *(v6.1)*
+- [x] Head-to-head benchmark vs minimap2 (`tools/bench_vs_minimap2.py`, WSL) — on par multi-core
+- [ ] **Evolution front — Markov substitution baselines + backtesting** (the differentiator)
+- [ ] **Strain forecasting** with protein language models (ESM-2) — model how a sequence evolves
+- [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
 
 ---
 
