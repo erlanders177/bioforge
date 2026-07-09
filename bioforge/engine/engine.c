@@ -828,6 +828,148 @@ EXPORT int32_t nw_banded_semiglobal(
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   BANDED NW EN ORDEN ANTIDIAGONAL  (base para el SIMD de v6.0)
+   ─────────────────────────────────────────────────────────────────────────
+   Mismo DP banded GLOBAL que _nw_banded_core, pero recorriendo las celdas por
+   antidiagonales t = i+j (independientes entre sí: diag←t-2, up/left←t-1). Esa
+   independencia es lo que luego permite procesar una antidiagonal entera con
+   SIMD. Aquí es aún ESCALAR — su única misión es producir salida BIT-IDÉNTICA a
+   _nw_banded_core (verificado con parity) para que el paso SIMD solo cambie el
+   bucle interno, no la lógica.
+
+   Almacenamiento: la matriz de traceback tb_band[(m+1)*W] es idéntica a la del
+   core (indexada por (i,k), k=j-i+band) → el traceback se reutiliza tal cual.
+   Para H solo se guardan TRES antidiagonales rotatorias indexadas por i (no la
+   matriz entera) → menos memoria. Empate diag>up>left, idéntico al core.  */
+static int32_t _ceil_div2(int32_t a) {          /* ceil(a/2) con a posible < 0 */
+    return (a >= 0) ? (a + 1) / 2 : -((-a) / 2);
+}
+
+static int32_t _nw_banded_diag_global(
+    const uint8_t* A, int32_t m,
+    const uint8_t* B, int32_t n,
+    const char*    decode,
+    int32_t match_sc, int32_t mismatch_sc, int32_t gap_sc,
+    int32_t band,
+    char* out_a, char* out_b,
+    int32_t* p_score, int32_t* p_matches, int32_t* p_mismatches, int32_t* p_gaps
+) {
+    const int32_t W   = 2 * band + 1;
+    const int32_t NEG = INT32_MIN / 2;
+
+    uint8_t* tb_band = (uint8_t*)malloc((size_t)(m + 1) * W);
+    if (!tb_band) return -1;
+    memset(tb_band, TB_DIAG, (size_t)(m + 1) * W);
+
+    /* 3 antidiagonales de H indexadas por i (con celda -1 y m+1 de guarda). */
+    int32_t* Hp2 = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    int32_t* Hp1 = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    int32_t* Hc  = (int32_t*)malloc((size_t)(m + 3) * sizeof(int32_t));
+    if (!Hp2 || !Hp1 || !Hc) { free(tb_band); free(Hp2); free(Hp1); free(Hc); return -1; }
+    for (int32_t i = 0; i < m + 3; i++) { Hp2[i] = NEG; Hp1[i] = NEG; Hc[i] = NEG; }
+
+    #define HH(arr, i) (arr)[(i) + 1]          /* celda fila i (offset +1) */
+
+    const int32_t tmax = m + n;
+    int32_t score = NEG;
+    for (int32_t t = 0; t <= tmax; t++) {
+        int32_t i_lo = 0;
+        if (t - n > i_lo) i_lo = t - n;
+        int32_t cb = _ceil_div2(t - band);
+        if (cb > i_lo) i_lo = cb;
+        int32_t i_hi = m;
+        if (t < i_hi) i_hi = t;
+        int32_t fb = (t + band) / 2;
+        if (fb < i_hi) i_hi = fb;
+
+        for (int32_t i = i_lo; i <= i_hi; i++) {
+            int32_t j = t - i;
+            int32_t k = j - i + band;          /* columna en tb_band */
+            int32_t best; uint8_t dir;
+            if (i == 0 && j == 0) {
+                best = 0; dir = TB_DIAG;
+            } else if (i == 0) {               /* fila 0: gaps a la izquierda */
+                best = j * gap_sc; dir = TB_LEFT;
+            } else if (j == 0) {               /* columna 0: gaps arriba */
+                best = i * gap_sc; dir = TB_UP;
+            } else {
+                int32_t s  = (A[i-1] == B[j-1]) ? match_sc : mismatch_sc;
+                int32_t dv = HH(Hp2, i - 1);   /* diag (i-1,j-1) en t-2 */
+                int32_t uv = HH(Hp1, i - 1);   /* up   (i-1,j)   en t-1 */
+                int32_t lv = HH(Hp1, i);       /* left (i,j-1)   en t-1 */
+                int32_t d = (dv != NEG) ? dv + s      : NEG;
+                int32_t u = (uv != NEG) ? uv + gap_sc : NEG;
+                int32_t l = (lv != NEG) ? lv + gap_sc : NEG;
+                if      (d >= u && d >= l && d != NEG) { best = d; dir = TB_DIAG; }
+                else if (u >= l && u != NEG)           { best = u; dir = TB_UP;   }
+                else if (l != NEG)                     { best = l; dir = TB_LEFT; }
+                else                                   { best = NEG; dir = TB_DIAG; }
+            }
+            HH(Hc, i) = best;
+            tb_band[(int64_t)i * W + k] = dir;
+        }
+        /* guardas fuera de la ventana (acotadas al rango válido [-1, m+1]:
+           con banda < |m-n| la ventana puede quedar vacía y más allá del array). */
+        if (i_lo - 1 >= -1 && i_lo - 1 <= m + 1) HH(Hc, i_lo - 1) = NEG;
+        if (i_hi + 1 >= -1 && i_hi + 1 <= m + 1) HH(Hc, i_hi + 1) = NEG;
+        if (t == tmax) score = HH(Hc, m);
+
+        int32_t* tmp = Hp2; Hp2 = Hp1; Hp1 = Hc; Hc = tmp;   /* rotar */
+    }
+    #undef HH
+    free(Hp2); free(Hp1); free(Hc);
+
+    /* Igual que el core: si el endpoint (m,n) queda fuera de banda, score=NEG. */
+    int32_t k_end = n - m + band;
+    if (!(k_end >= 0 && k_end < W)) score = NEG;
+    *p_score = score;
+
+    /* ── Traceback (idéntico al de _nw_banded_core, modo global) ─────────── */
+    char* ta  = (char*)malloc((size_t)(m + n + 1));
+    char* tb2 = (char*)malloc((size_t)(m + n + 1));
+    if (!ta || !tb2) { free(tb_band); free(ta); free(tb2); return -1; }
+
+    int32_t pos = 0, nm = 0, nmi = 0, ng = 0;
+    int32_t i = m, j = n;
+    while (i > 0 || j > 0) {
+        int32_t k = j - i + band;
+        uint8_t dir = (k >= 0 && k < W) ? tb_band[(int64_t)i * W + k] : TB_DIAG;
+        if (i > 0 && j > 0 && dir == TB_DIAG) {
+            uint8_t ca = A[i-1], cbb = B[j-1];
+            ta[pos] = decode[ca]; tb2[pos] = decode[cbb];
+            if (ca == cbb) nm++; else nmi++;
+            i--; j--;
+        } else if (j == 0 || (i > 0 && dir == TB_UP)) {
+            ta[pos] = decode[A[i-1]]; tb2[pos] = '-';
+            ng++; i--;
+        } else {
+            ta[pos] = '-'; tb2[pos] = decode[B[j-1]];
+            ng++; j--;
+        }
+        pos++;
+    }
+    for (int32_t x = 0; x < pos; x++) { out_a[x] = ta[pos-1-x]; out_b[x] = tb2[pos-1-x]; }
+    out_a[pos] = '\0'; out_b[pos] = '\0';
+
+    *p_matches = nm; *p_mismatches = nmi; *p_gaps = ng;
+    free(tb_band); free(ta); free(tb2);
+    return pos;
+}
+
+/* Export de prueba (global) — para verificar paridad con nw_banded. */
+EXPORT int32_t nw_banded_diag(
+    const uint8_t* ca, int32_t m,
+    const uint8_t* cb, int32_t n,
+    const char* decode,
+    int32_t match, int32_t mismatch, int32_t gap, int32_t band,
+    char* out_a, char* out_b,
+    int32_t* score, int32_t* matches, int32_t* mismatches, int32_t* gaps
+) {
+    return _nw_banded_diag_global(ca, m, cb, n, decode, match, mismatch, gap, band,
+                                  out_a, out_b, score, matches, mismatches, gaps);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    STREAMING PARSER  (FASTA + FASTQ)
    ─────────────────────────────────────────────────────────────────────────
    Buffer de 64 KB. memchr() usa SIMD de la libc (AVX2/SSE2/NEON) para
