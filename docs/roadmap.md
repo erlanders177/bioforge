@@ -32,7 +32,20 @@ ocultar — es la naturaleza del problema, y decirlo es lo que nos hace serios.
 
 ## Fases planificadas (en orden)
 
-### v6.0 — SIMD en la alineación base a base  *(EN CURSO)*
+### v6.0 — SIMD + multihilo  *(NÚCLEO HECHO — sin publicar)*
+**Logrado (medido en WSL, 6000 reads, 5% error, minimap2 -a): gap ~1.3× tanto en
+1 hilo (~1.8 vs ~2.4 Mb/s) como en 4 núcleos (~3.0 vs ~4.0), ambos mapean 6000.**
+Desde ~4×/~3×:
+- **Extensión banded SIMD (AVX2, 8× int32, antidiagonal)** `_nw_banded_diag_simd`:
+  kernel 88→529 M celdas/s (6×), mapeador 4× en 1 hilo. Incrementos: (1) escalar
+  antidiagonal bit-idéntico al core; (2) SIMD; (3) cableado en `_map_one`. Fallback
+  escalar sin AVX2. Verificado: paridad 0/10000, 359 tests, valgrind 0 errores.
+- **Fix reset de hilos OpenMP** en `bio_map_batch` → escalado 2.3× real (antes plano).
+- **Pendiente para cerrar el ~1.3×:** cola serial de reconstrucción `Mapping` en
+  Python (c_map_batch ~4.85 vs ga.map_batch ~3.8 Mb/s) → salida columnar/directa
+  desde el struct sin dict intermedio. Y opcional: AVX-512 / int16 (más carriles).
+
+### (histórico) v6.0 — SIMD en la alineación base a base
 El muro de velocidad del mapeador es el DP banded escalar (~88% del tiempo, ya
 en C → por eso pasar seed/chain a C solo dio 1.7×). La solución: **SIMD
 (KSW2/SSE)** — procesar la antidiagonal en lotes de 8-16 celdas por instrucción.

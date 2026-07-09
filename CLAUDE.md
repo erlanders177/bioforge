@@ -20,14 +20,17 @@ Niveles implementados y validados:
   `GenomeAligner.map`/`map_batch` enrutan por C con **fallback NumPy idéntico**
   (verificado con paridad exacta). Módulos Python `minimizers.py`/`refindex.py`/
   `genomemap.py` siguen como fallback y utilidades. Multi-cromosoma; salida PAF.
-  ⚠️ Correcto pero **aún no compite en velocidad con minimap2**. Head-to-head
-  real medido en WSL (`tools/bench_vs_minimap2.py`, 4.8 Mb, 2000 reads, 5% error,
-  minimap2 -a): **~4× por debajo en 1 hilo** (minimap2 1.35 vs BioForge 0.34 Mb/s),
-  NO los ~30-50× que se estimaban de memoria. Ambos mapean los 2000. minimap2
-  escala mejor a gran escala (nuestro multihilo apenas da 1.5× por la cola serial
-  de reconstruir Mapping en Python). El 88% de nuestro tiempo es la extensión base
-  a base escalar. Plan **v6.0**: **SIMD** (KSW2/SSE) en el DP banded — con un 3-4×
-  ahí, en cargas de este tamaño rozaríamos a minimap2 en 1 hilo. NO promocionar aún.
+  **v6.0 (SIMD + multihilo) — ya competitivo.** Head-to-head real medido en WSL
+  (`tools/bench_vs_minimap2.py`, 4.8 Mb, 6000 reads, 5% error, minimap2 -a):
+  **~1.3× por debajo de minimap2** tanto en 1 hilo (~1.8 vs ~2.4 Mb/s) como en 4
+  núcleos (~3.0 vs ~4.0 Mb/s), ambos mapean los 6000. Se llegó desde ~4×/~3× con:
+  (a) **extensión banded SIMD AVX2** (`_nw_banded_diag_simd`, 8× int32 antidiagonal
+  → kernel 88→529 M celdas/s, 6×; mapeador 4× en 1 hilo; bit-idéntico al escalar,
+  fallback sin AVX2); (b) **fix del reset de hilos OpenMP** en `bio_map_batch`
+  (n<=0 → todos los núcleos siempre) → escalado 2.3× real. Queda una cola serial
+  Python en la reconstrucción de `Mapping` (c_map_batch da ~4.85 Mb/s, ga.map_batch
+  ~3.8). NO promocionar aún sin decisión del usuario. Red `test_cmap_parity.py`
+  garantiza que el SIMD no cambia resultados.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
