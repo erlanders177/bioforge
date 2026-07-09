@@ -1,72 +1,82 @@
 # Roadmap del Proyecto
 
-## Estado actual (2026-06-27) — v1.1.0
+## Estado actual (2026-07-09) — v5.0.0
 
 | Nivel | Módulo | Descripción | Estado |
 |-------|--------|-------------|--------|
-| L1 | biocore.py | Almacenamiento 5-bit, FASTA parser, LUTs, reverse complement | ✅ Completo |
-| L2 | smart_translator.py | Traducción ADN→Proteína, 6-frame translation | ✅ Completo |
+| L1 | biocore.py | Almacenamiento 5-bit, parser FASTA/FASTQ en C, API columnar, `.gz`/BGZF, reverse complement | ✅ Completo |
+| L2 | smart_translator.py | Traducción ADN→Proteína, 6-frame | ✅ Completo |
 | L3 | aligner.py | NW global/semi-global, banded NW, Smith-Waterman local | ✅ Completo |
-| — | visor.py | Frontend de display interactivo | ✅ Funcional |
-| — | stress_test.py | Benchmark de rendimiento con 30M bases | ✅ Funcional |
+| L4 | genomemap · minimizers · refindex | Mapeador seed-chain-align, **tubería entera en C** tras índice opaco, OpenMP | ✅ Completo (v5.0) |
+| — | analyze / qcreport / bgzf | Pipeline CLI, informe QC tipo FastQC, conversor BGZF | ✅ Funcional |
 
-### Completado en v1.1.0
-
-**Reverse complement vectorizado** ✅
-- `PackedSequence.reverse_complement()` — dos ops NumPy: `_NUC_COMPLEMENT` LUT + `np.flip`.
-- Sin loops Python. RC(RC(x)) == x garantizado.
-
-**6-frame translation** ✅
-- `SmartTranslator.translate_all_frames(seq)` — devuelve lista de proteínas por marco.
-- Frames +1/+2/+3 (hebra directa) y -1/-2/-3 (reverse complement).
-- Frames sin ATG omitidos silenciosamente.
-
-**Banded Needleman-Wunsch** ✅
-- `SequenceAligner.align(seq_a, seq_b, band=N)`.
-- Motor C: O(m·N) memoria real. Fallback NumPy: máscara NEG_INF sobre matriz completa.
-
-**Smith-Waterman (alineamiento local)** ✅
-- `SequenceAligner.align_local(seq_a, seq_b)`.
-- Para dominios/motivos o secuencias con flancos no homólogos.
+Publicado en PyPI (`pip install bioforge`) con wheels nativos Win/Linux/Mac.
+359 tests. Motor C con fallback NumPy verificado (paridad exacta).
 
 ---
 
-## Próximas extensiones (priorizadas)
+## La tesis del proyecto — hacia dónde vamos y por qué
 
-### Alta prioridad
+**No vamos a ganar la guerra de la velocidad pura.** minimap2 y compañía tienen
+más manos y más años; empatarles en throughput bruto es una guerra de recursos.
+La jugada no es competir en su terreno — es **abrir uno nuevo donde ellos no
+juegan**. Un mapeador rápido es una *commodity*; un motor que además **modela
+cómo evoluciona una secuencia y propone la siguiente cepa probable** tiene
+identidad propia. Ahí está el legado.
 
-**FASTA export**
-- `to_fasta(seq, line_width=60) → str` — genera texto FASTA bien formateado.
-- Trivial de implementar, útil para interoperabilidad con otras herramientas.
+Regla que gobierna todo lo de abajo: **honestidad radical**. Nada se promociona
+sin backtesting y números reales. "No siempre acierta" no es un defecto que
+ocultar — es la naturaleza del problema, y decirlo es lo que nos hace serios.
 
-### Media prioridad
+---
 
-**FASTA export**
-- `to_fasta(seq, line_width=60) → str` — genera texto FASTA bien formateado.
-- Trivial de implementar, pero útil para interoperabilidad.
+## Fases planificadas (en orden)
 
-**Detección de ORFs múltiples**
-- Encontrar todos los ATG en los 6 frames con sus ORFs completos.
-- Devolver lista de `PackedSequence(PROTEIN)` candidatos, ordenados por longitud.
+### v6.0 — SIMD en la alineación base a base  *(EN CURSO)*
+El muro de velocidad del mapeador es el DP banded escalar (~88% del tiempo, ya
+en C → por eso pasar seed/chain a C solo dio 1.7×). El 8-16× que falta está en
+**SIMD (KSW2/SSE)**: procesar la antidiagonal en lotes de 8-16 celdas por
+instrucción. Con eso el objetivo es entrar en el rango de "rival digno".
+- Prerrequisito: **WSL + minimap2** para el benchmark cabeza a cabeza honesto
+  (y valgrind/ASan de verdad).
+- La red `test_cmap_parity.py` protege la corrección durante la reescritura.
 
-### Baja prioridad
+### Mejorar el comparador
+Ya existe `tools/comparador.py`. Antes del salto evolutivo, robustecerlo y
+prepararlo como cimiento del análisis de cepas (comparación de muchas
+secuencias, no solo pares).
 
-**Almacenamiento 2-bit para ADN puro**
-- Para secuencias sin ambigüedades ni gaps: A=00, C=01, G=10, T=11.
-- Daría 75% de ahorro vs ASCII (frente al 37.5% actual).
-- Requiere un segundo tipo de contenedor o un flag en PackedSequence.
-- Solo merece la pena si el footprint de RAM se convierte en el cuello de botella real.
+### Motor de cadenas de Markov de evolución
+Las cadenas de Markov **son** la base legítima de la biología molecular: los
+modelos de sustitución (Jukes-Cantor, HKY, GTR) son cadenas de Markov sobre las
+bases. Desde un conjunto de secuencias **alineadas y fechadas** construir
+matrices de transición:
+- **Por-posición**: qué sitios mutan y hacia qué (site-specific).
+- **Por-contexto**: Markov de orden-N sobre k-meros (dependencias locales).
 
-**Lectura de archivos .gz**
-- `SmartImporter.from_file("archivo.fa.gz")` sin descomprimir manualmente.
-- Implementación: `gzip.open()` en lugar de `open()`.
+### Predicción de cepas futuras — el horizonte
+**La idea:** dado cómo ha evolucionado un virus (p.ej. la gripe), generar la
+**próxima cepa probable**. Serán intentos, no profecías.
+- Dada la última secuencia + el modelo Markov → muestrear/elegir el descendiente
+  más probable. Framing honesto: **hipótesis probabilística**.
+- **Backtesting = el guardián de la honestidad.** Entrenar con cepas hasta el año
+  T, predecir T+1, medir el parecido con la que *de verdad* apareció
+  (identidad/Hamming). Convierte "creo que predice" en un número. Sin esto no se
+  promociona nada.
+- Es forecasting para salud pública (como Nextstrain / la selección de cepas de
+  la OMS), **análisis y anticipación, no síntesis de patógenos**. Terreno limpio.
+- **Límite honesto conocido**: un Markov crudo modela mutación *neutral*; la
+  evolución viral real la manda la *selección* (escape inmune). Mejoras futuras:
+  tasas por-posición, señal de *fitness*, contexto filogenético. Hasta los
+  profesionales fallan (años de vacuna mal emparejada) — eso es esperado.
+- **Prerrequisito de datos**: series temporales reales fechadas (HA de gripe de
+  NCBI/GISAID). Sin serie temporal no hay entrenamiento ni backtesting.
 
 ---
 
 ## Decisiones de diseño cerradas
 
-Estas decisiones fueron tomadas y no deben reabrirse sin un caso de uso
-concreto que las justifique:
+No reabrir sin un caso de uso concreto que las justifique:
 
 | Decisión | Alternativa descartada | Razón |
 |----------|----------------------|-------|
@@ -74,3 +84,5 @@ concreto que las justifique:
 | NW global para mutaciones | Smith-Waterman (local) | SW busca motivos; NW compara alelos |
 | NumPy puro (sin Numba/Cython) | Numba JIT | Portabilidad, cero dependencias extra |
 | Anti-diagonal wavefront en NW | Loops O(m·n) Python | Regla de oro del proyecto |
+| Motor entero en C tras índice opaco | Orquestar el mapeo desde Python | Sin marshalling por consulta; cubierta Python fina |
+| Diferenciación evolutiva (Markov→cepas) | Competir en velocidad pura | Terreno nuevo donde los gigantes no juegan |
