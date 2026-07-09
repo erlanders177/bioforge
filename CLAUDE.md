@@ -27,10 +27,11 @@ Niveles implementados y validados:
   (a) **extensión banded SIMD AVX2** (`_nw_banded_diag_simd`, 8× int32 antidiagonal
   → kernel 88→529 M celdas/s, 6×; mapeador 4× en 1 hilo; bit-idéntico al escalar,
   fallback sin AVX2); (b) **fix del reset de hilos OpenMP** en `bio_map_batch`
-  (n<=0 → todos los núcleos siempre) → escalado 2.3× real. Queda una cola serial
-  Python en la reconstrucción de `Mapping` (c_map_batch da ~4.85 Mb/s, ga.map_batch
-  ~3.8). NO promocionar aún sin decisión del usuario. Red `test_cmap_parity.py`
-  garantiza que el SIMD no cambia resultados.
+  (n<=0 → todos los núcleos siempre) → escalado 2.3× real. **v6.1:** salida
+  **columnar** en `map_batch` (array estructurado NumPy en vez de dicts/ctypes) →
+  mata la cola serial Python → en 4 núcleos **a la par de minimap2** (~4.2-4.7 vs
+  ~4.0-5.7 Mb/s, a veces por delante). Single-thread aún ~1.2-1.3× por detrás.
+  Red `test_cmap_parity.py` garantiza que nada de esto cambia resultados.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía

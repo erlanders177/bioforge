@@ -538,6 +538,48 @@ class GenomeAligner:
             cigar=d["cigar"], target_name=self._names[ci],
         )
 
+    def _mappings_from_columnar(self, out, counts, cbuf, mh, ups) -> list[list[Mapping]]:
+        """Construye los Mapping desde la salida columnar del batch (v6.1).
+
+        Lee cada campo como COLUMNA (``.tolist()`` es C-level y da ints/floats
+        Python de una) → el bucle solo indexa listas y crea NamedTuples, sin
+        acceso ctypes campo a campo ni dicts intermedios. Es lo que quita la cola
+        serial que capaba el multinúcleo.
+        """
+        names = self._names
+        starts = self._starts_list
+        lengths = self._lengths
+        # columnas → listas Python (rápido, una vez)
+        ide = out["identity"].tolist();      chs = out["chain_score"].tolist()
+        ts  = out["target_start"].tolist();  te  = out["target_end"].tolist()
+        qs  = out["query_start"].tolist();   qe  = out["query_end"].tolist()
+        st  = out["strand"].tolist();        nm  = out["num_matches"].tolist()
+        bl  = out["block_len"].tolist();     mq  = out["mapq"].tolist()
+        ct  = out["contig"].tolist();        co  = out["cigar_off"].tolist()
+        cl  = out["cigar_len"].tolist()
+        cnts = counts.tolist()
+        results: list[list[Mapping]] = []
+        for i, r in enumerate(ups):
+            c = cnts[i]
+            base = i * mh
+            qlen = len(r)
+            maps: list[Mapping] = []
+            for j in range(base, base + c):
+                ci = ct[j]
+                cstart = starts[ci]; clen = lengths[ci]
+                cig = bytes(cbuf[co[j]:co[j] + cl[j]]).decode("ascii")
+                maps.append(Mapping(
+                    query_len=qlen, query_start=qs[j], query_end=qe[j],
+                    strand="+" if st[j] == 0 else "-",
+                    target_len=clen, target_start=ts[j] - cstart,
+                    target_end=min(te[j] - cstart, clen),
+                    num_matches=nm[j], block_len=bl[j],
+                    mapq=mq[j], identity=ide[j], chain_score=chs[j],
+                    cigar=cig, target_name=names[ci],
+                ))
+            results.append(maps)
+        return results
+
     def map(self, read: str, min_chain_score: float = 40.0,
             max_hits: int = 5) -> list[Mapping]:
         """Mapea un read → lista de Mapping (primaria primero)."""
@@ -594,10 +636,9 @@ class GenomeAligner:
             ups = [r.upper() for r in reads]
             enc = [encode_bases(r) for r in ups]
             nt = 0 if n_processes <= 0 else n_processes
-            batch = c_map_batch(self._c_index, enc, max_hits, min_chain_score,
-                                n_threads=nt)
-            return [[self._mapping_from_dict(d, len(r)) for d in maps]
-                    for r, maps in zip(ups, batch, strict=True)]
+            out, counts, cbuf, mh = c_map_batch(self._c_index, enc, max_hits,
+                                                min_chain_score, n_threads=nt)
+            return self._mappings_from_columnar(out, counts, cbuf, mh, ups)
 
         if n_processes == 1 or len(reads) <= 1:
             return [self.map(r, min_chain_score, max_hits) for r in reads]

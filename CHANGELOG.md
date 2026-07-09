@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.1.0] — 2026-07-09
+
+**Salida columnar en `map_batch` — el multinúcleo alcanza a minimap2.** Se elimina
+la cola serial de Python que reconstruía los `Mapping`, así el escalado ya no se
+capa. En 4 núcleos, BioForge queda **a la par de minimap2** (dentro del ruido, a
+veces por delante) en el benchmark de referencia.
+
+### Changed
+- `bio_map_batch` (vía `c_map_batch`) escribe ahora en un **array estructurado
+  NumPy** (mismo layout que el struct C `MapOut`, verificado offset a offset) en
+  vez de un array ctypes. La cubierta Python construye los `Mapping` leyendo cada
+  campo como **columna** (`.tolist()`, C-level) — sin acceso ctypes campo a campo
+  ni dicts intermedios. Resultado **idéntico** (verificado por `test_cmap_parity`).
+
+### Benchmark (WSL, 4.8 Mb, 6000 reads, 5% error, minimap2 -a)
+- 4 núcleos: minimap2 ~4.0-5.7 vs BioForge ~4.2-4.7 Mb/s → **a la par** (el motor
+  C puro daba 4.85; la cola serial lo bajaba a ~3.8, ahora ~4.4-4.7).
+- 1 hilo: ~1.2-1.3× por detrás aún (minimap2 ~2.2 vs BioForge ~1.8 Mb/s).
+- Ambos mapean los 6000. A escala E. coli; a escala mayor minimap2 puede separarse.
+
+### Tests
+- 361 tests; `map_batch` idéntico con 1/2/3/4/0 hilos y == `map()` secuencial.
+
+---
+
 ## [6.0.0] — 2026-07-09
 
 **Extensión SIMD + escalado multinúcleo — el mapeador se vuelve competitivo.**

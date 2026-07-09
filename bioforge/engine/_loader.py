@@ -52,6 +52,18 @@ class MapOut(ctypes.Structure):
 
 _MAPOUTP = ctypes.POINTER(MapOut)
 
+# Mismo layout que MapOut como dtype NumPy (align=True → padding idéntico al C).
+# Permite leer la salida del batch como COLUMNAS vectorizadas en vez de acceder
+# campo a campo por ctypes (lento) → mata la cola serial de map_batch (v6.1).
+MAPOUT_DTYPE = np.dtype([
+    ("identity", "<f8"), ("chain_score", "<f8"),
+    ("target_start", "<i8"), ("target_end", "<i8"),
+    ("query_start", "<i4"), ("query_end", "<i4"), ("strand", "<i4"),
+    ("num_matches", "<i4"), ("block_len", "<i4"), ("mapq", "<i4"),
+    ("contig", "<i4"), ("cigar_off", "<i4"), ("cigar_len", "<i4"),
+], align=True)
+assert MAPOUT_DTYPE.itemsize == ctypes.sizeof(MapOut)   # layout C == NumPy
+
 # ── Carga del DLL ──────────────────────────────────────────────────────────────
 _lib: ctypes.CDLL | None = None
 C_AVAILABLE: bool = False
@@ -520,65 +532,52 @@ def c_map_read(handle: int, read_codes: np.ndarray, max_hits: int,
     return results
 
 
-def _map_out_to_dict(o: "MapOut", cigar: str) -> dict:
-    return {
-        "identity": o.identity, "chain_score": o.chain_score,
-        "target_start": o.target_start, "target_end": o.target_end,
-        "query_start": o.query_start, "query_end": o.query_end,
-        "strand": o.strand, "num_matches": o.num_matches,
-        "block_len": o.block_len, "mapq": o.mapq,
-        "contig": o.contig, "cigar": cigar,
-    }
-
-
 def c_map_batch(handle: int, read_codes_list, max_hits: int, min_score: float,
-                n_threads: int = 0) -> list[list[dict]]:
-    """Mapea muchos reads en paralelo en C (OpenMP). Devuelve lista de listas.
+                n_threads: int = 0):
+    """Mapea muchos reads en paralelo en C (OpenMP). Salida COLUMNAR.
 
     ``read_codes_list`` : iterable de arrays uint8 (codes 2-bit) por read.
     ``n_threads``       : 0 = todos los núcleos · N = N hilos.
-    Cada read escribe hasta ``max_hits`` mapeos; los cigars van a un buffer
-    compartido delimitado por read. Sin GIL: el trabajo pesado ocurre en C.
+
+    Devuelve ``(out, counts, cbuf, mh)``:
+      out    : array estructurado NumPy (n*mh) con los campos de cada mapeo
+               (mismo layout que MapOut) → columnas vectorizadas, sin dicts.
+      counts : int32[n] — nº de mapeos por read (read i usa out[i*mh : i*mh+c]).
+      cbuf   : buffer de cigars; cada mapeo apunta con cigar_off/cigar_len.
+      mh     : max_hits (paso entre reads en ``out``).
+    La cubierta Python construye los Mapping desde las columnas (rápido).
+    Sin GIL: el trabajo pesado ocurre en C.
     """
     reads = [np.ascontiguousarray(r, dtype=np.uint8) for r in read_codes_list]
     n = len(reads)
+    mh = int(max_hits)
     if n == 0:
-        return []
+        return np.empty(0, MAPOUT_DTYPE), np.empty(0, np.int32), ctypes.create_string_buffer(1), mh
     lens = np.fromiter((r.size for r in reads), dtype=np.int64, count=n)
     read_off = np.empty(n + 1, dtype=np.int64)
     read_off[0] = 0
     np.cumsum(lens, out=read_off[1:])
-    concat = np.concatenate(reads) if n else np.empty(0, np.uint8)
+    concat = np.concatenate(reads)
 
-    mh = int(max_hits)
     # región de cigar por read: cota generosa (el C trunca con seguridad si no cabe)
     cig_sizes = (mh * (2 * lens + 1200) + 1024).astype(np.int64)
     cig_off = np.empty(n + 1, dtype=np.int64)
     cig_off[0] = 0
     np.cumsum(cig_sizes, out=cig_off[1:])
 
-    out = (MapOut * (n * mh))()
+    out = np.zeros(n * mh, dtype=MAPOUT_DTYPE)
     counts = np.zeros(n, dtype=np.int32)
     cbuf = ctypes.create_string_buffer(int(cig_off[-1]))
     rc = _lib.bio_map_batch(
         ctypes.c_void_p(handle),
         concat.ctypes.data_as(_U8P), read_off.ctypes.data_as(_I64P), _I32(n),
         _I32(mh), _F64(float(min_score)),
-        out, counts.ctypes.data_as(_I32P),
+        out.ctypes.data_as(_MAPOUTP), counts.ctypes.data_as(_I32P),
         cbuf, cig_off.ctypes.data_as(_I64P), _I32(int(n_threads)),
     )
     if rc < 0:
         raise MemoryError("Motor C: fallo en bio_map_batch")
-    raw = cbuf.raw
-    results: list[list[dict]] = []
-    for i in range(n):
-        maps = []
-        for j in range(int(counts[i])):
-            o = out[i * mh + j]
-            cig = raw[o.cigar_off:o.cigar_off + o.cigar_len].decode("ascii")
-            maps.append(_map_out_to_dict(o, cig))
-        results.append(maps)
-    return results
+    return out, counts, cbuf, mh
 
 
 def c_chain_dp(xs: np.ndarray, ys: np.ndarray, k: int,
