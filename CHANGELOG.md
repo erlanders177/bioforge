@@ -5,6 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.0.0] — 2026-07-09
+
+**Extensión SIMD + escalado multinúcleo — el mapeador se vuelve competitivo.**
+Head-to-head medido contra minimap2 en la misma máquina (WSL): de ~4× por debajo
+a **~1.3×**, tanto en 1 hilo como en 4 núcleos, mapeando lo mismo. Sin promoción
+todavía (medición honesta, no titular).
+
+### Added
+- **Extensión banded vectorizada con AVX2** (`_nw_banded_diag_simd`): el DP se
+  recorre por antidiagonales (celdas independientes) y procesa **8 celdas int32
+  por instrucción**. El kernel pasa de **88 a 529 M celdas/s (6×)**; la extensión
+  es el 88% del tiempo de mapeo → **~4× en 1 hilo** en el mapeador completo.
+  Bordes en escalar, desempate `diag>up>left` replicado exacto → salida
+  **bit-idéntica** al kernel escalar. Fallback escalar automático si no hay AVX2.
+
+### Fixed
+- **Escalado multinúcleo real en `bio_map_batch`:** el nº de hilos de OpenMP no se
+  reseteaba, así que tras una llamada a 1 hilo las siguientes se quedaban en 1 →
+  `map_batch` parecía no escalar. Ahora se fija siempre (`n<=0` → todos los
+  núcleos). Efecto: **~2.3× en 4 núcleos**.
+
+### Benchmark (honesto — WSL, 4.8 Mb, 6000 reads, 5% error, minimap2 -a)
+- 1 hilo: minimap2 ~2.4 vs BioForge ~1.8 Mb/s (**~1.3×**).
+- 4 núcleos: minimap2 ~4.0 vs BioForge ~3.0 Mb/s (**~1.3×**). Ambos mapean 6000.
+- A escala E. coli. A escala genoma humano / millones de reads minimap2 podría
+  separarse más (no medido). Queda una cola serial de reconstrucción `Mapping` en
+  Python (el motor C puro ya da ~4.85 Mb/s) → margen para igualar en multinúcleo.
+
+### Tests
+- Paridad SIMD↔escalar **0/10 000** (incl. banda patológica); **valgrind 0
+  errores / 0 fugas** sobre el kernel SIMD (WSL); `map_batch` idéntico con
+  1/2/3/4/0 hilos y == `map()` secuencial. Nueva herramienta
+  `tools/bench_vs_minimap2.py`. **359 tests**.
+
+---
+
 ## [5.0.0] — 2026-07-08
 
 **La tubería de mapeo entera en C, tras un índice opaco.** El motor deja de
