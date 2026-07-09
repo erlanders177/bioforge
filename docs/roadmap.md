@@ -46,6 +46,23 @@ en C → por eso pasar seed/chain a C solo dio 1.7×). La solución: **SIMD
   gcc, valgrind).
 - La red `test_cmap_parity.py` protege la corrección durante la reescritura.
 
+**Plan técnico del kernel SIMD (medido, listo para ejecutar):**
+- Objetivo cuantificado: el `_nw_banded_core` escalar hace **87 M celdas/s**
+  (1.48 ms/align en 1000×1000 band=64). Meta SIMD: **~520-870 M celdas/s** (6-10×).
+- `-O3 -march=native` YA está puesto → no hay ganancia de auto-vectorización: la
+  dependencia "izquierda" (gap) del DP por filas impide vectorizar solo.
+- **Enfoque: antidiagonal.** Las celdas con `i+j=t` son independientes (diag←t-2,
+  up/left←t-1) → se procesan W≈2·band+1 por instrucción con SSE2 (8× int16) o AVX2
+  (16× int16). Traceback: guardar dirección por celda (como ahora) y recorrer
+  escalar al final (O(m+n), barato — no es el cuello).
+- **Incrementos disciplinados:** (1) reescribir el kernel en orden antidiagonal
+  ESCALAR con salida idéntica (parity vs `_nw_banded_core`); (2) cambiar el bucle
+  interno por-antidiagonal por intrínsecos SIMD; (3) medir y cablear solo si es
+  correcto Y más rápido. El escalar se queda como fallback verificado.
+- **Segunda palanca (multihilo):** el escalado casi-lineal exige matar la cola
+  serial de reconstruir objetos `Mapping` en Python. Vía: salida columnar / PAF
+  escrito en C en `map_batch` → Python recibe bytes, no miles de objetos.
+
 ### Mejorar el comparador
 Ya existe `tools/comparador.py`. Antes del salto evolutivo, robustecerlo y
 prepararlo como cimiento del análisis de cepas (comparación de muchas
