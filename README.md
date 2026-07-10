@@ -308,6 +308,32 @@ python3 tools/bench_vs_minimap2.py --genome 4800000 --reads 6000 --error 0.05
 > first). Honest note: at higher error minimap2 is marginally ahead, and this is
 > *E. coli* scale — larger genomes may differ.
 
+### Align many sequences at once (Level 4 — multiple sequence alignment)
+
+Line up several sequences column-by-column — the basis for consensus, phylogeny
+and the evolution front. Uses the **center-star** heuristic (align all to a
+central sequence via the C aligner, then merge gaps), ideal for sets of similar
+sequences (e.g. the same gene across strains over time).
+
+```python
+from bioforge import align_multiple
+
+msa = align_multiple([
+    "ATGGCCTTAGGCTA",
+    "ATGGCGTTAGGCTA",
+    "ATGGCCTTAGCTA",     # a deletion
+    "ATGGCCTTAGGCTAA",   # an insertion
+])
+for row in msa.aligned:
+    print(row)            # all rows same length, homologous columns
+print(msa.consensus())    # majority consensus (N where ambiguous)
+```
+
+Every row with its gaps removed reproduces the original sequence exactly (no data
+loss). *Honest scope:* center-star is the simple, correct starting point and
+shines on similar sequences; serious aligners (Clustal Omega, MAFFT, MUSCLE) use
+progressive + iterative refinement for divergent sets — a future upgrade.
+
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
@@ -436,7 +462,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (361 tests)
+# Full test suite (375 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -486,6 +512,7 @@ python check.py
 - [x] SIMD banded extension (AVX2, int32 + int16) — `_nw_banded_diag_simd` *(v6.0 / v6.2)*
 - [x] Columnar `map_batch` output → full multi-core scaling *(v6.1)*
 - [x] Head-to-head benchmark vs minimap2 (`tools/bench_vs_minimap2.py`, WSL) — on par multi-core
+- [x] Multiple sequence alignment (center-star) — `align_multiple` *(v6.3)*
 - [ ] **Evolution front — Markov substitution baselines + backtesting** (the differentiator)
 - [ ] **Strain forecasting** with protein language models (ESM-2) — model how a sequence evolves
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads

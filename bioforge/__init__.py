@@ -34,9 +34,10 @@ from .biocore import (
     compute_stats,
 )
 from .genomemap import GenomeAligner, Mapping
+from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
 
-__version__ = "6.2.2"
+__version__ = "6.3.0"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [
@@ -71,6 +72,9 @@ __all__ = [
     # Genome mapper (v3.0)
     "GenomeAligner",
     "Mapping",
+    # Multiple sequence alignment (v6.3)
+    "align_multiple",
+    "MSAResult",
     # Pipeline
     "run",
     "build_report",

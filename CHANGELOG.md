@@ -5,6 +5,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.3.0] — 2026-07-10
+
+**Alineamiento múltiple de secuencias (MSA)** — nueva herramienta de la caja, y
+el cimiento del frente evolutivo (predicción de cepas necesita secuencias
+alineadas por posición; filogenia y selección también).
+
+### Added
+- **`bioforge.msa.align_multiple(sequences)`** → `MSAResult` — alineamiento
+  múltiple por el método **center-star**: elige una secuencia central, alinea
+  todas contra ella (con el NW en C) y las fusiona propagando los huecos. Ideal
+  para conjuntos de secuencias parecidas (p. ej. el mismo gen de distintas cepas
+  a lo largo del tiempo). `MSAResult.consensus()` da la secuencia consenso.
+- Expuesto en la API pública: `from bioforge import align_multiple, MSAResult`.
+
+### Notas de diseño (honesto)
+- Center-star es la heurística de partida, correcta y simple, mejor para
+  secuencias **parecidas**. Los alineadores serios (Clustal Omega, MAFFT, MUSCLE)
+  usan alineamiento **progresivo** (árbol guía + profile-profile) y refinamiento
+  iterativo, superiores en sets divergentes — quedan como upgrade futuro.
+- El trabajo por símbolo (alineaciones por pares) ocurre en C; los bucles del
+  módulo son por secuencia/columna (no por símbolo en ruta crítica).
+
+### Tests
+- 14 tests: todas las filas de igual longitud, **quitar huecos recupera la
+  secuencia original** (no corrompe datos), idénticas sin huecos, inserciones/
+  deleciones, consenso, errores. **375 tests** en total.
+
+---
+
 ## [6.2.2] — 2026-07-10
 
 **Validación de precisión del mapeo (rápido *y* correcto).** Un mapeador veloz
