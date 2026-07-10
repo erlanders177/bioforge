@@ -41,3 +41,6 @@ bioforge/engine/engine.o
 codegraph.html
 bioforge_graph.html
 *.codegraph.csv
+
+# Datos de benchmark descargados (genomas reales, no versionar)
+_benchdata/
