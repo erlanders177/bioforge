@@ -28,7 +28,8 @@ Two core rules:
 | Memory (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
 | Translation throughput | **~5 M amino acids / second** (NumPy) · **~27× faster** with C engine |
 | NW alignment 1000×1000 nt | **~165 ms** (NumPy) · **~29× faster** with C engine |
-| Genome mapping vs minimap2 | **on par on multi-core**, ~1.18× behind single-thread — *E. coli* scale, `minimap2 -a` (reproduce: `tools/bench_vs_minimap2.py`) |
+| Genome mapping — speed vs minimap2 | **on par on multi-core**, ~1.18× behind single-thread (*E. coli* scale, `minimap2 -a`; `tools/bench_vs_minimap2.py`) |
+| Genome mapping — accuracy vs minimap2 | **~99.8% of reads mapped to the correct position** on real *E. coli*, matching minimap2 (`tools/accuracy_vs_minimap2.py`) |
 | FASTA ingestion (C batch parser) | **~80 M bases / second** |
 | FASTQ ingestion (C batch parser) | **~14 M bases / s · ~94 K reads / s** |
 | QC filter 200 K reads (columnar) | **0.28 s** — **18.6× faster** than per-record |
@@ -297,6 +298,15 @@ python3 tools/bench_vs_minimap2.py --genome 4800000 --reads 6000 --error 0.05
 # prints Mb/s for minimap2 and BioForge at 1 thread and all cores, same reads.
 # Numbers are relative to your machine — report back what you get.
 ```
+
+> **Accuracy — fast is worthless if it's wrong.** On a **real *E. coli* K-12
+> genome** (4.64 Mb, 5000 simulated reads, recording each read's true origin,
+> ±50 bp tolerance): BioForge maps **~99.8%** of reads to the *correct* position
+> — matching minimap2 (99.8% at 5% error, 99.7% vs 99.9% at 10%), with **99.8%
+> concordance** between the two. So it's not fast-at-the-cost-of-correctness.
+> Reproduce with `tools/accuracy_vs_minimap2.py` (grab a real genome from NCBI
+> first). Honest note: at higher error minimap2 is marginally ahead, and this is
+> *E. coli* scale — larger genomes may differ.
 
 ### Full mutation analysis pipeline (DNA + protein)
 

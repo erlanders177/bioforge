@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ---
 
+## [6.2.2] — 2026-07-10
+
+**Validación de precisión del mapeo (rápido *y* correcto).** Un mapeador veloz
+que mapea mal no sirve; aquí está la prueba de que no es el caso. Sin cambios en
+el motor — nueva herramienta de benchmark + resultado en el README.
+
+### Added
+- **`tools/accuracy_vs_minimap2.py`** — mide la **precisión** del mapeo en un
+  genoma REAL: simula reads guardando su posición verdadera, mapea con BioForge y
+  minimap2, y cuenta qué fracción cae en el sitio correcto (±tol). Los genomas
+  reales tienen repeticiones — el caso difícil.
+
+### Resultado (E. coli K-12, 4.64 Mb, 5000 reads, ±50 bp)
+- **5% error:** BioForge **99.8%** en la posición correcta · minimap2 99.8% ·
+  concordancia **99.8%**.
+- **10% error:** BioForge 99.7% · minimap2 99.9%.
+- BioForge es **tan preciso como minimap2**, no rápido a costa de fallar. Honesto:
+  a más error minimap2 va un pelín por delante; y es a escala E. coli.
+
+### Docs
+- README: añadido el 99.8% de precisión (junto al ~1.18× de velocidad) + cómo
+  reproducirlo.
+
+---
+
 ## [6.2.1] — 2026-07-10
 
 **README al día (solo docs).** Sincroniza el escaparate público con el estado
