@@ -21,6 +21,28 @@ Two core rules:
 
 ---
 
+## What's in the box
+
+BioForge is **one lightweight engine bundling several tools** — a single `pip
+install`, a single dependency (NumPy), a shared C backend. Each tool has its own
+section (with examples) further down.
+
+| Category | Tools |
+|----------|-------|
+| **Storage & I/O** | 5-bit sequence storage · streaming FASTA/FASTQ parser (C) · `.gz` / BGZF |
+| **Sequence transforms** | DNA→protein translation · reverse complement · 6-frame translation |
+| **Alignment** | pairwise (Needleman–Wunsch / banded / Smith–Waterman) · **multiple sequence alignment** (center-star) |
+| **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
+| **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
+| **Evolution** *(in progress)* | strain-evolution modelling & forecasting — the niche no other tool occupies (MSA is its foundation) |
+
+Why one engine instead of a pile of separate tools? **Fewer resources and less
+friction** — no piping data between programs, no format conversions, one install
+that runs on low-power/edge hardware. Competitive at each task, and unique in
+combining them (especially the evolution front).
+
+---
+
 ## Key numbers
 
 | Operation | Result |
