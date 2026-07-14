@@ -32,10 +32,21 @@ from bioforge.evolution import (  # noqa: E402
 )
 from bioforge.fetch import fetch_dated  # noqa: E402
 
-TERM = ("Influenza A virus[Organism] AND H3N2 AND hemagglutinin[Title] "
-        "AND 1650:1780[SLEN] AND {year}")
+# Varios virus → prueba de GENERALIDAD (la promesa de la caja de herramientas).
+# Todos usan el nombre de cepa con /AÑO, así que fetch_dated los parsea igual.
+ORGANISMS = [
+    ("H3N2 (gripe A)",
+     "Influenza A virus[Organism] AND H3N2 AND hemagglutinin[Title] "
+     "AND 1650:1780[SLEN] AND {year}"),
+    ("H1N1 (gripe A)",
+     "Influenza A virus[Organism] AND H1N1 AND hemagglutinin[Title] "
+     "AND 1650:1780[SLEN] AND {year}"),
+    ("gripe B",
+     "Influenza B virus[Organism] AND hemagglutinin[Title] "
+     "AND 1700:1800[SLEN] AND {year}"),
+]
 YEARS = range(2011, 2024)          # más años → más folds (robustez)
-PER_YEAR = 50                      # más secuencias/año → menos ruido de frecuencia
+PER_YEAR = 40                      # secuencias/año
 
 
 def backtest_detailed(seqs, times, method):
@@ -105,36 +116,32 @@ def backtest_clade(seqs, times, *, n_clades=15, min_count=3, key_sites=50, garw=
     return out
 
 
-def main():
-    print("Descargando gripe H3N2 HA real de NCBI (esto tarda un poco)...", flush=True)
-    data = fetch_dated(TERM, YEARS, per_year=PER_YEAR, progress=True)
-    if len(data) < 30:
-        print(f"Muy pocas secuencias ({len(data)}). Abortando.")
-        return
+def run_organism(label, term):
+    data = fetch_dated(term, YEARS, per_year=PER_YEAR)
+    if len(data) < 40:
+        print(f"  {label}: muy pocas secuencias ({len(data)}) — saltando.")
+        return None
     seqs = [s for s, _ in data]
     times = [y for _, y in data]
-    ys, counts = np.unique(times, return_counts=True)
-    print(f"\nTotal: {len(seqs)} secuencias | años: "
-          f"{dict(zip(ys.tolist(), counts.tolist()))}")
-    print("Alineando (MSA) y pasando el árbitro...\n", flush=True)
-
-    print(f"{'método':10s} {'GLOBAL':>18s}      {'SITIOS QUE CAMBIAN':>22s}")
-    print(f"{'':10s} {'acc':>8s} {'vs naive':>9s}      {'acc':>8s} {'vs naive':>9s}   skill")
     cl = backtest_clade(seqs, times, garw=False)
-    rows = [("trend", backtest_detailed(seqs, times, "trend")),
-            ("clado", dict(g_m=cl["clade"]["g_m"], g_n=cl["g_n"],
-                           c_m=cl["clade"]["c_m"], c_n=cl["c_n"])),
-            ("clado-híbr", dict(g_m=cl["hybrid"]["g_m"], g_n=cl["g_n"],
-                                c_m=cl["hybrid"]["c_m"], c_n=cl["c_n"]))]
-    for name, r in rows:
-        g_sk = r["g_m"] - r["g_n"]
-        c_sk = (r["c_m"] - r["c_n"]) / (1 - r["c_n"]) if r["c_n"] < 1 else 0.0
-        print(f"{name:11s} {r['g_m']:8.4f} {g_sk:+9.4f}      "
-              f"{r['c_m']:8.4f} {r['c_m']-r['c_n']:+9.4f}   {c_sk:+.3f}")
-    print(f"\nbins (años): {cl['nb']} | columnas alineadas: {cl['L']} | "
-          f"sitios-cambio evaluados: {cl['c_total']}")
-    print(f"baseline naive — global: {cl['g_n']:.4f} | "
-          f"en sitios que cambian: {cl['c_n']:.4f}")
+    c_sk = (cl["clade"]["c_m"] - cl["c_n"]) / (1 - cl["c_n"]) if cl["c_n"] < 1 else 0.0
+    print(f"  {label:16s} n={len(seqs):4d} años={cl['nb']:2d}  "
+          f"naive={cl['c_n']:.4f}  clado={cl['clade']['c_m']:.4f}  "
+          f"Δ={cl['clade']['c_m']-cl['c_n']:+.4f}  skill={c_sk:+.3f}"
+          f"  {'✓ GANA' if c_sk > 0 else '✗ pierde'}")
+    return c_sk
+
+
+def main():
+    print("PRUEBA DE GENERALIDAD — ¿el modelo de clados bate a naive en varios virus?")
+    print("(métrica: exactitud en los SITIOS QUE CAMBIAN, backtest leak-free)\n")
+    print("Descargando de NCBI y pasando el árbitro por organismo...\n", flush=True)
+    results = {}
+    for label, term in ORGANISMS:
+        results[label] = run_organism(label, term)
+    wins = [v for v in results.values() if v is not None and v > 0]
+    print(f"\nResumen: {len(wins)}/{sum(v is not None for v in results.values())} "
+          f"organismos con skill > 0 (clado bate a la baseline ingenua).")
 
 
 if __name__ == "__main__":

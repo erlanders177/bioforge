@@ -25,8 +25,9 @@ from typing import Iterable, Optional
 from .biocore import BioForgeIOError
 
 _EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
-# Año de cepa en la cabecera de gripe: ".../A/Virginia/XXXX/2019(H3N2)..." → 2019
-_YEAR_RE = re.compile(r"/(\d{4})\s*\(")
+# Año de cepa en la cabecera de gripe. Gripe A: ".../2019(H3N2)"; gripe B: ".../2008)".
+# El año va tras el último '/' y antes de '(' o ')'. Sirve para A y B.
+_YEAR_RE = re.compile(r"/(\d{4})\s*[()]")
 _DEFAULT_EMAIL = "bioforge@users.noreply.github.com"
 
 
