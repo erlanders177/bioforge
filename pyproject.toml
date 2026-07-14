@@ -45,6 +45,12 @@ bench = [
     "biopython>=1.80",
     "psutil>=5.9",
 ]
+ai = [
+    # Eje B del predictor de evolución: viabilidad/gramaticalidad con ESM-2.
+    # OPCIONAL — el núcleo y el predictor funcionan sin esto. Modelo 8M corre en CPU.
+    "torch>=2.0",
+    "transformers>=4.30",
+]
 
 [project.urls]
 Homepage = "https://github.com/erlanders177/bioforge"

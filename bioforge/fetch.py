@@ -1,0 +1,117 @@
+"""
+fetch.py
+══════════════════════════════════════════════════════════════════════
+Pegamento a bases de datos — descarga de secuencias de NCBI (Entrez E-utilities).
+
+Idea robada a Biopython (su subpaquete de bases de datos) pero **sin dependencias**:
+solo la stdlib (urllib). Es el prerrequisito del predictor de evolución, que necesita
+secuencias reales **con fecha**; y una utilidad general útil por sí misma.
+
+Cortesía con NCBI: se identifica con `tool`/`email` y se espacian las peticiones
+(NCBI permite ~3/s sin clave). Para uso intensivo, consigue una API key y pásala.
+
+Todo error de red se envuelve en ``BioForgeIOError`` (jerarquía unificada del motor).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+import urllib.parse
+import urllib.request
+from typing import Iterable, Optional
+
+from .biocore import BioForgeIOError
+
+_EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+# Año de cepa en la cabecera de gripe: ".../A/Virginia/XXXX/2019(H3N2)..." → 2019
+_YEAR_RE = re.compile(r"/(\d{4})\s*\(")
+_DEFAULT_EMAIL = "bioforge@users.noreply.github.com"
+
+
+def _get(endpoint: str, params: dict, *, email: str, api_key: Optional[str],
+         timeout: float) -> str:
+    q = {**params, "tool": "bioforge", "email": email}
+    if api_key:
+        q["api_key"] = api_key
+    url = _EUTILS + endpoint + "?" + urllib.parse.urlencode(q)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read().decode("utf-8", "replace")
+    except Exception as e:                                # red, HTTP, timeout…
+        raise BioForgeIOError(f"fallo consultando NCBI ({endpoint}): {e}") from e
+
+
+def esearch(term: str, *, db: str = "nuccore", retmax: int = 100,
+            email: str = _DEFAULT_EMAIL, api_key: Optional[str] = None,
+            timeout: float = 60.0) -> list[str]:
+    """Busca en NCBI y devuelve la lista de IDs que casan con ``term``."""
+    raw = _get("esearch.fcgi",
+               {"db": db, "term": term, "retmax": retmax, "retmode": "json"},
+               email=email, api_key=api_key, timeout=timeout)
+    try:
+        return json.loads(raw)["esearchresult"]["idlist"]
+    except (KeyError, json.JSONDecodeError) as e:
+        raise BioForgeIOError(f"respuesta esearch inesperada de NCBI: {e}") from e
+
+
+def efetch_fasta(ids: Iterable[str], *, db: str = "nuccore",
+                 email: str = _DEFAULT_EMAIL, api_key: Optional[str] = None,
+                 timeout: float = 120.0) -> list[tuple[str, str]]:
+    """Descarga las secuencias de ``ids`` en FASTA. Devuelve [(cabecera, secuencia)]."""
+    ids = list(ids)
+    if not ids:
+        return []
+    raw = _get("efetch.fcgi",
+               {"db": db, "id": ",".join(ids), "rettype": "fasta", "retmode": "text"},
+               email=email, api_key=api_key, timeout=timeout)
+    return _parse_fasta(raw)
+
+
+def _parse_fasta(text: str) -> list[tuple[str, str]]:
+    recs: list[tuple[str, str]] = []
+    hdr: Optional[str] = None
+    seq: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            if hdr is not None:
+                recs.append((hdr, "".join(seq)))
+            hdr, seq = line[1:], []
+        elif hdr is not None:
+            seq.append(line.strip())
+    if hdr is not None:
+        recs.append((hdr, "".join(seq)))
+    return recs
+
+
+def fetch_dated(term_template: str, years: Iterable[int], *, per_year: int = 30,
+                db: str = "nuccore", email: str = _DEFAULT_EMAIL,
+                api_key: Optional[str] = None, pause: float = 0.4,
+                progress: bool = False) -> list[tuple[str, int]]:
+    """Descarga secuencias **fechadas** para el predictor de evolución.
+
+    Para cada año de ``years`` lanza una búsqueda con ``term_template`` (que debe
+    contener ``{year}``), descarga las secuencias, y extrae el año de la cabecera
+    (nombre de cepa de gripe). Solo conserva las cuyo año parseado coincide con el
+    consultado — así el binning temporal es limpio. Devuelve ``[(secuencia, año)]``.
+
+    Ejemplo de ``term_template`` (gripe H3N2, HA completa):
+        "Influenza A virus[Organism] AND H3N2 AND hemagglutinin[Title] "
+        "AND 1650:1780[SLEN] AND {year}"
+    """
+    out: list[tuple[str, int]] = []
+    for y in years:
+        ids = esearch(term_template.format(year=y), db=db, retmax=per_year,
+                      email=email, api_key=api_key)
+        recs = efetch_fasta(ids, db=db, email=email, api_key=api_key)
+        kept = 0
+        for hdr, seq in recs:
+            m = _YEAR_RE.search(hdr)
+            if m and int(m.group(1)) == y and seq:
+                out.append((seq.upper(), y))
+                kept += 1
+        if progress:
+            print(f"  {y}: {kept}/{len(recs)} secuencias con año válido", flush=True)
+        time.sleep(pause)                                # cortesía con NCBI
+    return out

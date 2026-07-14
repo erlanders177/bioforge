@@ -33,6 +33,20 @@ from .biocore import (
     TranslationError,
     compute_stats,
 )
+from .evolution import (
+    BacktestResult,
+    CladePrediction,
+    EscapeResult,
+    EvolutionResult,
+    FusionResult,
+    GrowthResult,
+    backtest_evolution,
+    escape_potential,
+    estimate_growth,
+    predict_clade,
+    predict_evolution,
+    predict_fusion,
+)
 from .genomemap import GenomeAligner, Mapping
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
@@ -75,6 +89,19 @@ __all__ = [
     # Multiple sequence alignment (v6.3)
     "align_multiple",
     "MSAResult",
+    # Evolution predictor (Fase 1-5)
+    "predict_evolution",
+    "backtest_evolution",
+    "estimate_growth",
+    "escape_potential",
+    "predict_fusion",
+    "predict_clade",
+    "EvolutionResult",
+    "BacktestResult",
+    "GrowthResult",
+    "EscapeResult",
+    "FusionResult",
+    "CladePrediction",
     # Pipeline
     "run",
     "build_report",
