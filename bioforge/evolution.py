@@ -638,13 +638,369 @@ def _clade_freqs(labels: np.ndarray, bins: np.ndarray, nb: int, m: int) -> np.nd
     return cf
 
 
-def _project_dominant(clade_freq: np.ndarray, garw: bool) -> np.ndarray:
-    """Frecuencia proyectada de cada clado al bin siguiente (mismo ajuste anclado)."""
+def _clade_counts(labels: np.ndarray, bins: np.ndarray, nb: int, m: int) -> np.ndarray:
+    """Nº de secuencias de cada clado por bin → (nb, m). Es la EVIDENCIA: un linaje
+    visto 3 veces no merece el mismo crédito que uno visto 300."""
+    cc = np.zeros((nb, m), dtype=np.float64)
+    for b in range(nb):
+        lb = labels[bins == b]
+        if lb.size:
+            cc[b] = np.bincount(lb, minlength=m)
+    return cc
+
+
+def _shrink_slopes(slope: np.ndarray, weight: np.ndarray, kappa: float,
+                   parents: Optional[np.ndarray] = None,
+                   sizes: Optional[np.ndarray] = None) -> np.ndarray:
+    """Encoge las tasas de crecimiento hacia un prior (Bayes empírico, forma cerrada).
+
+    ``slope`` crudo de un linaje con pocas secuencias es casi ruido; encogerlo hacia un
+    prior en proporción a su evidencia es lo que hace evofr con priors bayesianos —
+    aquí sin MCMC ni JAX: ``w = n/(n+κ)``, el estimador clásico. κ = nº de secuencias
+    a partir del cual te fías del dato más que del prior.
+
+      - ``parents=None`` → prior = media global ponderada (**palanca 4, estilo evofr**):
+        "sin evidencia, no hay ventaja de crecimiento".
+      - ``parents`` dado → prior = la tasa YA ENCOGIDA DEL PADRE (**palanca 5, estilo
+        Łuksza-Lässig**): el fitness se propaga por la jerarquía, así que un sub-linaje
+        con pocos datos hereda la tendencia de su padre en vez de inventarse la suya.
+        Se recorre de padres a hijos (orden topológico = conjunto definitorio creciente).
+    """
+    w = weight / np.maximum(weight + kappa, 1e-9)
+    if parents is None:
+        mu = float((slope * weight).sum() / max(weight.sum(), 1e-9))
+        return mu + (slope - mu) * w
+    out = slope.copy()
+    order = np.argsort(sizes, kind="stable") if sizes is not None \
+        else np.arange(len(slope))
+    for i in order:                                   # padres antes que hijos
+        p = int(parents[i])
+        prior = 0.0 if p < 0 else float(out[p])       # la raíz se encoge hacia "0"
+        out[i] = prior + (slope[i] - prior) * w[i]
+    return out
+
+
+def _project_freqs(clade_freq: np.ndarray, garw: bool, *,
+                   counts: Optional[np.ndarray] = None,
+                   shrink: float = 0.0,
+                   parents: Optional[np.ndarray] = None,
+                   sizes: Optional[np.ndarray] = None) -> np.ndarray:
+    """Frecuencias de clado proyectadas al bin siguiente — forma MULTIPLICATIVA
+    ``f' ∝ f·exp(r)``, que es el modelo MLR de evofr.
+
+    Por qué no un softmax sobre logits proyectados: el ajuste recorta a [0.02, 0.98]
+    para estabilizarse, así que un softmax REGALA un suelo de probabilidad a cada
+    linaje EXTINTO. Con nomenclatura estable (que acumula linajes históricos, como
+    Pango) eso son decenas de muertos robando masa a los vivos. La forma
+    multiplicativa preserva los ceros: extinto por 0 sigue siendo 0.
+
+    Además tiene la inducción correcta: con r=0 el modelo **se reduce exactamente a
+    la ingenua**, así que encoger las tasas (``shrink``) interpola de forma continua
+    entre "predigo crecimiento" y "persisto" — nunca se puede perder por inventarse
+    una ventaja sin evidencia.
+    """
+    nb = clade_freq.shape[0]
+    if nb < 2:
+        return clade_freq[-1]
+    _, slope = _loglinear_fit(clade_freq[:, :, None], weighted=garw)
+    s = slope[:, 0]
+    if shrink > 0.0 and counts is not None:
+        s = _shrink_slopes(s, counts.sum(axis=0), shrink, parents, sizes)
+    pred = clade_freq[-1] * np.exp(np.clip(s, -1.5, 1.5))
+    tot = pred.sum()
+    return pred / tot if tot > 0 else clade_freq[-1]
+
+
+def _project_dominant(clade_freq: np.ndarray, garw: bool, *,
+                      counts: Optional[np.ndarray] = None,
+                      shrink: float = 0.0,
+                      parents: Optional[np.ndarray] = None,
+                      sizes: Optional[np.ndarray] = None) -> np.ndarray:
+    """Frecuencia proyectada de cada clado al bin siguiente (mismo ajuste anclado).
+
+    Con ``shrink>0`` (κ) las tasas se regularizan según la evidencia de cada linaje;
+    con ``parents`` además se propagan por la jerarquía. Ver ``_shrink_slopes``."""
     nb = clade_freq.shape[0]
     if nb < 2:
         return clade_freq[-1]
     logit, slope = _loglinear_fit(clade_freq[:, :, None], weighted=garw)  # (m, 1)
-    return (logit[-1] + np.clip(slope, -1.5, 1.5))[:, 0]
+    s = slope[:, 0]
+    if shrink > 0.0 and counts is not None:
+        s = _shrink_slopes(s, counts.sum(axis=0), shrink, parents, sizes)
+    return logit[-1, :, 0] + np.clip(s, -1.5, 1.5)
+
+
+# ── linajes ESTABLES: mutaciones definitorias + GRI (estilo Pango/autolin) ────
+#
+# El error que arregla esto: re-agrupar los clados en cada fold hace que las etiquetas
+# bailen (el linaje "3" de hoy no es el de ayer) → el modelo de crecimiento recibe
+# trayectorias sin sentido. NADIE en el campo hace eso: Pango/Nextstrain DESIGNAN los
+# linajes una vez (y solo AÑADEN nuevos), y luego únicamente ASIGNAN. evofr recibe los
+# clados ya hechos: su acierto hereda la calidad de esas definiciones.
+#
+# Prestado y adaptado:
+#   - Pango      : linaje = conjunto de MUTACIONES DEFINITORIAS respecto a un ancestro,
+#                  conservadas en >70% del linaje. Jerárquico (B.1.1.7 hereda de B.1.1).
+#   - autolin    : designación AUTOMÁTICA y patógeno-agnóstica maximizando el
+#                  Genotype Representation Index  GRI = N·D / (S + N + D)
+#                  N = tamaño, D = distinción del padre, S = diversidad interna.
+#   - Nextclade  : asignar comparando conjuntos de mutaciones, descendiendo por la
+#                  jerarquía (incluidos nodos internos/ancestrales).
+#
+# NUESTRA VUELTA: autolin necesita un árbol filogenético enraizado con longitudes de
+# rama (IQ-TREE: caro, dependencia pesada, mata Edge Computing). Aquí los tres términos
+# del GRI se calculan DIRECTO del MSA con una matriz de co-ocurrencia (un solo matmul):
+#   N = portadores · D = definitorias nuevas vs el padre · S = Σ (N − alelo mayoritario).
+# Honesto: sin árbol no distinguimos monofilia real de homoplasia (mutación recurrente);
+# la co-ocurrencia la aproxima. Es una aproximación, y se dice.
+
+_DEFINING = 0.7          # regla de Pango: definitoria si está en >70% del linaje
+_MATCH = 0.5             # se asigna al hijo si lleva la mayoría de sus definitorias
+
+
+class LineageSystem(NamedTuple):
+    """Definición ESTABLE de linajes (estilo Pango), designada una vez y EXTENDIDA.
+
+    La IDENTIDAD de un linaje es su conjunto COMPLETO de mutaciones definitorias
+    respecto al ancestro, y se congela al designarlo: nunca cambia → las etiquetas son
+    comparables en el tiempo, que es justo lo que necesita el modelo de crecimiento
+    (y lo que nuestro clustering tosco rompía). ``parents`` se reconstruye por
+    contención de conjuntos (si las definitorias de A ⊂ las de A.1, entonces A.1
+    desciende de A), lo que reordena la jerarquía sin tocar identidades.
+    """
+    root: np.ndarray         # (L,) alelo ancestral por sitio (consenso de lo más antiguo)
+    sites: list              # sites[i] = (k_i,) sitios definitorios COMPLETOS del linaje i
+    alleles: list            # alleles[i] = (k_i,) alelos definitorios completos
+    parents: np.ndarray      # (m,) índice del padre; -1 = raíz
+    n: int                   # nº de linajes designados
+
+
+def _keys(sites: np.ndarray, alleles: np.ndarray) -> np.ndarray:
+    """Mutaciones (sitio, alelo) → claves int64, para operar con conjuntos."""
+    return sites.astype(np.int64) * 256 + alleles.astype(np.int64)
+
+
+def _own(system: LineageSystem, i: int) -> tuple[np.ndarray, np.ndarray]:
+    """Mutaciones PROPIAS del linaje i = las suyas menos las heredadas del padre."""
+    p = int(system.parents[i])
+    if p < 0 or system.sites[p].size == 0:
+        return system.sites[i], system.alleles[i]
+    m = ~np.isin(_keys(system.sites[i], system.alleles[i]),
+                 _keys(system.sites[p], system.alleles[p]))
+    return system.sites[i][m], system.alleles[i][m]
+
+
+def _renest(sites: list, alleles: list) -> np.ndarray:
+    """Jerarquía por CONTENCIÓN: el padre de i es el linaje de conjunto definitorio
+    más grande estrictamente contenido en el de i.
+
+    Sin árbol filogenético, la contención de mutaciones definitorias es la señal de
+    descendencia (A.1 lleva todo lo de A y algo más ⇒ desciende de A). Como el padre
+    siempre tiene un conjunto ESTRICTAMENTE menor, la jerarquía es acíclica (requisito
+    de augur). Bucle por linaje (decenas), no por símbolo."""
+    ks = [_keys(s, a) for s, a in zip(sites, alleles)]
+    parents = np.zeros(len(ks), dtype=np.intp)
+    parents[0] = -1                                   # 0 = raíz (conjunto vacío)
+    for i in range(1, len(ks)):
+        best, size = 0, -1
+        for j in range(len(ks)):
+            if j == i or ks[j].size >= ks[i].size or ks[j].size <= size:
+                continue
+            if bool(np.isin(ks[j], ks[i]).all()):     # j ⊂ i  ⇒ j es ancestro de i
+                best, size = j, ks[j].size
+        parents[i] = best
+    return parents
+
+
+def _root_consensus(arr: np.ndarray, symbols: np.ndarray) -> np.ndarray:
+    """Alelo mayoritario por sitio — aproxima el ancestro (se calcula con lo más
+    antiguo disponible y NO vuelve a cambiar: es el ancla de la estabilidad)."""
+    counts = np.stack([(arr == s).sum(axis=0) for s in symbols])
+    return symbols[counts.argmax(axis=0)]
+
+
+def _candidates(arr: np.ndarray, symbols: np.ndarray, root: np.ndarray,
+                min_size: int, key_sites: int,
+                mut_weights: Optional[np.ndarray] = None):
+    """Espacio de búsqueda: mutaciones (sitio, alelo) que podrían definir un linaje.
+
+    Devuelve (sitios, alelos, X, Y, starts, w), con ``w`` = peso de cada mutación:
+      - X (N, C) = portadores de cada mutación **DERIVADA** (alelo ≠ ancestro). Solo
+        estas definen linajes: llevar el alelo ancestral no es una mutación, es una
+        ausencia — confundirlo fusiona la raíz con sus hijos.
+      - Y (N, P) = perfil con TODOS los alelos (ancestral incluido), necesario para
+        saber cuál es el mayoritario dentro de un linaje (término S del GRI).
+      - starts = inicio de cada sitio en las columnas de Y (para el max por sitio).
+    Se restringe a los ``key_sites`` sitios más variables: una definitoria siempre está
+    en un sitio variable, y acotar las columnas mantiene el matmul barato."""
+    counts = np.stack([(arr == s).sum(axis=0) for s in symbols]).astype(np.int64)
+    n = arr.shape[0]
+    minor = n - counts.max(axis=0)
+    var = np.where(minor >= min_size)[0]
+    e = np.empty(0, dtype=np.intp)
+    if var.size == 0:                                    # nada variable → sin candidatos
+        return e, np.empty(0, dtype=arr.dtype), np.zeros((n, 0), dtype=bool), \
+            np.zeros((n, 0), dtype=bool), e, np.empty(0, dtype=np.float64)
+    key = np.sort(var[np.argsort(-minor[var])[:key_sites]])
+    si, ki = np.nonzero(counts[:, key] >= min_size)      # alelos con presencia real
+    order = np.argsort(ki, kind="stable")                # ordenar POR SITIO
+    si, ki = si[order], ki[order]
+    li, al = key[ki], symbols[si]
+    Y = arr[:, li] == al[None, :]                        # perfil completo
+    _, starts = np.unique(ki, return_index=True)
+    derived = al != root[li]                             # ← mutación DE VERDAD
+    if mut_weights is None:
+        w = np.ones(int(derived.sum()), dtype=np.float64)
+    elif mut_weights.ndim == 1:                          # (L,) peso por SITIO
+        w = mut_weights[li[derived]].astype(np.float64)
+    else:                                                # (S, L) peso por MUTACIÓN
+        w = mut_weights[si[derived], li[derived]].astype(np.float64)
+    return li[derived], al[derived], Y[:, derived], Y, starts.astype(np.intp), w
+
+
+def _best_split(Xg: np.ndarray, Yg: np.ndarray, starts: np.ndarray,
+                min_size: int, min_dist: int, w: np.ndarray):
+    """Mejor división del grupo según GRI → (gri, cand, defining_mask) o ``None``.
+
+    Dos matmuls dan los tres términos del GRI a la vez para TODOS los candidatos
+    (sin bucle por candidato): co-ocurrencia entre mutaciones (N, D) y conteo de
+    alelos dentro de cada hijo (S). ``w`` pondera cada mutación en el término D."""
+    ng = Xg.shape[0]
+    if ng < 2 * min_size or Xg.shape[1] == 0:
+        return None
+    Xf = Xg.astype(np.float32)
+    co = Xf.T @ Xf                                    # (C, C) portadores de a Y de b
+    na = np.diag(co).copy()                           # (C,) tamaño de cada candidato
+    ok = (na >= min_size) & (na <= ng - 1)            # ha de dividir, no copiar al padre
+    if not ok.any():
+        return None
+    safe = np.maximum(na, 1.0)
+    child = co / safe[:, None]                        # (C, C) frecuencia dentro del hijo
+    parent = na / ng                                  # (C,) frecuencia dentro del padre
+    define = (child >= _DEFINING) & (parent < _DEFINING)[None, :]   # definitorias NUEVAS
+    d = define @ w                                    # D: distinción PONDERADA del padre
+    cross = Xf.T @ Yg.astype(np.float32)              # (C, P) alelos dentro del hijo
+    smax = np.maximum.reduceat(cross, starts, axis=1)  # mayoritario por sitio
+    s = (na[:, None] - smax).sum(axis=1)              # S: diversidad interna del hijo
+    gri = na * d / np.maximum(s + na + d, 1e-9)       # ← Genotype Representation Index
+    gri[~ok | (define.sum(axis=1) < min_dist)] = -1.0
+    best = int(gri.argmax())
+    if gri[best] <= 0.0:
+        return None
+    return float(gri[best]), best, define[best]
+
+
+def _assign_lineages(arr: np.ndarray, system: LineageSystem) -> np.ndarray:
+    """Asigna secuencias al linaje más específico cuyas definitorias llevan.
+
+    Desciende por la jerarquía (estilo Nextclade/augur): en cada nodo compara con los
+    conjuntos de mutaciones de sus hijos y baja por el que mejor encaja. Bucle POR
+    LINAJE (~decenas), no por símbolo."""
+    labels = np.zeros(arr.shape[0], dtype=np.intp)
+    if system.n < 2:
+        return labels
+    kids: dict[int, list[int]] = {}
+    for i in range(1, system.n):
+        kids.setdefault(int(system.parents[i]), []).append(i)
+    owns = [_own(system, i) for i in range(system.n)]     # propias vs el padre
+    queue = [0]
+    while queue:
+        p = queue.pop(0)
+        ch = kids.get(p)
+        if not ch:
+            continue
+        idx = np.where(labels == p)[0]
+        if idx.size:
+            sub = arr[idx]
+            score = np.stack([(sub[:, owns[c][0]] == owns[c][1]).mean(axis=1)
+                              if owns[c][0].size else np.zeros(idx.size)
+                              for c in ch])                       # (n_hijos, n_seqs)
+            best, top = score.argmax(axis=0), score.max(axis=0)
+            take = top >= _MATCH
+            labels[idx[take]] = np.asarray(ch)[best[take]]
+        queue.extend(ch)
+    return labels
+
+
+def designate_lineages(arr: np.ndarray, symbols: np.ndarray, *,
+                       max_lineages: int = 20, min_size: int = 10,
+                       min_dist: int = 1, key_sites: int = 100,
+                       mut_weights: Optional[np.ndarray] = None,
+                       prior: Optional[LineageSystem] = None) -> LineageSystem:
+    """Designa linajes maximizando el GRI de forma voraz (autolin sin árbol).
+
+    Con ``prior`` EXTIENDE un sistema existente: conserva raíz y definiciones (los
+    linajes viejos jamás cambian) y solo añade los nuevos que los datos justifiquen —
+    la disciplina "dinámica pero estable" de Pango. Sin ``prior``, designa desde cero
+    tomando como ancestro el consenso de ``arr`` (llamar con lo más antiguo).
+
+    A diferencia del clustering tosco, el número de linajes NO se fija a dedo: sale de
+    los umbrales ``min_size`` (tamaño mínimo) y ``min_dist`` (mutaciones mínimas que lo
+    distinguen del padre), como en autolin.
+
+    ``mut_weights`` (opcional) pondera cuánto "distingue" cada mutación: (L,) por sitio
+    o (n_símbolos, L) por mutación. Es la opción de pesos por mutación de autolin, y la
+    puerta por la que entra el conocimiento externo SIN romper el agnosticismo (por
+    defecto todo pesa 1): ``escape_weights`` (eje C, físico-química), sitios epítopo
+    conocidos (prior antigénico), o cualquier puntuación de una IA (eje B). Así los
+    linajes se definen por las mutaciones que IMPORTAN, no por la deriva neutral.
+    """
+    if prior is None:
+        root = _root_consensus(arr, symbols)
+        sites: list = [np.empty(0, dtype=np.intp)]
+        alleles: list = [np.empty(0, dtype=arr.dtype)]
+        parents: list = [-1]
+    else:
+        root = prior.root
+        sites, alleles, parents = list(prior.sites), list(prior.alleles), \
+            list(prior.parents)
+
+    li, al, X, Y, starts, w = _candidates(arr, symbols, root, min_size, key_sites,
+                                          mut_weights)
+    if li.size == 0:
+        return LineageSystem(root, sites, alleles, np.asarray(parents, dtype=np.intp),
+                             len(sites))
+
+    labels = _assign_lineages(arr, LineageSystem(
+        root, sites, alleles, np.asarray(parents, dtype=np.intp), len(sites)))
+    cache: dict = {}                     # mejor división por grupo: dividir uno NO
+    while len(sites) < max_lineages:     # cambia a los demás → sus cálculos siguen
+        best = None                      # valiendo (voraz O(m) en vez de O(m²))
+        for g in range(len(sites)):
+            if g not in cache:
+                mask = labels == g
+                cache[g] = (_best_split(X[mask], Y[mask], starts, min_size, min_dist, w)
+                            if int(mask.sum()) >= 2 * min_size else None)
+            r = cache[g]
+            if r is not None and (best is None or r[0] > best[1][0]):
+                best = (g, r)
+        if best is None:
+            break
+        g, (_, cand, define) = best
+        new = len(sites)
+        sites.append(np.concatenate([sites[g], li[define]]))     # identidad = conjunto
+        alleles.append(np.concatenate([alleles[g], al[define]]))  # COMPLETO vs ancestro
+        parents.append(g)
+        member = (labels == g) & X[:, cand]           # los portadores pasan al hijo
+        labels[member] = new
+        cache.pop(g)                                  # solo g cambió de miembros
+    return LineageSystem(root, sites, alleles, _renest(sites, alleles), len(sites))
+
+
+def escape_weights(symbols: np.ndarray, root: np.ndarray, *,
+                   base: float = 1.0) -> np.ndarray:
+    """Pesos de mutación (n_símbolos, L) = 1 + disimilitud físico-química vs el ancestro.
+
+    Para ``designate_lineages(mut_weights=...)``: una mutación que cambia carga o
+    hidrofobicidad (candidata a escape inmune, eje C de EVEscape) pesa hasta el doble
+    al definir un linaje que una sustitución conservadora. Requiere PROTEÍNA.
+    """
+    _require_protein(symbols)
+    tab = np.array([[_dissimilarity(chr(int(a)), chr(int(b))) for b in symbols]
+                    for a in symbols])                       # (S, S) entre símbolos
+    idx = {int(s): i for i, s in enumerate(symbols)}
+    ridx = np.array([idx.get(int(r), 0) for r in root])      # (L,) alelo raíz por sitio
+    return base + tab[:, ridx]                               # (S, L)
 
 
 # ── mutabilidad por sitio: "clado variable" (idea propia, estilo beth-1) ───────

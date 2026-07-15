@@ -21,11 +21,18 @@ from bioforge.evolution import (
     EvolutionResult,
     FusionResult,
     GrowthResult,
+    _assign_lineages,
     _clade_labels,
     _dissimilarity,
+    _own,
     _prepare,
+    _project_freqs,
+    _renest,
+    _shrink_slopes,
     backtest_evolution,
+    designate_lineages,
     escape_potential,
+    escape_weights,
     estimate_growth,
     predict_clade,
     predict_evolution,
@@ -413,3 +420,195 @@ def test_mutabilidad_estatico_vacio_o_bajo():
     times = list(np.repeat(np.arange(6), 10))
     mut = site_mutability(seqs, times)
     assert all(v < 1e-6 for v in mut.values()) or mut == {}
+
+
+# ── linajes ESTABLES: definitorias + GRI (Pango/autolin sin árbol) ────────────
+
+def _lineage_dataset(n_early=150, n_late=250, seed=0):
+    """Estructura VERDADERA anidada: raíz → A[10,20] → A.1[+30,40]; raíz → B[50,60].
+    Como en la realidad, la raíz domina al principio y los derivados llegan después."""
+    rng = np.random.default_rng(seed)
+    L = 120
+    truth = {0: [], 1: [10, 20], 2: [10, 20, 30, 40], 3: [50, 60]}
+    early = rng.choice(4, n_early, p=[0.75, 0.15, 0.05, 0.05])
+    late = rng.choice(4, n_late, p=[0.05, 0.30, 0.45, 0.20])
+    lab = np.concatenate([early, late])
+    arr = np.full((len(lab), L), ord("A"), dtype=np.uint8)
+    for i, t in enumerate(lab):
+        arr[i, truth[int(t)]] = ord("G")
+    arr[rng.random(arr.shape) < 0.01] = ord("C")          # 1% de ruido
+    return arr, np.unique(arr), lab
+
+
+def test_linajes_recuperan_la_estructura_verdadera():
+    # designar con lo antiguo (fija el ancestro) y extender — el uso real
+    arr, symbols, truth = _lineage_dataset()
+    sysx = designate_lineages(arr[:150], symbols, min_size=10)
+    sysx = designate_lineages(arr, symbols, prior=sysx, min_size=10)
+    labels = _assign_lineages(arr, sysx)
+    for t in range(4):                       # cada grupo verdadero → un linaje, puro
+        m = truth == t
+        c = np.bincount(labels[m], minlength=sysx.n)
+        assert c.max() / m.sum() > 0.90
+
+
+def test_linajes_definitorias_son_mutaciones_derivadas():
+    # una definitoria es un cambio RESPECTO AL ANCESTRO, nunca el alelo ancestral
+    arr, symbols, _ = _lineage_dataset()
+    sysx = designate_lineages(arr[:150], symbols, min_size=10)
+    sysx = designate_lineages(arr, symbols, prior=sysx, min_size=10)
+    for i in range(1, sysx.n):
+        assert sysx.sites[i].size > 0
+        assert np.all(sysx.alleles[i] != sysx.root[sysx.sites[i]])
+
+
+def test_linajes_estables_al_extender():
+    # la disciplina Pango: los linajes ya designados NO cambian de identidad
+    arr, symbols, _ = _lineage_dataset()
+    base = designate_lineages(arr[:150], symbols, min_size=10)
+    ext = designate_lineages(arr, symbols, prior=base, min_size=10)
+    assert ext.n >= base.n
+    assert np.array_equal(ext.root, base.root)                  # el ancla no se mueve
+    for i in range(base.n):
+        assert np.array_equal(ext.sites[i], base.sites[i])      # identidad congelada
+        assert np.array_equal(ext.alleles[i], base.alleles[i])
+
+
+def test_jerarquia_anidada_y_aciclica():
+    # A.1 lleva todo lo de A y algo más ⇒ debe COLGAR de A (no de la raíz)
+    arr, symbols, _ = _lineage_dataset()
+    sysx = designate_lineages(arr[:150], symbols, min_size=10)
+    sysx = designate_lineages(arr, symbols, prior=sysx, min_size=10)
+    assert sysx.parents[0] == -1
+    for i in range(1, sysx.n):
+        p = int(sysx.parents[i])
+        assert p < i or sysx.sites[p].size < sysx.sites[i].size  # padre ⊂ hijo estricto
+        seen, cur = set(), i                                     # y no hay ciclos
+        while cur >= 0:
+            assert cur not in seen
+            seen.add(cur)
+            cur = int(sysx.parents[cur])
+    deep = max(range(sysx.n), key=lambda i: sysx.sites[i].size)
+    assert sysx.parents[deep] > 0              # el más profundo no cuelga de la raíz
+
+
+def test_renest_por_contencion():
+    # contención pura: {} ⊂ {10G} ⊂ {10G,20G}
+    sites = [np.array([], dtype=np.intp), np.array([10]), np.array([10, 20])]
+    alleles = [np.array([], dtype=np.uint8), np.array([71], dtype=np.uint8),
+               np.array([71, 71], dtype=np.uint8)]
+    parents = _renest(sites, alleles)
+    assert list(parents) == [-1, 0, 1]
+
+
+def test_own_quita_las_heredadas():
+    arr, symbols, _ = _lineage_dataset()
+    sysx = designate_lineages(arr[:150], symbols, min_size=10)
+    sysx = designate_lineages(arr, symbols, prior=sysx, min_size=10)
+    for i in range(1, sysx.n):
+        own_s, _ = _own(sysx, i)
+        p = int(sysx.parents[i])
+        assert own_s.size == sysx.sites[i].size - sysx.sites[p].size
+
+
+def test_numero_de_linajes_no_se_fija_a_dedo():
+    # a diferencia del clustering tosco (n_clades), sale de los umbrales
+    arr, symbols, _ = _lineage_dataset()
+    pocos = designate_lineages(arr, symbols, min_size=250)      # umbral alto → menos
+    muchos = designate_lineages(arr, symbols, min_size=10)
+    assert pocos.n < muchos.n
+
+
+def test_sin_variacion_un_solo_linaje():
+    arr = np.full((50, 30), ord("A"), dtype=np.uint8)
+    sysx = designate_lineages(arr, np.unique(arr), min_size=5)
+    assert sysx.n == 1
+    assert np.all(_assign_lineages(arr, sysx) == 0)
+
+
+# ── shrinkage: crecimiento regularizado (evofr) y propagado (Łuksza) ──────────
+
+def test_shrink_encoge_lo_poco_evidenciado_hacia_la_media():
+    slope = np.array([2.0, -2.0])
+    weight = np.array([1.0, 1.0])              # casi sin evidencia → casi todo prior
+    out = _shrink_slopes(slope, weight, kappa=100.0)
+    assert abs(out[0]) < 0.1 and abs(out[1]) < 0.1
+
+
+def test_shrink_respeta_lo_muy_evidenciado():
+    slope = np.array([2.0, -2.0])
+    weight = np.array([1e6, 1e6])              # evidencia abrumadora → casi el dato
+    out = _shrink_slopes(slope, weight, kappa=30.0)
+    assert np.allclose(out, slope, atol=1e-3)
+
+
+def test_shrink_por_arbol_hereda_del_padre():
+    # hijo sin evidencia dentro de un padre que crece → hereda la tendencia del padre
+    slope = np.array([0.0, 1.0, -5.0])         # el -5 del hijo es ruido
+    weight = np.array([1e6, 1e6, 1.0])
+    parents = np.array([-1, 0, 1])
+    sizes = np.array([0, 1, 2])
+    out = _shrink_slopes(slope, weight, 100.0, parents=parents, sizes=sizes)
+    assert out[2] > 0.9                        # arrastrado hacia la tasa del padre (~1)
+
+
+# ── GRI ponderado: la puerta del conocimiento externo (ejes B/C) ──────────────
+
+def test_escape_weights_forma_y_rango():
+    symbols = np.frombuffer(b"AKDEP", dtype=np.uint8)
+    root = np.frombuffer(b"AAKKD", dtype=np.uint8)
+    w = escape_weights(symbols, root)
+    assert w.shape == (5, 5)
+    assert np.all(w >= 1.0) and np.all(w <= 2.0)
+    a_idx = int(np.where(symbols == ord("A"))[0][0])
+    assert w[a_idx, 0] == 1.0                  # A→A no es mutación: sin disimilitud
+
+
+def test_escape_weights_exige_proteina():
+    symbols = np.frombuffer(b"ACGT", dtype=np.uint8)
+    with pytest.raises(SequenceValueError):
+        escape_weights(symbols, np.frombuffer(b"ACGT", dtype=np.uint8))
+
+
+def test_mut_weights_inclinan_la_designacion():
+    # pesar mucho un sitio hace que su mutación merezca definir linaje antes
+    arr, symbols, _ = _lineage_dataset()
+    raiz = designate_lineages(arr[:150], symbols, max_lineages=1)   # ancla el ancestro
+    plano = designate_lineages(arr, symbols, prior=raiz, min_size=10, max_lineages=2)
+    w = np.ones(arr.shape[1])
+    w[[50, 60]] = 50.0                         # el clado B pasa a pesar mucho
+    pesado = designate_lineages(arr, symbols, prior=raiz, min_size=10, max_lineages=2,
+                                mut_weights=w)
+    assert not np.array_equal(plano.sites[1], pesado.sites[1])
+    assert set(pesado.sites[1].tolist()) == {50, 60}   # ahora B merece ser el primero
+
+
+# ── proyección MLR: preserva ceros y se reduce a la ingenua sin señal ─────────
+
+def test_proyeccion_preserva_los_linajes_extintos():
+    # un linaje a 0 debe seguir a 0: el softmax sobre logits le regalaba masa
+    cf = np.array([[0.5, 0.5, 0.0], [0.6, 0.4, 0.0], [0.7, 0.3, 0.0]])
+    p = _project_freqs(cf, False)
+    assert p[2] == 0.0
+    assert abs(p.sum() - 1.0) < 1e-9
+
+
+def test_proyeccion_sin_crecimiento_es_la_ingenua():
+    # trayectoria plana → r=0 → el modelo NO puede perder contra persistir
+    cf = np.array([[0.4, 0.6], [0.4, 0.6], [0.4, 0.6]])
+    assert np.allclose(_project_freqs(cf, False), cf[-1], atol=1e-6)
+
+
+def test_proyeccion_sigue_al_que_sube():
+    cf = np.array([[0.9, 0.1], [0.7, 0.3], [0.5, 0.5]])
+    p = _project_freqs(cf, False)
+    assert p[1] > cf[-1][1]                    # el que crece, sigue creciendo
+    assert abs(p.sum() - 1.0) < 1e-9
+
+
+def test_shrink_total_devuelve_la_ingenua():
+    # κ enorme → tasas ≈ 0 → la predicción colapsa a persistir (interpolación continua)
+    cf = np.array([[0.9, 0.1], [0.7, 0.3], [0.5, 0.5]])
+    counts = np.full((3, 2), 5.0)
+    p = _project_freqs(cf, False, counts=counts, shrink=1e6)
+    assert np.allclose(p, cf[-1], atol=1e-3)
