@@ -29,6 +29,21 @@ _EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 # El año va tras el último '/' y antes de '(' o ')'. Sirve para A y B.
 _YEAR_RE = re.compile(r"/(\d{4})\s*[()]")
 _DEFAULT_EMAIL = "bioforge@users.noreply.github.com"
+_CHUNK = 100                        # IDs por lote en efetch (evita URLs largas, error 414)
+
+
+def _efetch(ids, rettype, db, email, api_key, timeout):
+    """efetch POR LOTES → concatena el texto. Evita el error 414 (URL demasiado larga)
+    cuando hay muchos IDs; espacia los lotes por cortesía con NCBI."""
+    out = []
+    for i in range(0, len(ids), _CHUNK):
+        out.append(_get("efetch.fcgi",
+                        {"db": db, "id": ",".join(ids[i:i + _CHUNK]),
+                         "rettype": rettype, "retmode": "text"},
+                        email=email, api_key=api_key, timeout=timeout))
+        if i + _CHUNK < len(ids):
+            time.sleep(0.34)
+    return "".join(out)
 
 
 def _get(endpoint: str, params: dict, *, email: str, api_key: Optional[str],
@@ -64,10 +79,7 @@ def efetch_fasta(ids: Iterable[str], *, db: str = "nuccore",
     ids = list(ids)
     if not ids:
         return []
-    raw = _get("efetch.fcgi",
-               {"db": db, "id": ",".join(ids), "rettype": "fasta", "retmode": "text"},
-               email=email, api_key=api_key, timeout=timeout)
-    return _parse_fasta(raw)
+    return _parse_fasta(_efetch(ids, "fasta", db, email, api_key, timeout))
 
 
 def _parse_fasta(text: str) -> list[tuple[str, str]]:
@@ -135,9 +147,7 @@ def fetch_dated_precise(term_template: str, years: Iterable[int], *, per_year: i
                       email=email, api_key=api_key)
         if not ids:
             continue
-        raw = _get("efetch.fcgi",
-                   {"db": db, "id": ",".join(ids), "rettype": "gb", "retmode": "text"},
-                   email=email, api_key=api_key, timeout=180.0)
+        raw = _efetch(ids, "gb", db, email, api_key, 180.0)
         kept = 0
         for seq, date in _parse_gb(raw):
             dy = _decimal_year(date)
