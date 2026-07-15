@@ -30,6 +30,7 @@ from bioforge.evolution import (
     predict_clade,
     predict_evolution,
     predict_fusion,
+    site_mutability,
 )
 
 
@@ -394,3 +395,21 @@ def test_clados_agnostico_de_alfabeto_proteina():
     times = _clade_dataset()[1]
     r = predict_clade(seqs, times, n_clades=5, key_sites=6)
     assert r.predicted_aligned == "RRRMMM"     # clado en ascenso (era T→R)
+
+
+# ── mutabilidad por sitio (clado variable) ────────────────────────────────────
+
+def test_mutabilidad_detecta_el_sitio_que_cambia():
+    # en el barrido, solo el sitio 0 cambia en el tiempo → debe ser el más mutable
+    seqs, times = _sweep_dataset()
+    mut = site_mutability(seqs, times)
+    assert 0 in mut                            # el sitio barrido aparece
+    assert mut[0] == max(mut.values())         # y es el de mayor mutabilidad
+
+
+def test_mutabilidad_estatico_vacio_o_bajo():
+    # datos sin cambio temporal → no hay sitios notablemente mutables
+    seqs = ["ACGTAC"] * 60
+    times = list(np.repeat(np.arange(6), 10))
+    mut = site_mutability(seqs, times)
+    assert all(v < 1e-6 for v in mut.values()) or mut == {}

@@ -86,6 +86,73 @@ def _parse_fasta(text: str) -> list[tuple[str, str]]:
     return recs
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def _decimal_year(s: str) -> Optional[float]:
+    """Fecha de colecta → año decimal (resolución de MES). Maneja los formatos de
+    GenBank: '2019-03-17', '2019-03', '2019', '17-Mar-2019', 'Mar-2019'."""
+    s = s.strip()
+    m = re.match(r"(\d{4})(?:-(\d{1,2}))?(?:-\d{1,2})?$", s)     # ISO
+    if m:
+        return int(m.group(1)) + (int(m.group(2) or 1) - 1) / 12.0
+    m = re.match(r"(?:\d{1,2}-)?([A-Za-z]{3})-(\d{4})$", s)      # DD-Mon-YYYY
+    if m:
+        mo = _MONTHS.get(m.group(1).lower())
+        if mo:
+            return int(m.group(2)) + (mo - 1) / 12.0
+    return None
+
+
+def _parse_gb(text: str) -> list[tuple[str, str]]:
+    """GenBank flat → [(secuencia, fecha_colecta)]. Extrae la secuencia de ORIGIN."""
+    out: list[tuple[str, str]] = []
+    for rec in text.split("//\n"):
+        if "ORIGIN" not in rec:
+            continue
+        m = re.search(r'/collection_date="([^"]+)"', rec)
+        if not m:
+            continue
+        seq = re.sub(r"[^A-Za-z]", "", rec.split("ORIGIN", 1)[1])
+        if seq:
+            out.append((seq.upper(), m.group(1)))
+    return out
+
+
+def fetch_dated_precise(term_template: str, years: Iterable[int], *, per_year: int = 100,
+                        quarter: bool = True, db: str = "nuccore",
+                        email: str = _DEFAULT_EMAIL, api_key: Optional[str] = None,
+                        pause: float = 0.4, progress: bool = False
+                        ) -> list[tuple[str, float]]:
+    """Como ``fetch_dated`` pero con **fecha de colecta real** (resolución de mes) del
+    registro GenBank → permite bins finos (la palanca B). ``quarter=True`` redondea a
+    trimestre (año.00/.25/.50/.75). Devuelve ``[(secuencia, año_decimal)]``."""
+    out: list[tuple[str, float]] = []
+    for y in years:
+        ids = esearch(term_template.format(year=y), db=db, retmax=per_year,
+                      email=email, api_key=api_key)
+        if not ids:
+            continue
+        raw = _get("efetch.fcgi",
+                   {"db": db, "id": ",".join(ids), "rettype": "gb", "retmode": "text"},
+                   email=email, api_key=api_key, timeout=180.0)
+        kept = 0
+        for seq, date in _parse_gb(raw):
+            dy = _decimal_year(date)
+            if dy is None:
+                continue
+            if quarter:
+                dy = int(dy) + (int((dy % 1) * 4)) / 4.0        # → trimestre
+            out.append((seq, dy))
+            kept += 1
+        if progress:
+            print(f"  {y}: {kept} secuencias con fecha", flush=True)
+        time.sleep(pause)
+    return out
+
+
 def fetch_dated(term_template: str, years: Iterable[int], *, per_year: int = 30,
                 db: str = "nuccore", email: str = _DEFAULT_EMAIL,
                 api_key: Optional[str] = None, pause: float = 0.4,

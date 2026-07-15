@@ -31,10 +31,12 @@ from bioforge.evolution import (  # noqa: E402
     _clade_labels,
     _freqs,
     _loglinear_fit,
+    _mutability,
+    _mutability_gate,
     _prepare,
     _project_dominant,
 )
-from bioforge.fetch import fetch_dated  # noqa: E402
+from bioforge.fetch import fetch_dated, fetch_dated_precise  # noqa: E402
 
 ORGANISMS = [
     ("H3N2 (gripe A)",
@@ -48,10 +50,11 @@ ORGANISMS = [
      "AND 1700:1800[SLEN] AND {year}"),
 ]
 YEARS = range(2011, 2024)
-PER_YEAR = 50
-N_BOOT = 100
+PER_YEAR = 150                                 # más datos → IC más estrecho
+N_BOOT = 50
 MIN_COUNT = 3
-METHODS = ("site", "clade")
+METHODS = ("site", "clade", "clade-var")       # clade-var = clado + puerta de mutabilidad
+FINE = True                                    # B: bins TRIMESTRALES (fecha de colecta real)
 
 
 def _softmax(x, axis=0):
@@ -82,6 +85,12 @@ def _predict_freq(freq_train, arr_train, bins_train, k, symbols, method):
             pred += w[c] * (comp / tot)
             wsum += w[c]
         return pred / wsum if wsum else pred
+    if method == "clade-var":
+        # clado, pero SOLO nos desviamos de naive donde el sitio es mutable
+        base = _predict_freq(freq_train, arr_train, bins_train, k, symbols, "clade")
+        naive = freq_train[-1]
+        gate = _mutability_gate(_mutability(freq_train))          # (L,) en [0,1)
+        return gate[None, :] * base + (1.0 - gate[None, :]) * naive
     raise ValueError(method)
 
 
@@ -116,7 +125,8 @@ def _resample(bins, nb, rng):
 
 
 def evaluate(label, term):
-    data = fetch_dated(term, YEARS, per_year=PER_YEAR)
+    data = (fetch_dated_precise(term, YEARS, per_year=PER_YEAR) if FINE
+            else fetch_dated(term, YEARS, per_year=PER_YEAR))
     if len(data) < 60:
         print(f"  {label}: pocas secuencias ({len(data)}) — saltando.\n")
         return
@@ -146,8 +156,9 @@ def evaluate(label, term):
 
 def main():
     print("EVALUADOR RIGUROSO — skill de frecuencias vs naive, con IC95% (bootstrap)")
-    print("Un WIN solo cuenta si el intervalo de confianza está ENTERO por encima de 0.\n")
-    for label, term in ORGANISMS:
+    print(f"Resolución: {'TRIMESTRAL (B, fecha real)' if FINE else 'anual'}. "
+          "Un WIN solo cuenta si el IC95% está ENTERO por encima de 0.\n")
+    for label, term in ORGANISMS:              # los 3 virus (prueba de generalidad)
         evaluate(label, term)
 
 

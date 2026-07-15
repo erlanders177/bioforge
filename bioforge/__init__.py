@@ -46,6 +46,7 @@ from .evolution import (
     predict_clade,
     predict_evolution,
     predict_fusion,
+    site_mutability,
 )
 from .genomemap import GenomeAligner, Mapping
 from .msa import MSAResult, align_multiple
@@ -96,6 +97,7 @@ __all__ = [
     "escape_potential",
     "predict_fusion",
     "predict_clade",
+    "site_mutability",
     "EvolutionResult",
     "BacktestResult",
     "GrowthResult",

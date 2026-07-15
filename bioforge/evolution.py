@@ -627,6 +627,47 @@ def _project_dominant(clade_freq: np.ndarray, garw: bool) -> np.ndarray:
     return (logit[-1] + np.clip(slope, -1.5, 1.5))[:, 0]
 
 
+# ── mutabilidad por sitio: "clado variable" (idea propia, estilo beth-1) ───────
+
+def _mutability(freq: np.ndarray) -> np.ndarray:
+    """Mutabilidad por sitio (L,) desde el cambio temporal, REGULARIZADA.
+
+    Mide cuánto se mueve la composición de cada sitio año a año (variación total
+    media sobre los bins). Se encoge hacia la media global (shrinkage bayesiano) para
+    que la escasez de datos no invente volatilidad. Alta = propenso a cambiar; ~0 =
+    estable. Es la señal de "transition time" de beth-1, pero data-driven y regularizada."""
+    nb = freq.shape[0]
+    if nb < 2:
+        return np.zeros(freq.shape[2])
+    tv = np.abs(np.diff(freq, axis=0)).sum(axis=1).mean(axis=0)   # (L,) cambio medio
+    prior = float(tv.mean())                                      # tasa global
+    return (tv * (nb - 1) + prior) / ((nb - 1) + 1.0)            # shrink hacia el global
+
+
+def _mutability_gate(mut: np.ndarray) -> np.ndarray:
+    """Puerta [0,1) por sitio: ~0 en sitios estables (→ persistir/naive), →1 en los
+    volátiles (→ confiar en el modelo). Escala relativa a la mutabilidad mediana."""
+    pos = mut[mut > 1e-9]
+    tau = float(np.median(pos)) if pos.size else 1.0
+    return mut / (mut + tau + 1e-12)
+
+
+def site_mutability(sequences: Sequence[str], times: Sequence[Number], *,
+                    align: bool = True, n_bins: Optional[int] = None,
+                    top: int = 20) -> dict[int, float]:
+    """Sitios más **propensos a cambiar** (mutabilidad regularizada), interpretables.
+
+    Devuelve los ``top`` sitios de mayor mutabilidad → {sitio: score}. Son los que
+    están bajo presión de cambio (candidatos antigénicos), descubiertos de los datos
+    sin hardcodear nada. Genoma-agnóstico."""
+    _validate(sequences, times)
+    arr, t, symbols = _prepare(sequences, times, align)
+    bins, nb = _bin_ids(t, n_bins)
+    mut = _mutability(_freqs(arr, bins, nb, symbols))
+    order = np.argsort(-mut)[:top]
+    return {int(i): float(mut[i]) for i in order if mut[i] > 0}
+
+
 def predict_clade(sequences: Sequence[str], times: Sequence[Number], *,
                   align: bool = True, n_clades: int = 12, min_count: int = 3,
                   key_sites: int = 40, garw: bool = False) -> CladePrediction:
