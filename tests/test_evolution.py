@@ -612,3 +612,31 @@ def test_shrink_total_devuelve_la_ingenua():
     counts = np.full((3, 2), 5.0)
     p = _project_freqs(cf, False, counts=counts, shrink=1e6)
     assert np.allclose(p, cf[-1], atol=1e-3)
+
+
+def test_el_catalogo_no_se_congela_al_llegar_datos_nuevos():
+    # Regresión: con un tope bajo la nomenclatura SATURA y ningún linaje puede nacer
+    # después → se predice el futuro con un catálogo FÓSIL. Medido en H3N2 real: con
+    # tope 20 saturaba en el fold 17/46 y NINGÚN linaje nacía después, así que los
+    # clados de 2020+ nunca existían como categoría. El control debe ser el umbral
+    # (min_size), nunca el tope.
+    arr, symbols, _ = _lineage_dataset()
+    viejo = designate_lineages(arr[:150], symbols, min_size=10)
+    emergente = arr[-60:].copy()
+    emergente[:, [70, 80]] = ord("G")          # un clado NUEVO, jamás visto antes
+    nuevo = designate_lineages(np.vstack([arr, emergente]), symbols, prior=viejo,
+                               min_size=10)
+    assert nuevo.n > viejo.n                                     # ha nacido
+    assert any(set(s.tolist()) >= {70, 80} for s in nuevo.sites)  # por SUS mutaciones
+
+
+def test_tope_bajo_congela_el_catalogo():
+    # el fallo, explícito: con el tope agotado no puede nacer el clado emergente
+    arr, symbols, _ = _lineage_dataset()
+    viejo = designate_lineages(arr[:150], symbols, min_size=10)
+    emergente = arr[-60:].copy()
+    emergente[:, [70, 80]] = ord("G")
+    congelado = designate_lineages(np.vstack([arr, emergente]), symbols, prior=viejo,
+                                   min_size=10, max_lineages=viejo.n)
+    assert congelado.n == viejo.n
+    assert not any(set(s.tolist()) >= {70, 80} for s in congelado.sites)

@@ -923,7 +923,7 @@ def _assign_lineages(arr: np.ndarray, system: LineageSystem) -> np.ndarray:
 
 
 def designate_lineages(arr: np.ndarray, symbols: np.ndarray, *,
-                       max_lineages: int = 20, min_size: int = 10,
+                       max_lineages: int = 500, min_size: int = 10,
                        min_dist: int = 1, key_sites: int = 100,
                        mut_weights: Optional[np.ndarray] = None,
                        prior: Optional[LineageSystem] = None) -> LineageSystem:
@@ -936,7 +936,11 @@ def designate_lineages(arr: np.ndarray, symbols: np.ndarray, *,
 
     A diferencia del clustering tosco, el número de linajes NO se fija a dedo: sale de
     los umbrales ``min_size`` (tamaño mínimo) y ``min_dist`` (mutaciones mínimas que lo
-    distinguen del padre), como en autolin.
+    distinguen del padre), como en autolin. ``max_lineages`` es solo una VÁLVULA DE
+    SEGURIDAD, no el control: si se toca, la nomenclatura se CONGELA y los linajes
+    nuevos ya no pueden nacer — es decir, se predice el futuro con un catálogo fósil
+    (medido: con tope 20 sobre gripe H3N2 real, el sistema saturaba a mitad del
+    histórico y NINGÚN linaje nacía después). Para acotar, sube ``min_size``.
 
     ``mut_weights`` (opcional) pondera cuánto "distingue" cada mutación: (L,) por sitio
     o (n_símbolos, L) por mutación. Es la opción de pesos por mutación de autolin, y la
