@@ -50,7 +50,7 @@ ORGANISMS = [
      "AND 1700:1800[SLEN] AND {year}"),
 ]
 YEARS = range(2011, 2024)
-PER_YEAR = 150                                 # más datos → IC más estrecho
+PER_YEAR = 150
 N_BOOT = 50
 MIN_COUNT = 3
 METHODS = ("site", "clade", "clade-var")       # clade-var = clado + puerta de mutabilidad

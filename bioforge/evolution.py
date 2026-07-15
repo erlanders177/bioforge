@@ -578,32 +578,47 @@ def predict_fusion(sequences: Sequence[str], times: Sequence[Number], *,
 
 # ── clados / haplotipos: eje A a nivel de LINAJE (estilo evofr/MLR) ────────────
 
-def _clade_labels(arr: np.ndarray, symbols: np.ndarray, n_clades: int,
-                  min_count: int, key_sites: int,
-                  counts: Optional[np.ndarray] = None) -> tuple[np.ndarray, int]:
-    """Agrupa secuencias en clados por sus alelos en los sitios más polimórficos.
+def _clade_model(arr: np.ndarray, symbols: np.ndarray, n_clades: int,
+                 min_count: int, key_sites: int,
+                 counts: Optional[np.ndarray] = None):
+    """Ajusta el modelo de clados y devuelve (labels, m, key_cols, seeds).
 
-    Método robusto y sin dependencias: (1) puntúa cada columna por cuántas secuencias
-    se salen de la mayoría; (2) toma los ``key_sites`` sitios más variables como
-    "definitorios"; (3) siembra clados con los HAPLOTIPOS más frecuentes en esos sitios
-    (las variantes que de verdad circulan); (4) asigna cada secuencia al haplotipo-
-    semilla más cercano (Hamming). Devuelve (labels, n_clados_reales).
-
-    ``counts`` (S, L): conteos por alelo/sitio ya calculados (optimización — evita
-    recontar el array completo; p. ej. el evaluador los pasa vía cumsum)."""
+    (1) puntúa cada columna por cuántas secuencias se salen de la mayoría; (2) toma los
+    ``key_sites`` sitios más variables como "definitorios"; (3) siembra clados con los
+    HAPLOTIPOS más frecuentes en esos sitios; (4) asigna al más cercano (Hamming).
+    Exponer ``key_cols``/``seeds`` permite asignar secuencias NUEVAS al mismo modelo
+    (necesario para medir la frecuencia real del próximo periodo — nivel linaje)."""
     if counts is None:
         counts = np.stack([(arr == s).sum(axis=0) for s in symbols])   # (S, L)
     minor = arr.shape[0] - counts.max(axis=0)                       # fuera de mayoría
     var_idx = np.where(minor >= min_count)[0]
     if var_idx.size == 0:
-        return np.zeros(arr.shape[0], dtype=np.intp), 1
+        z = np.zeros(arr.shape[0], dtype=np.intp)
+        return z, 1, np.empty(0, dtype=np.intp), None
     key = var_idx[np.argsort(-minor[var_idx])[:key_sites]]          # sitios clave
     genos = arr[:, key]                                             # (N, K)
     uniq, cnt = np.unique(genos, axis=0, return_counts=True)
     m = int(min(n_clades, uniq.shape[0]))
     seeds = uniq[np.argsort(-cnt)[:m]]                             # (m, K) frecuentes
     dist = (genos[:, None, :] != seeds[None, :, :]).sum(axis=2)    # (N, m) Hamming
-    return dist.argmin(axis=1).astype(np.intp), m
+    return dist.argmin(axis=1).astype(np.intp), m, key, seeds
+
+
+def _assign_clades(arr: np.ndarray, key: np.ndarray, seeds) -> np.ndarray:
+    """Asigna secuencias NUEVAS al clado-semilla más cercano (mismo modelo)."""
+    if seeds is None or seeds.shape[0] == 0:
+        return np.zeros(arr.shape[0], dtype=np.intp)
+    genos = arr[:, key]
+    dist = (genos[:, None, :] != seeds[None, :, :]).sum(axis=2)
+    return dist.argmin(axis=1).astype(np.intp)
+
+
+def _clade_labels(arr: np.ndarray, symbols: np.ndarray, n_clades: int,
+                  min_count: int, key_sites: int,
+                  counts: Optional[np.ndarray] = None) -> tuple[np.ndarray, int]:
+    """Agrupa secuencias en clados. Devuelve (labels, n_clados). Ver ``_clade_model``."""
+    labels, m, _, _ = _clade_model(arr, symbols, n_clades, min_count, key_sites, counts)
+    return labels, m
 
 
 def _clade_consensus_idx(arr: np.ndarray, symbols: np.ndarray,
