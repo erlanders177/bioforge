@@ -579,15 +579,20 @@ def predict_fusion(sequences: Sequence[str], times: Sequence[Number], *,
 # ── clados / haplotipos: eje A a nivel de LINAJE (estilo evofr/MLR) ────────────
 
 def _clade_labels(arr: np.ndarray, symbols: np.ndarray, n_clades: int,
-                  min_count: int, key_sites: int) -> tuple[np.ndarray, int]:
+                  min_count: int, key_sites: int,
+                  counts: Optional[np.ndarray] = None) -> tuple[np.ndarray, int]:
     """Agrupa secuencias en clados por sus alelos en los sitios más polimórficos.
 
     Método robusto y sin dependencias: (1) puntúa cada columna por cuántas secuencias
     se salen de la mayoría; (2) toma los ``key_sites`` sitios más variables como
     "definitorios"; (3) siembra clados con los HAPLOTIPOS más frecuentes en esos sitios
     (las variantes que de verdad circulan); (4) asigna cada secuencia al haplotipo-
-    semilla más cercano (Hamming). Devuelve (labels, n_clados_reales)."""
-    counts = np.stack([(arr == s).sum(axis=0) for s in symbols])   # (S, L)
+    semilla más cercano (Hamming). Devuelve (labels, n_clados_reales).
+
+    ``counts`` (S, L): conteos por alelo/sitio ya calculados (optimización — evita
+    recontar el array completo; p. ej. el evaluador los pasa vía cumsum)."""
+    if counts is None:
+        counts = np.stack([(arr == s).sum(axis=0) for s in symbols])   # (S, L)
     minor = arr.shape[0] - counts.max(axis=0)                       # fuera de mayoría
     var_idx = np.where(minor >= min_count)[0]
     if var_idx.size == 0:

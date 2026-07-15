@@ -63,15 +63,16 @@ def _softmax(x, axis=0):
     return e / e.sum(axis=axis, keepdims=True)
 
 
-def _predict_freq(freq_train, arr_train, bins_train, k, symbols, method):
-    """Frecuencia por-sitio (S, L) prevista para el bin siguiente, según el método."""
+def _predict_freq(freq_train, arr_train, bins_train, k, symbols, method, counts=None):
+    """Frecuencia por-sitio (S, L) prevista para el bin siguiente, según el método.
+    ``counts`` (S, L): conteos de entrenamiento ya calculados (optimización)."""
     if method == "naive":
         return freq_train[-1]
     if method == "site":                              # logístico por-sitio
         logit, slope = _loglinear_fit(freq_train, weighted=False)
         return _softmax(logit[-1] + np.clip(slope, -1.5, 1.5), axis=0)
     if method == "clade":                             # proyección a nivel de clado
-        labels, m = _clade_labels(arr_train, symbols, 15, MIN_COUNT, 50)
+        labels, m = _clade_labels(arr_train, symbols, 15, MIN_COUNT, 50, counts)
         cf = _clade_freqs(labels, bins_train, k, m)
         w = _softmax(_project_dominant(cf, False))    # pesos de clado (suman 1)
         pred = np.zeros_like(freq_train[-1])
@@ -87,11 +88,51 @@ def _predict_freq(freq_train, arr_train, bins_train, k, symbols, method):
         return pred / wsum if wsum else pred
     if method == "clade-var":
         # clado, pero SOLO nos desviamos de naive donde el sitio es mutable
-        base = _predict_freq(freq_train, arr_train, bins_train, k, symbols, "clade")
+        base = _predict_freq(freq_train, arr_train, bins_train, k, symbols, "clade", counts)
         naive = freq_train[-1]
         gate = _mutability_gate(_mutability(freq_train))          # (L,) en [0,1)
         return gate[None, :] * base + (1.0 - gate[None, :]) * naive
     raise ValueError(method)
+
+
+def _one_eval_fast(arr, bins, nb, symbols, idx):
+    """Igual que _one_eval pero SIN recontar el array completo en cada fold: cuenta
+    por bin una vez y acumula (cumsum). Mismos números, mucho más rápido."""
+    a, b = arr[idx], bins[idx]
+    S, L = len(symbols), a.shape[1]
+    binc = np.zeros((nb, S, L))                        # conteos por bin (una vez)
+    for bn in range(nb):
+        sub = a[b == bn]
+        if sub.shape[0]:
+            for si in range(S):
+                binc[bn, si] = (sub == symbols[si]).sum(0)
+    tot = binc.sum(axis=1, keepdims=True)
+    freq = binc / np.maximum(tot, 1.0)                 # frecuencias por bin
+    cum = binc.cumsum(axis=0)                          # cum[k-1] = conteos de bins < k
+
+    errs = {m: [] for m in ("naive", *METHODS)}
+    for k in range(2, nb):
+        tr = b < k
+        at, bt = a[tr], b[tr]
+        if at.shape[0] == 0:
+            continue
+        ctr = cum[k - 1]                               # conteos de entrenamiento (S, L)
+        variable = (at.shape[0] - ctr.max(0)) >= MIN_COUNT
+        if not variable.any():
+            continue
+        actual = freq[k][:, variable]
+        ftr = freq[:k]
+        clade_pred = None                             # se calcula una vez, se reusa
+        for m in ("naive", *METHODS):
+            if m == "clade-var" and clade_pred is not None:
+                gate = _mutability_gate(_mutability(ftr))
+                pred = gate[None, :] * clade_pred + (1.0 - gate[None, :]) * ftr[-1]
+            else:
+                pred = _predict_freq(ftr, at, bt, k, symbols, m, ctr)
+                if m == "clade":
+                    clade_pred = pred
+            errs[m].append(float(np.abs(pred[:, variable] - actual).mean()))
+    return {m: (np.mean(v) if v else np.nan) for m, v in errs.items()}
 
 
 def _one_eval(arr, bins, nb, symbols, idx):
@@ -140,7 +181,7 @@ def evaluate(label, term):
     skills = {m: [] for m in METHODS}
     for it in range(N_BOOT):
         idx = idx_all if it == 0 else _resample(bins, nb, rng)
-        e = _one_eval(arr, bins, nb, symbols, idx)
+        e = _one_eval_fast(arr, bins, nb, symbols, idx)
         for m in METHODS:
             if not np.isnan(e[m]) and not np.isnan(e["naive"]) and e["naive"] > 0:
                 skills[m].append(1.0 - e[m] / e["naive"])
