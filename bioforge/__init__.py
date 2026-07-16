@@ -57,7 +57,7 @@ from .genomemap import GenomeAligner, Mapping
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
 
-__version__ = "6.3.0"
+__version__ = "7.0.0"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [
