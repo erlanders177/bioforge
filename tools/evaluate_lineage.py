@@ -54,10 +54,16 @@ MAX_LIN, MIN_SIZE, KEY_LIN = 500, 10, 100   # tope = solo válvula; el control e
 KAPPA = 30.0                                   # κ del shrinkage — fijado A PRIORI
 #                                              (≈1 bin de datos), NO ajustado al test
 METHODS = ("crudo", "estable", "+shrink", "+arbol")   # acumulativas: 3 → 4 → 5
+HORIZONS = (1, 2, 4, 6)                        # trimestres vista: 3, 6, 12 y 18 meses
+#                                              (4 ≈ la próxima temporada = lo útil)
 
 
-def _one_lineage(arr, bins, nb, symbols, idx):
+def _one_lineage(arr, bins, nb, symbols, idx, horizon=1):
     """Un remuestreo → {método: (error_modelo, error_naive)} para TODOS los métodos.
+
+    ``horizon`` = cuántos bins al futuro se predice. A 1 trimestre la ingenua es casi
+    imbatible (al virus no le ha dado tiempo a cambiar); el campo predice a la próxima
+    TEMPORADA, que es donde la ingenua se rompe y donde está la utilidad real.
 
     ``crudo``   = re-agrupar desde cero en cada fold (las etiquetas bailan).
     ``estable`` = designar linajes UNA vez y solo EXTENDER (estilo Pango) → las
@@ -74,9 +80,9 @@ def _one_lineage(arr, bins, nb, symbols, idx):
     acc = {m: [0.0, 0.0] for m in METHODS}
     folds = {"crudo": 0, "estable": 0}
     system = None                                      # se ARRASTRA entre folds
-    for k in range(2, nb):
+    for k in range(2, nb - horizon + 1):
         at, bt = a[b < k], b[b < k]
-        aq = a[b == k]                                 # secuencias del próximo trimestre
+        aq = a[b == k + horizon - 1]                   # el futuro que hay que acertar
         if at.shape[0] == 0 or aq.shape[0] == 0:
             continue
 
@@ -84,7 +90,8 @@ def _one_lineage(arr, bins, nb, symbols, idx):
         if m >= 2:
             cf = _clade_freqs(labels, bt, k, m)
             actual = np.bincount(_assign_clades(aq, key, seeds), minlength=m) / aq.shape[0]
-            acc["crudo"][0] += float(np.abs(_project_freqs(cf, False) - actual).sum())
+            acc["crudo"][0] += float(np.abs(_project_freqs(cf, False, steps=horizon)
+                                            - actual).sum())
             acc["crudo"][1] += float(np.abs(cf[-1] - actual).sum())
             folds["crudo"] += 1
 
@@ -106,7 +113,8 @@ def _one_lineage(arr, bins, nb, symbols, idx):
                        "sizes": sizes},
         }
         for name, kw in variants.items():
-            acc[name][0] += float(np.abs(_project_freqs(cf, False, **kw) - actual).sum())
+            acc[name][0] += float(np.abs(_project_freqs(cf, False, steps=horizon, **kw)
+                                         - actual).sum())
             acc[name][1] += naive
         folds["estable"] += 1
 
@@ -135,37 +143,37 @@ def evaluate(label, term):
     times = [y for _, y in data]
     arr, t, symbols = _prepare(seqs, times, align=True)
     bins, nb = _bin_ids(t, None)
-    rng = np.random.default_rng(0)
     idx_all = np.arange(len(seqs))
-    skills = {m: [] for m in METHODS}
-    for it in range(N_BOOT):
-        idx = idx_all if it == 0 else _resample(bins, nb, rng)
-        res = _one_lineage(arr, bins, nb, symbols, idx)
+    print(f"  {label}  (n={len(seqs)}, bins={nb})")
+    for h in HORIZONS:
+        rng = np.random.default_rng(0)                 # misma semilla por horizonte
+        skills = {m: [] for m in METHODS}
+        for it in range(N_BOOT):
+            idx = idx_all if it == 0 else _resample(bins, nb, rng)
+            res = _one_lineage(arr, bins, nb, symbols, idx, horizon=h)
+            for m in METHODS:
+                em, en = res[m]
+                if not np.isnan(em) and en > 0:
+                    skills[m].append(1.0 - em / en)
+        print(f"    ── horizonte {h} trimestre(s) ≈ {h * 3} meses "
+              f"{'← la temporada siguiente (terreno de Łuksza)' if h == 4 else ''}")
         for m in METHODS:
-            em, en = res[m]
-            if not np.isnan(em) and en > 0:
-                skills[m].append(1.0 - em / en)
-    # diagnóstico: ¿cuántos linajes designa el sistema estable, y se topa con el cap?
-    sysd = None
-    for k in range(2, nb):
-        at = arr[bins < k]
-        if at.shape[0]:
-            sysd = designate_lineages(at, symbols, prior=sysd, key_sites=KEY_LIN,
-                                      max_lineages=MAX_LIN, min_size=MIN_SIZE)
-    prof = max(s.size for s in sysd.sites) if sysd else 0
-    print(f"  {label}  (n={len(seqs)}, bins={nb}) · linajes designados: {sysd.n}"
-          f"/{MAX_LIN} · profundidad máx: {prof} mutaciones")
-    for m in METHODS:
-        s = np.array(skills[m])
-        lo, hi = np.percentile(s, [2.5, 97.5])
-        robust = "✓ WIN robusto" if lo > 0 else ("~ empate" if hi > 0 else "✗ pierde")
-        print(f"    {m:8s} skill = {s.mean():+.4f}  IC95% [{lo:+.4f}, {hi:+.4f}]  {robust}")
+            s = np.array(skills[m])
+            if s.size == 0:
+                continue
+            lo, hi = np.percentile(s, [2.5, 97.5])
+            robust = "✓ WIN robusto" if lo > 0 else ("~ empate" if hi > 0 else "✗ pierde")
+            print(f"       {m:8s} skill = {s.mean():+.4f}  "
+                  f"IC95% [{lo:+.4f}, {hi:+.4f}]  {robust}")
     print()
 
 
 def main():
     print("NIVEL LINAJE — ¿predice qué CLADO crece mejor que persistir? (como evofr)")
     print("crudo = re-agrupar cada fold (lo de antes) · estable = Pango/autolin (nuevo)")
+    print("HORIZONTE: a 1 trimestre la ingenua es casi imbatible (al virus no le ha dado")
+    print("tiempo a cambiar). El campo predice la próxima TEMPORADA — la OMS elige la")
+    print("cepa vacunal 9-12 meses antes. Ahí es donde la ingenua se rompe.")
     print("Skill sobre la distribución de clados. WIN si el IC95% está entero > 0.\n")
     only = sys.argv[1].lower() if len(sys.argv) > 1 else None
     for label, term in ORGANISMS:

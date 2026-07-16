@@ -684,9 +684,15 @@ def _project_freqs(clade_freq: np.ndarray, garw: bool, *,
                    counts: Optional[np.ndarray] = None,
                    shrink: float = 0.0,
                    parents: Optional[np.ndarray] = None,
-                   sizes: Optional[np.ndarray] = None) -> np.ndarray:
-    """Frecuencias de clado proyectadas al bin siguiente — forma MULTIPLICATIVA
-    ``f' ∝ f·exp(r)``, que es el modelo MLR de evofr.
+                   sizes: Optional[np.ndarray] = None,
+                   steps: int = 1) -> np.ndarray:
+    """Frecuencias de clado proyectadas ``steps`` bins al futuro — forma MULTIPLICATIVA
+    ``f' ∝ f·exp(r·steps)``, que es el modelo MLR de evofr.
+
+    ``steps`` es el HORIZONTE, y no es un detalle: a un paso vista la ingenua
+    ("persistir") es casi imbatible porque al organismo no le ha dado tiempo a
+    cambiar. El campo predice donde la ingenua se rompe — Łuksza-Lässig predice la
+    próxima TEMPORADA (~1 año), porque la OMS elige la cepa vacunal 9-12 meses antes.
 
     Por qué no un softmax sobre logits proyectados: el ajuste recorta a [0.02, 0.98]
     para estabilizarse, así que un softmax REGALA un suelo de probabilidad a cada
@@ -706,7 +712,7 @@ def _project_freqs(clade_freq: np.ndarray, garw: bool, *,
     s = slope[:, 0]
     if shrink > 0.0 and counts is not None:
         s = _shrink_slopes(s, counts.sum(axis=0), shrink, parents, sizes)
-    pred = clade_freq[-1] * np.exp(np.clip(s, -1.5, 1.5))
+    pred = clade_freq[-1] * np.exp(np.clip(s, -1.5, 1.5) * steps)
     tot = pred.sum()
     return pred / tot if tot > 0 else clade_freq[-1]
 
