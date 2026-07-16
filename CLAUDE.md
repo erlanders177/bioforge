@@ -33,6 +33,21 @@ Niveles implementados y validados:
   ~4.0-5.7 Mb/s, a veces por delante). Single-thread aún ~1.2-1.3× por detrás.
   Red `test_cmap_parity.py` garantiza que nada de esto cambia resultados.
 - **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
+- **L5 (v7.0) — predicción de evolución** `bioforge/evolution.py` (+ `fetch.py`, `ai/`).
+  Genoma-agnóstico, sobre el MSA. Piezas: (a) **backtest honesto** horneado —toda
+  predicción se mide contra la ingenua "mañana = hoy"; (b) **linajes ESTABLES** estilo
+  Pango/autolin SIN árbol filogenético (GRI = N·D/(S+N+D) por co-ocurrencia, dos
+  matmuls sobre el MSA; `designate_lineages`); (c) **rankeador de MUTACIONES**
+  (`rank_mutations`) que ordena qué sustitución subirá — la pregunta que el campo sí
+  responde (AUC), donde la ingenua no juega; (d) **modelo entrenado** (regresión
+  logística + interacciones, Newton/IRLS, pesos en `data/ranker_weights.npz`,
+  inferencia NumPy pura sin torch); (e) **eje B opcional** ESM-2 (`bioforge[ai]`).
+  **Honestidad medida y no negociable:** predecir FRECUENCIAS empata con la ingenua a
+  todo horizonte (callejón cerrado); ORDENAR mutaciones sí tiene señal. La disimilitud
+  físico-química va INVERTIDA (mide viabilidad, no escape) — replicado en H3N2/H1N1/B.
+  ESM-2 sufre FUGA de preentrenamiento (−0.20 tras su corte). Nada de esto es novedad
+  científica (DERIVE/EVEscape/Hie ya existen y son mejores); el valor es la CAJA
+  integrada, accesible, en portátil y honesta. Ver `docs/` y memoria del proyecto.
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
@@ -149,6 +164,12 @@ bioforge/                  paquete instalable (from bioforge import ...)
   minimizers.py            L4 — minimizers canónicos (w,k) vectorizados
   refindex.py              L4 — índice de la referencia (hash ordenado + searchsorted)
   genomemap.py             L4 — seed-chain-align: GenomeAligner.map → PAF
+  msa.py                   MSA center-star (usa L3); soporte del predictor
+  evolution.py             L5 — predicción de evolución: backtest, linajes estables
+                           (designate_lineages), rank_mutations, score_mutations
+  fetch.py                 L5 — descarga NCBI Entrez fechada (stdlib, caché + reintentos)
+  ai/viability.py          L5 — eje B opcional: ESM-2 (bioforge[ai], carga perezosa)
+  data/ranker_weights.npz  L5 — pesos del rankeador entrenado (2.2 KB, en el wheel)
   analyze.py               pipeline CLI (dna/protein/both)
   qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
   bgzf.py                  conversor a BGZF (gzip por bloques, paralelo) — CLI bioforge-bgzip
