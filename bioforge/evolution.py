@@ -1038,8 +1038,17 @@ def rank_mutations(sequences: Sequence[str], times: Sequence[Number], *,
                    align: bool = True, n_bins: Optional[int] = None,
                    viability: Optional[dict] = None,
                    weights: Optional[dict] = None,
-                   novel_only: bool = False) -> MutationRanking:
+                   novel_only: bool = False,
+                   horizon: int = 1,
+                   method: str = "model") -> MutationRanking:
     """Ordena las MUTACIONES candidatas por probabilidad de ascender (estilo EVEscape).
+
+    ``method="model"`` (por defecto) combina los ejes con el modelo ENTRENADO (regresión
+    logística + interacciones, pesos versionados en ``bioforge/data``): NumPy puro, sin
+    dependencias, y sin los pesos a ojo que MEDIMOS que hacían daño (la fusión a mano
+    puntuaba por debajo del mejor eje solo). ``method="manual"`` usa la fusión ponderada
+    clásica (respaldo, configurable con ``weights``). ``horizon`` es a cuántos periodos
+    vista se pregunta (entra como feature del modelo).
 
     Ejes combinados (cada uno normalizado a [0,1], sin ninguno hardcodeado al organismo):
 
@@ -1077,34 +1086,93 @@ def rank_mutations(sequences: Sequence[str], times: Sequence[Number], *,
     cons_idx = last.argmax(axis=0)                           # alelo mayoritario/sitio
     conservation = _conservation_table(symbols)[:, cons_idx]  # (S, L)
     mutability = _mutability_gate(_mutability(freq))         # (L,) en [0,1)
+    _, slope = _loglinear_fit(freq, weighted=False)          # crecimiento (S, L)
 
     cand = last < 0.5                                        # no es el mayoritario
     seen = freq.max(axis=0) > 0                              # ¿existió alguna vez?
     if novel_only:
         cand &= ~seen
 
-    used = ["frequency", "conservation", "mutability"]
-    if viability:
-        used.append("viability")
-    w = weights or {k: 1.0 / len(used) for k in used}
-    wsum = sum(w.get(k, 0.0) for k in used) or 1.0
-
-    si, li = np.nonzero(cand)
-    ranked, terms, novel = [], {}, {}
-    for s, ln in zip(si.tolist(), li.tolist()):
-        parts = {"frequency": float(last[s, ln]),
-                 "conservation": float(conservation[s, ln]),
-                 "mutability": float(mutability[ln])}
+    si, li = np.nonzero(cand)                                # candidatas (vectorizado)
+    mut_col = mutability[li]
+    feats = np.column_stack([last[si, li], conservation[si, li], mut_col,
+                             slope[si, li], np.full(si.size, float(horizon))])
+    if method == "model":
+        scores = score_mutations(feats)                     # modelo entrenado (.npz)
+        used = ["model"]
+    else:                                                    # fusión a mano (respaldo)
+        cols = {"frequency": feats[:, 0], "conservation": feats[:, 1],
+                "mutability": feats[:, 2]}
         if viability:
-            parts["viability"] = float(viability.get((ln, chr(int(symbols[s]))), 0.0))
-        score = sum(w.get(k, 0.0) * v for k, v in parts.items()) / wsum
-        key = (ln, chr(int(symbols[s])))
-        terms[key] = parts
-        novel[key] = not bool(seen[s, ln])
-        ranked.append((ln, chr(int(symbols[s])), score))
-    ranked.sort(key=lambda r: r[2], reverse=True)
+            vmap = np.array([viability.get((int(li[i]), chr(int(symbols[si[i]]))), 0.0)
+                             for i in range(si.size)])
+            cols["viability"] = vmap
+        w = weights or {k: 1.0 / len(cols) for k in cols}
+        wsum = sum(w.get(k, 0.0) for k in cols) or 1.0
+        scores = sum(w.get(k, 0.0) * v for k, v in cols.items()) / wsum
+        used = list(cols)
+
+    order = np.argsort(-scores)
+    ranked, terms, novel = [], {}, {}
+    for i in order.tolist():
+        ln, al = int(li[i]), chr(int(symbols[si[i]]))
+        key = (ln, al)
+        terms[key] = {"frequency": float(feats[i, 0]),
+                      "conservation": float(feats[i, 1]),
+                      "mutability": float(feats[i, 2]),
+                      "growth": float(feats[i, 3])}
+        novel[key] = not bool(seen[si[i], ln])
+        ranked.append((ln, al, float(scores[i])))
     return MutationRanking(ranked=ranked, terms=terms, novel=novel, used=used,
-                           weights={k: w.get(k, 0.0) for k in used})
+                           weights={})
+
+
+_RANKER = None                                       # pesos cargados perezosamente
+
+
+def _load_ranker():
+    """Carga los pesos del modelo entrenado (.npz versionado). Una vez, en memoria.
+
+    Entrenar necesitó datos y librerías; INFERIR no: son 5 features, sus productos, y
+    un producto punto. El .npz de unos KB viaja en el wheel (como el engine.dll) y el
+    usuario nunca necesita torch ni reentrenar. Si falta el fichero, se cae con gracia
+    a los pesos por defecto — el modelo es opcional, no un requisito duro."""
+    global _RANKER
+    if _RANKER is None:
+        import os
+        path = os.path.join(os.path.dirname(__file__), "data", "ranker_weights.npz")
+        try:
+            d = np.load(path, allow_pickle=True)
+            _RANKER = (d["w"], float(d["b"]), d["mu"], d["sd"], d["pairs"])
+        except (OSError, KeyError):
+            _RANKER = ()                              # sin modelo → fusión a mano
+    return _RANKER
+
+
+def _expand_features(feat: np.ndarray, pairs: np.ndarray) -> np.ndarray:
+    """(N, k) → (N, k + pares): añade los productos que codifican las interacciones.
+
+    Una neurona lineal solo suma; dándole el producto YA HECHO (p. ej.
+    conservación·mutabilidad, medido como el 2º peso más fuerte) puede usar una
+    interacción sin capa oculta — con la ventaja de que cada peso se sigue leyendo."""
+    prod = feat[:, pairs[:, 0]] * feat[:, pairs[:, 1]]
+    return np.hstack([feat, prod])
+
+
+def score_mutations(feats: np.ndarray) -> np.ndarray:
+    """Puntúa mutaciones con el modelo entrenado (regresión logística + interacciones).
+
+    ``feats`` (N, 5) = [frecuencia, conservación, mutabilidad, crecimiento, horizonte]
+    por mutación candidata. Devuelve el logit (mayor = más probable que ascienda).
+    NumPy puro, sin dependencias. Si no hay pesos, promedia las features estandarizadas
+    (fusión neutra) — nunca falla por falta del modelo.
+    """
+    r = _load_ranker()
+    if not r:                                        # sin .npz: media simple, robusta
+        return feats.mean(axis=1)
+    w, b, mu, sd, pairs = r
+    X = _expand_features(feats.astype(np.float64), pairs)
+    return (X - mu) / sd @ w + b
 
 
 def escape_weights(symbols: np.ndarray, root: np.ndarray, *,

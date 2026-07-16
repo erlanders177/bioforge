@@ -70,9 +70,10 @@ version = {attr = "bioforge.__version__"}
 where   = ["."]
 include = ["bioforge*"]
 
-# Incluir el motor C compilado y su fuente dentro del paquete (wheel).
+# Incluir el motor C compilado y su fuente + los pesos del ranker dentro del wheel.
 [tool.setuptools.package-data]
 "bioforge.engine" = ["*.dll", "*.so", "*.dylib", "*.c"]
+"bioforge.data" = ["*.npz"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # cibuildwheel — wheels nativos por plataforma (Windows / Linux / macOS).

@@ -21,6 +21,7 @@ from bioforge.evolution import (
     EvolutionResult,
     FusionResult,
     GrowthResult,
+    MutationRanking,
     _assign_lineages,
     _clade_labels,
     _dissimilarity,
@@ -37,6 +38,8 @@ from bioforge.evolution import (
     predict_clade,
     predict_evolution,
     predict_fusion,
+    rank_mutations,
+    score_mutations,
     site_mutability,
 )
 
@@ -640,3 +643,49 @@ def test_tope_bajo_congela_el_catalogo():
                                    min_size=10, max_lineages=viejo.n)
     assert congelado.n == viejo.n
     assert not any(set(s.tolist()) >= {70, 80} for s in congelado.sites)
+
+
+# ── ranking de mutaciones (rank_mutations + modelo entrenado) ─────────────────
+
+def test_rank_mutations_contrato():
+    # rankea las mutaciones CANDIDATAS (no las ya mayoritarias) de mayor a menor score
+    seqs, times = _two_site_protein()
+    r = rank_mutations(seqs, times, method="manual")
+    assert isinstance(r, MutationRanking)
+    assert len(r.ranked) > 0
+    scores = [s for _, _, s in r.ranked]
+    assert scores == sorted(scores, reverse=True)   # orden descendente garantizado
+    for site, al, _ in r.ranked:                     # ninguna candidata es mayoritaria
+        assert (site, al) in r.terms
+
+
+def test_rank_mutations_novel_only_filtra():
+    # novel_only deja solo mutaciones jamás vistas antes en la serie
+    seqs, times = _two_site_protein()
+    r = rank_mutations(seqs, times, novel_only=True, method="manual")
+    assert all(r.novel[(s, a)] for s, a, _ in r.ranked)
+
+
+def test_rank_mutations_exige_proteina():
+    # ejes físico-químicos → sin sentido en nucleótido
+    seqs, times = _sweep_dataset(fixed="G", allele_new="A", allele_old="C")
+    with pytest.raises(SequenceValueError):
+        rank_mutations(seqs, times)
+
+
+def test_score_mutations_determinista_y_ordena():
+    # el modelo entrenado (o el respaldo) debe ser función pura y ordenar coherente
+    feats = np.array([[0.1, 0.9, 0.8, 0.5, 1.0],    # conservadora, mutable, creciendo
+                      [0.1, 0.1, 0.05, -0.5, 1.0]])  # disruptiva, quieta, cayendo
+    s1 = score_mutations(feats)
+    s2 = score_mutations(feats)
+    assert np.array_equal(s1, s2)                # determinista
+    assert s1[0] > s1[1]                         # la buena por encima de la mala
+
+
+def test_score_mutations_sin_pesos_no_falla(monkeypatch):
+    # si faltan los pesos versionados, debe degradar (media), nunca romper
+    import bioforge.evolution as ev
+    monkeypatch.setattr(ev, "_RANKER", ())       # simula .npz ausente
+    s = ev.score_mutations(np.array([[0.5, 0.5, 0.5, 0.5, 1.0]]))
+    assert s.shape == (1,) and np.isfinite(s[0])

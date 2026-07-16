@@ -41,6 +41,7 @@ from .evolution import (
     FusionResult,
     GrowthResult,
     LineageSystem,
+    MutationRanking,
     backtest_evolution,
     designate_lineages,
     escape_potential,
@@ -49,6 +50,7 @@ from .evolution import (
     predict_clade,
     predict_evolution,
     predict_fusion,
+    rank_mutations,
     site_mutability,
 )
 from .genomemap import GenomeAligner, Mapping
@@ -105,6 +107,9 @@ __all__ = [
     "designate_lineages",
     "escape_weights",
     "LineageSystem",
+    # Ranking de mutaciones + modelo entrenado (v7.0)
+    "rank_mutations",
+    "MutationRanking",
     "EvolutionResult",
     "BacktestResult",
     "GrowthResult",
