@@ -180,6 +180,14 @@ def evaluate(label, term, horizon, use_esm=False):
         names += ["viabilidad(B:ESM-2)", "fusion(ESM+mut)"]
     aucs = {r: {n: [] for n in names}
             for r in ("todas", "ya circulaba", "NUEVA", "NUEVA en sitio vivo")}
+    # Test de FUGA de preentrenamiento: ESM-2 se entrenó con UniRef50, que contiene HA
+    # de gripe hasta ~2021 → prediciendo 2015 el modelo YA HA VISTO 2021. Nuestro
+    # backtest es leak-free en NUESTROS datos, pero no puede serlo en los que ESM vio
+    # antes de que lo descargáramos. Se parte por época: si la señal es genuina,
+    # aguanta DESPUÉS del corte (futuro real para el modelo). Los ejes no-ESM son el
+    # CONTROL: si caen todos, esa época es más difícil; si cae solo ESM, era memoria.
+    era = {e: {n: [] for n in names} for e in ("≤2021 (ESM lo vio)", ">2021 (futuro real)")}
+    bin_time = np.unique(t)
     for k in range(2, nb - horizon + 1):
         last = freq[:k][-1]
         target = freq[k + horizon - 1]
@@ -207,6 +215,16 @@ def evaluate(label, term, horizon, use_esm=False):
                 a = _auc(sc[n][mask], y)
                 if not np.isnan(a):
                     aucs[rname][n].append(a)
+        # el mismo régimen antitrampa, partido por época (test de fuga de ESM)
+        mask = regimes["NUEVA en sitio vivo"]
+        y = subio[mask]
+        if y.sum() >= 3 and (~y).sum() >= 3:
+            e = ("≤2021 (ESM lo vio)" if bin_time[k + horizon - 1] <= 2021.75
+                 else ">2021 (futuro real)")
+            for n in names:
+                a = _auc(sc[n][mask], y)
+                if not np.isnan(a):
+                    era[e][n].append(a)
 
     print(f"  {label} · horizonte {horizon} ({horizon * 3} meses) · "
           f"n={len(keep)} proteínas, {nb} bins")
@@ -224,8 +242,21 @@ def evaluate(label, term, horizon, use_esm=False):
             if vals[n]:
                 a = np.array(vals[n])
                 marca = "✓" if a.mean() > 0.55 else ("~" if a.mean() > 0.45 else "✗")
-                print(f"       {n:16s} AUC = {a.mean():.3f} "
+                print(f"       {n:19s} AUC = {a.mean():.3f} "
                       f"(±{a.std():.3f}, {len(a)} folds)  {marca}")
+    if use_esm and all(era[e]["viabilidad(B:ESM-2)"] for e in era):
+        print("    [TEST DE FUGA] ESM-2 vio HA de gripe hasta ~2021 en su "
+              "preentrenamiento.")
+        print("    Si la señal es real aguanta a la derecha; los ejes no-ESM son el "
+              "control.")
+        print(f"       {'':19s} {'≤2021 (lo vio)':>16s} {'>2021 (futuro real)':>20s}")
+        for n in names:
+            a = np.array(era["≤2021 (ESM lo vio)"][n])
+            b = np.array(era[">2021 (futuro real)"][n])
+            if a.size and b.size:
+                d = b.mean() - a.mean()
+                print(f"       {n:19s} {a.mean():16.3f} {b.mean():20.3f}   "
+                      f"Δ={d:+.3f}")
     print()
 
 
