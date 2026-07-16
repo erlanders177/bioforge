@@ -73,9 +73,14 @@ def _pack(seq: str):
                                      force_type=SeqType.NUCLEOTIDE)[0]
 
 
-def _pairwise(a: str, b: str) -> tuple[str, str]:
-    """Alineamiento global por pares (NW en C). Devuelve (a_alineada, b_alineada)."""
-    res = SequenceAligner.align(_pack(a), _pack(b), mode="global",
+def _pairwise(a, b: str) -> tuple[str, str]:
+    """Alineamiento global por pares (NW en C). Devuelve (a_alineada, b_alineada).
+
+    ``a`` puede venir ya empaquetada (PackedSequence): en center-star la central se
+    alinea contra las n−1 restantes, así que empaquetarla una sola vez evita n−1
+    re-empaquetados idénticos (era el 2× de llamadas a _pack que vio el perfil)."""
+    pa = a if not isinstance(a, str) else _pack(a)
+    res = SequenceAligner.align(pa, _pack(b), mode="global",
                                 detect_mutations=False)
     return res.aligned_a, res.aligned_b
 
@@ -116,11 +121,12 @@ def align_multiple(sequences, center: Optional[int] = None) -> MSAResult:
     #   ins_chars[p] (p=0..L)   : lista de residuos de i insertados ANTES de C[p]
     #   col_char[p] (p=0..L-1)  : el símbolo de i alineado a C[p] (residuo o '-')
     per_seq: list[tuple[list[list[str]], list[str]]] = []
+    C_packed = _pack(C)                              # empaquetar el centro UNA vez
     for i, S in enumerate(seqs):
         if i == ci:
             per_seq.append(([[] for _ in range(L + 1)], list(C)))
             continue
-        aC, aS = _pairwise(C, S)
+        aC, aS = _pairwise(C_packed, S)
         ins_chars: list[list[str]] = [[] for _ in range(L + 1)]
         col_char: list[str] = ["-"] * L
         p = 0
