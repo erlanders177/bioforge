@@ -1028,6 +1028,9 @@ def designate_lineages(arr: np.ndarray, symbols: np.ndarray, *,
 #                  construcción). Solo se acierta preguntando si la sustitución es
 #                  VIABLE. Ahí está el valor real, y ahí medimos ~0.58.
 
+_AA20 = np.frombuffer(b"ACDEFGHIKLMNPQRSTVWY", dtype=np.uint8)   # aminoácidos estándar
+
+
 def _conservation_table(symbols: np.ndarray) -> np.ndarray:
     """(S, S) 1 − disimilitud físico-química entre cada par de símbolos."""
     return 1.0 - np.array([[_dissimilarity(chr(int(a)), chr(int(b))) for b in symbols]
@@ -1089,6 +1092,8 @@ def rank_mutations(sequences: Sequence[str], times: Sequence[Number], *,
     _, slope = _loglinear_fit(freq, weighted=False)          # crecimiento (S, L)
 
     cand = last < 0.5                                        # no es el mayoritario
+    real = np.isin(symbols, _AA20)                           # solo aminoácidos reales:
+    cand &= real[:, None]                                    # nunca proponer X/Z/-/*
     seen = freq.max(axis=0) > 0                              # ¿existió alguna vez?
     if novel_only:
         cand &= ~seen

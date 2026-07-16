@@ -689,3 +689,13 @@ def test_score_mutations_sin_pesos_no_falla(monkeypatch):
     monkeypatch.setattr(ev, "_RANKER", ())       # simula .npz ausente
     s = ev.score_mutations(np.array([[0.5, 0.5, 0.5, 0.5, 1.0]]))
     assert s.shape == (1,) and np.isfinite(s[0])
+
+
+def test_rank_mutations_no_propone_ambiguedades_ni_huecos():
+    # Regresión (caza pre-7.0): con X/Z/- en los datos, el ranker los proponía como
+    # alelos-destino → "el sitio mutará a X (desconocido)" es basura. Solo AA reales.
+    seqs = ["MKTIIAL", "MKTXIAL", "MKT-IAL", "MKTZIAL", "MKTRIAL", "MKTIIAL"]
+    times = [2015, 2016, 2017, 2018, 2019, 2020]
+    r = rank_mutations(seqs, times, method="manual")
+    for _, al, _ in r.ranked:
+        assert al in "ACDEFGHIKLMNPQRSTVWY"      # nunca X, Z, B, -, *, N…
