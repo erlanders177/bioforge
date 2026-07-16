@@ -42,9 +42,11 @@ from bioforge.biocore import (  # noqa: E402
 )
 from bioforge.evolution import (  # noqa: E402
     _bin_ids,
-    _dissimilarity,
+    _conservation_table,
     _freqs,
     _loglinear_fit,
+    _mutability,
+    _mutability_gate,
     _prepare,
 )
 from bioforge.fetch import fetch_dated_precise  # noqa: E402
@@ -112,27 +114,53 @@ def _to_protein(seqs):
     return out
 
 
-def _scorers(freq, k, symbols, is_protein):
+def _norm(x):
+    lo, hi = float(x.min()), float(x.max())
+    return (x - lo) / (hi - lo) if hi > lo else np.zeros_like(x)
+
+
+def _scorers(freq, k, symbols, viab=None):
     """Puntuaciones (S, L) de cada mutación candidata, por método."""
     ftr = freq[:k]
     last = ftr[-1]                                     # frecuencia actual (S, L)
     _, slope = _loglinear_fit(ftr, weighted=False)     # eje A: crecimiento (S, L)
-    out = {"frecuencia": last, "crecimiento(A)": slope}
-    if is_protein:
-        cons = last.argmax(axis=0)                     # alelo mayoritario por sitio
-        tab = np.array([[_dissimilarity(chr(int(a)), chr(int(b))) for b in symbols]
-                        for a in symbols])             # (S, S)
-        esc = tab[:, cons]                             # (S, L) escape de cada mutación
-        out["escape(C)"] = esc
-        # fusión A+C: crecimiento normalizado × (1 + escape) — la mutación que sube Y
-        # además es disruptiva es la candidata de verdad (lógica de EVEscape)
-        g = slope - slope.min()
-        g = g / (g.max() or 1.0)
-        out["fusion(A+C)"] = g * (1.0 + esc)
+    cons_idx = last.argmax(axis=0)                     # alelo mayoritario por sitio
+    conserv = _conservation_table(symbols)[:, cons_idx]   # (S, L) 1 − disimilitud
+    mut = _mutability_gate(_mutability(ftr))           # (L,) accesibilidad histórica
+    out = {
+        "frecuencia": last,                            # el listón: casi contar
+        "crecimiento(A)": slope,                       # medido: ruido (0.40-0.44)
+        "conservacion(B')": conserv,                   # el escape CON EL SIGNO BUENO
+        "mutabilidad": np.broadcast_to(mut, last.shape),   # accesibilidad sin 3D
+        # fusión honesta: viable Y en un sitio que tolera cambios. SIN crecimiento,
+        # porque está medido que es ruido — meterlo solo ensuciaría.
+        "fusion(B'+mut)": _norm(conserv) * _norm(np.broadcast_to(mut, last.shape)),
+    }
+    if viab is not None:
+        out["viabilidad(B:ESM-2)"] = viab
+        out["fusion(ESM+mut)"] = _norm(viab) * _norm(np.broadcast_to(mut, last.shape))
     return out
 
 
-def evaluate(label, term, horizon):
+def _esm_matrix(freq_train, symbols):
+    """(S, L) de viabilidad ESM-2 sobre el consenso actual, alineada a las columnas.
+
+    ESM no entiende huecos: se traduce el consenso a secuencia real, se pregunta una
+    vez, y se devuelve el resultado a las columnas del MSA (las columnas de hueco se
+    quedan a 0 = inviable, que es lo correcto)."""
+    from bioforge.ai.viability import viability_matrix
+
+    cons = "".join(chr(int(symbols[i])) for i in freq_train[-1].argmax(axis=0))
+    cols = [j for j, c in enumerate(cons) if c != "-"]        # columna → posición real
+    seq = cons.replace("-", "")
+    alpha = [chr(int(s)) for s in symbols]
+    sub = viability_matrix(seq, alpha)                        # (S, len(seq))
+    out = np.zeros((len(symbols), len(cons)))
+    out[:, cols] = sub
+    return out
+
+
+def evaluate(label, term, horizon, use_esm=False):
     data = fetch_dated_precise(term, YEARS, per_year=PER_YEAR)
     seqs = [s for s, _ in data]
     times = [t for _, t in data]
@@ -145,10 +173,13 @@ def evaluate(label, term, horizon):
                                align=True)
     bins, nb = _bin_ids(t, None)
     freq = _freqs(arr, bins, nb, symbols)              # (nb, S, L)
-    is_protein = True
 
-    names = ["frecuencia", "crecimiento(A)", "escape(C)", "fusion(A+C)"]
-    aucs = {r: {n: [] for n in names} for r in ("todas", "ya circulaba", "NUEVA")}
+    names = ["frecuencia", "crecimiento(A)", "conservacion(B')", "mutabilidad",
+             "fusion(B'+mut)"]
+    if use_esm:
+        names += ["viabilidad(B:ESM-2)", "fusion(ESM+mut)"]
+    aucs = {r: {n: [] for n in names}
+            for r in ("todas", "ya circulaba", "NUEVA", "NUEVA en sitio vivo")}
     for k in range(2, nb - horizon + 1):
         last = freq[:k][-1]
         target = freq[k + horizon - 1]
@@ -156,10 +187,18 @@ def evaluate(label, term, horizon):
             continue
         cand = last < MINOR                            # no es el alelo mayoritario
         subio = (target - last) >= RISE                # la verdad: ¿ganó terreno?
-        sc = _scorers(freq, k, symbols, is_protein)
+        sc = _scorers(freq, k, symbols,
+                      _esm_matrix(freq[:k], symbols) if use_esm else None)
+        # El sitio ya varía = tiene HISTORIAL de cambio (solo datos < k, leak-free).
+        # Es el test antitrampa de la mutabilidad: separar sitios congelados de sitios
+        # vivos es FÁCIL y ya da un AUC enorme sin haber predicho nada interesante.
+        # Si dentro de los sitios vivos la mutabilidad se cae a 0.5, toda su fuerza
+        # era esa separación trivial.
+        vivo = (freq[:k].max(axis=0) - freq[:k].min(axis=0) > 0).any(axis=0)
         regimes = {"todas": cand,
                    "ya circulaba": cand & (last > 0),
-                   "NUEVA": cand & (last == 0)}
+                   "NUEVA": cand & (last == 0),
+                   "NUEVA en sitio vivo": cand & (last == 0) & vivo[None, :]}
         for rname, mask in regimes.items():
             y = subio[mask]
             if y.sum() < 3 or (~y).sum() < 3:
@@ -171,12 +210,14 @@ def evaluate(label, term, horizon):
 
     print(f"  {label} · horizonte {horizon} ({horizon * 3} meses) · "
           f"n={len(keep)} proteínas, {nb} bins")
-    for rname in ("todas", "ya circulaba", "NUEVA"):
+    for rname in ("todas", "ya circulaba", "NUEVA", "NUEVA en sitio vivo"):
         vals = aucs[rname]
         if not any(vals[n] for n in names):
             continue
         nota = {"ya circulaba": "  (fácil: casi contar)",
-                "NUEVA": "  ← AQUÍ se gana o se pierde (la frecuencia no puede ayudar)",
+                "NUEVA": "  ← la frecuencia no puede ayudar (0.5 por construcción)",
+                "NUEVA en sitio vivo":
+                    "  ← EL TEST ANTITRAMPA: sin sitios congelados que regalen AUC",
                 "todas": ""}[rname]
         print(f"    [{rname}]{nota}")
         for n in names:
@@ -193,11 +234,15 @@ def main():
     print("La ingenua NO juega aquí: decir 'no cambia nada' no ordena nada.")
     print("El listón NO es el azar (0.5) sino LA FRECUENCIA ACTUAL: si no batimos a")
     print("contar, no aportamos. AUC 0.5 = azar · 1.0 = perfecto.\n")
-    only = sys.argv[1].lower() if len(sys.argv) > 1 else None
+    args = [a.lower() for a in sys.argv[1:]]
+    esm = "esm" in args                            # eje B real (pip install bioforge[ai])
+    only = next((a for a in args if a != "esm"), None)
+    if esm:
+        print("Eje B = ESM-2 ACTIVO (una pasada por fold; la primera baja el modelo).\n")
     for label, term in ORGANISMS:
         if only is None or only in label.lower():
             for h in HORIZONS:
-                evaluate(label, term, h)
+                evaluate(label, term, h, use_esm=esm)
 
 
 if __name__ == "__main__":

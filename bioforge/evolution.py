@@ -147,6 +147,19 @@ class CladePrediction(NamedTuple):
     clade_projected: dict[int, float]
 
 
+class MutationRanking(NamedTuple):
+    """Mutaciones candidatas ordenadas por probabilidad de ascender.
+
+    ``ranked``: [(sitio, alelo, score)] de mayor a menor. ``novel``: {(sitio, alelo):
+    True si aún no se ha visto nunca}. ``terms``: desglose por eje de cada candidata.
+    """
+    ranked: list
+    terms: dict
+    novel: dict
+    used: list
+    weights: dict
+
+
 class BacktestResult(NamedTuple):
     """Resultado del backtesting: ¿le ganamos a la baseline ingenua?
 
@@ -995,6 +1008,103 @@ def designate_lineages(arr: np.ndarray, symbols: np.ndarray, *,
         labels[member] = new
         cache.pop(g)                                  # solo g cambió de miembros
     return LineageSystem(root, sites, alleles, _renest(sites, alleles), len(sites))
+
+
+# ── ordenación de MUTACIONES: la pregunta que el campo sí responde ────────────
+#
+# Medir "¿qué frecuencia tendrá cada cosa?" (regresión) es un callejón: la ingenua
+# ("mañana = hoy") es imbatible porque el ~95% de los sitios no se mueve y los acierta
+# gratis. Medido en 3 virus y a 4 horizontes (3 a 18 meses): skill ≈ 0 SIEMPRE. Por eso
+# nadie publica eso. EVEscape y Łuksza miden ORDENACIÓN (AUC), y ahí la ingenua no
+# puntúa: "no cambia nada" no ordena nada.
+#
+# La unidad es la MUTACIÓN (sitio, alelo), no el sitio: un sitio no tiene carga, una
+# sustitución sí — y así una sola métrica responde a "¿cuál se mueve?" y "¿a qué alelo?"
+# a la vez.
+#
+# Dos regímenes que NO valen lo mismo (y por eso se separan):
+#   · circulante → la frecuencia actual ya ordena bien (AUC ~0.69 medido). Casi contar.
+#   · NOVEL      → frecuencia 0 para todas: contar NO PUEDE jugar (AUC 0.5 por
+#                  construcción). Solo se acierta preguntando si la sustitución es
+#                  VIABLE. Ahí está el valor real, y ahí medimos ~0.58.
+
+def _conservation_table(symbols: np.ndarray) -> np.ndarray:
+    """(S, S) 1 − disimilitud físico-química entre cada par de símbolos."""
+    return 1.0 - np.array([[_dissimilarity(chr(int(a)), chr(int(b))) for b in symbols]
+                           for a in symbols])
+
+
+def rank_mutations(sequences: Sequence[str], times: Sequence[Number], *,
+                   align: bool = True, n_bins: Optional[int] = None,
+                   viability: Optional[dict] = None,
+                   weights: Optional[dict] = None,
+                   novel_only: bool = False) -> MutationRanking:
+    """Ordena las MUTACIONES candidatas por probabilidad de ascender (estilo EVEscape).
+
+    Ejes combinados (cada uno normalizado a [0,1], sin ninguno hardcodeado al organismo):
+
+    - ``frequency``    — la que ya sube, seguirá subiendo. Es **el listón honesto**:
+      medido AUC ~0.69. Si un eje no aporta sobre esto, no aporta.
+    - ``conservation`` — 1 − disimilitud (Δcarga, Δhidrofobicidad). **OJO al signo:**
+      medimos que en HA de gripe ascienden las sustituciones CONSERVADORAS, no las
+      disruptivas — replicado en H3N2, H1N1 y gripe B (AUC ~0.58 en NOVEL, ~azar en
+      circulantes, justo como predice la explicación). No contradice a EVEscape: ellos
+      combinan la disimilitud con ACCESIBILIDAD ESTRUCTURAL y nunca la usan sola. Sin
+      accesibilidad, el ~90% de un dominio es núcleo → "disruptiva" = "rota la
+      proteína", no "escapa al anticuerpo". O sea: esto NO mide escape, mide
+      **viabilidad**, y por eso se llama ``conservation`` y no ``escape``.
+    - ``mutability``   — nuestra ACCESIBILIDAD sin estructura 3D: un sitio que ya
+      cambió en el pasado es un sitio donde el cambio se tolera. EVEscape necesita la
+      estructura; aquí el propio historial hace de oráculo (y es genoma-agnóstico).
+    - ``viability``    — opcional, ``{(sitio, alelo): score}`` de un modelo externo
+      (p. ej. ESM-2 vía ``bioforge.ai``). Mide bien lo que ``conservation`` aproxima
+      con dos tablas de aminoácidos.
+
+    ``novel_only=True`` deja solo las mutaciones **jamás vistas** — el régimen donde
+    contar no puede ayudar y donde esto se gana el sueldo.
+
+    Requiere PROTEÍNA (los ejes físico-químicos no significan nada en nucleótido).
+    """
+    _validate(sequences, times)
+    arr, t, symbols = _prepare(sequences, times, align)
+    _require_protein(symbols)
+    bins, nb = _bin_ids(t, n_bins)
+    if nb < 2:
+        raise SequenceValueError(f"hacen falta ≥2 bins temporales (hay {nb}).")
+
+    freq = _freqs(arr, bins, nb, symbols)                    # (nb, S, L)
+    last = freq[-1]                                          # frecuencia actual
+    cons_idx = last.argmax(axis=0)                           # alelo mayoritario/sitio
+    conservation = _conservation_table(symbols)[:, cons_idx]  # (S, L)
+    mutability = _mutability_gate(_mutability(freq))         # (L,) en [0,1)
+
+    cand = last < 0.5                                        # no es el mayoritario
+    seen = freq.max(axis=0) > 0                              # ¿existió alguna vez?
+    if novel_only:
+        cand &= ~seen
+
+    used = ["frequency", "conservation", "mutability"]
+    if viability:
+        used.append("viability")
+    w = weights or {k: 1.0 / len(used) for k in used}
+    wsum = sum(w.get(k, 0.0) for k in used) or 1.0
+
+    si, li = np.nonzero(cand)
+    ranked, terms, novel = [], {}, {}
+    for s, ln in zip(si.tolist(), li.tolist()):
+        parts = {"frequency": float(last[s, ln]),
+                 "conservation": float(conservation[s, ln]),
+                 "mutability": float(mutability[ln])}
+        if viability:
+            parts["viability"] = float(viability.get((ln, chr(int(symbols[s]))), 0.0))
+        score = sum(w.get(k, 0.0) * v for k, v in parts.items()) / wsum
+        key = (ln, chr(int(symbols[s])))
+        terms[key] = parts
+        novel[key] = not bool(seen[s, ln])
+        ranked.append((ln, chr(int(symbols[s])), score))
+    ranked.sort(key=lambda r: r[2], reverse=True)
+    return MutationRanking(ranked=ranked, terms=terms, novel=novel, used=used,
+                           weights={k: w.get(k, 0.0) for k in used})
 
 
 def escape_weights(symbols: np.ndarray, root: np.ndarray, *,

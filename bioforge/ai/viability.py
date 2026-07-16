@@ -15,7 +15,7 @@ Se carga UNA vez y se cachea. Extra opcional: `pip install bioforge[ai]`.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -74,6 +74,25 @@ def viability_scores(sequence: str, changes: dict[int, str], *,
         tid = tok.convert_tokens_to_ids(res.upper())
         out[pos] = float(probs[pos + 1, tid])     # +1 por el <cls> inicial
     return out
+
+
+def viability_matrix(sequence: str, alphabet: Sequence[str], *,
+                     model_name: str = _DEFAULT_MODEL) -> np.ndarray:
+    """Matriz (len(alphabet), len(sequence)) con P(aminoácido | contexto) según ESM-2.
+
+    Todas las mutaciones posibles de un tirón, en **una sola pasada** del modelo (los
+    logits ya traen la distribución completa por posición: pedirlas de una en una sería
+    tirar el 95% del cómputo). Es el eje B para ``rank_mutations(viability=...)``, que
+    ordena MUTACIONES y por tanto necesita el alfabeto entero en cada sitio.
+
+    Alto = ESM-2 considera ese residuo verosímil ahí = la proteína probablemente lo
+    tolera. Es la medida buena de lo que ``conservation`` aproxima con dos tablas de
+    aminoácidos.
+    """
+    probs, tok = _probs(sequence, model_name)
+    L = probs.shape[0] - 2                        # descuenta <cls>/<eos>
+    ids = [tok.convert_tokens_to_ids(a.upper()) for a in alphabet]
+    return probs[1:L + 1, ids].T.astype(np.float64)      # (S, L)
 
 
 def grammaticality_profile(sequence: str, *,
