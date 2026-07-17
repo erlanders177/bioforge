@@ -405,7 +405,10 @@ class BitPacker:
         Time  : O(n) — two vectorised numpy ops.
         Memory: O(n) — peak ≈ 5n bits for the intermediate bit matrix.
         """
-        codes = np.asarray(codes, dtype=np.uint8)
+        # ascontiguousarray, NO asarray: un array con stride (p.ej. decode()[::2])
+        # llega no contiguo, y el packer en C lee la memoria de corrido ignorando el
+        # salto → corrompe en silencio. Forzar contigüidad lo arregla para ambas rutas.
+        codes = np.ascontiguousarray(codes, dtype=np.uint8)
         if codes.ndim != 1:
             raise SequenceValueError(
                 f"codes debe ser un array 1-D, se recibió shape {codes.shape}. "
@@ -452,6 +455,7 @@ class BitPacker:
                 f"al menos {min_bytes} para desempaquetar {n} símbolo(s). "
                 "¿El buffer procede de BitPacker.pack() con los mismos datos?"
             )
+        packed = np.ascontiguousarray(packed, dtype=np.uint8)   # C asume contigüidad
         if _C_AVAILABLE:
             return _c_unpack5(packed, n)
 

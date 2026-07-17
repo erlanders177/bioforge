@@ -237,6 +237,27 @@ def test_slice_devuelve_packed_sequence():
     assert sub.to_string() == "ATGC"
 
 
+def test_slice_con_paso_no_corrompe():
+    """Regresión (caza L1): un slice con PASO produce un array NO contiguo; el packer
+    en C lo leía de corrido ignorando el stride → corrupción silenciosa. Debe cuadrar
+    con decodificar-y-luego-cortar en cualquier paso, incluido el inverso."""
+    fasta = ">t\n" + "ATGCATGCATGCATGCATGCATGCATGCATGC\n"   # 32 nt
+    seq = SmartImporter.from_string(fasta, force_type=SeqType.NUCLEOTIDE)[0]
+    full = seq.to_string()
+    for sl in (slice(None, None, 2), slice(1, 20, 3), slice(None, None, -1),
+               slice(None, None, 3), slice(5, None, 2)):
+        assert seq[sl].to_string() == full[sl]
+
+
+def test_pack_array_con_stride():
+    """BitPacker.pack sobre un array con stride debe dar el resultado del array lógico,
+    no de la memoria subyacente (ambas rutas, C y NumPy)."""
+    codes = (np.arange(20, dtype=np.uint8) % 4)
+    strided = codes[::2]
+    out = BitPacker.unpack(BitPacker.pack(strided), len(strided))
+    assert np.array_equal(out, strided)
+
+
 def test_igualdad_secuencias_identicas():
     """Dos secuencias con el mismo contenido deben ser iguales."""
     fasta = ">test\nATGC\n"

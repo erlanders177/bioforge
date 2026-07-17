@@ -330,6 +330,7 @@ _check_index()
 # ── Wrappers Python ────────────────────────────────────────────────────────────
 
 def c_getitem5(packed: np.ndarray, i: int) -> int:
+    packed = np.ascontiguousarray(packed, dtype=np.uint8)   # C asume contigüidad
     return int(_lib.bio_getitem5(
         packed.ctypes.data_as(_U8P),
         _I32(i),
@@ -337,6 +338,10 @@ def c_getitem5(packed: np.ndarray, i: int) -> int:
 
 
 def c_pack5(codes: np.ndarray) -> np.ndarray:
+    # ascontiguousarray, no el array crudo: un stride (p.ej. decode()[::2]) haría que
+    # el packer C leyera la memoria de corrido → corrupción silenciosa. No copia si ya
+    # es contiguo (el caso normal).
+    codes   = np.ascontiguousarray(codes, dtype=np.uint8)
     n       = len(codes)
     out_len = (n * 5 + 7) // 8 + 1   # +1 para lecturas seguras
     out     = np.zeros(out_len, dtype=np.uint8)
