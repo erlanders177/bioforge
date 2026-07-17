@@ -1046,12 +1046,14 @@ def rank_mutations(sequences: Sequence[str], times: Sequence[Number], *,
                    method: str = "model") -> MutationRanking:
     """Ordena las MUTACIONES candidatas por probabilidad de ascender (estilo EVEscape).
 
-    ``method="model"`` (por defecto) combina los ejes con el modelo ENTRENADO (regresión
-    logística + interacciones, pesos versionados en ``bioforge/data``): NumPy puro, sin
+    ``method="model"`` (por defecto) combina los ejes con el modelo ENTRENADO (MLP 2×64
+    ReLU, pesos versionados en ``bioforge/data``): NumPy puro en inferencia, sin
     dependencias, y sin los pesos a ojo que MEDIMOS que hacían daño (la fusión a mano
-    puntuaba por debajo del mejor eje solo). ``method="manual"`` usa la fusión ponderada
-    clásica (respaldo, configurable con ``weights``). ``horizon`` es a cuántos periodos
-    vista se pregunta (entra como feature del modelo).
+    puntuaba por debajo del mejor eje solo). El MLP bate al lineal en los 6 exámenes
+    (temporal + entre-virus), sobre todo generalizando a un virus no visto — encuentra
+    la señal NO LINEAL del crecimiento que la logística aplanaba a ruido.
+    ``method="manual"`` usa la fusión ponderada clásica (respaldo, configurable con
+    ``weights``). ``horizon`` es a cuántos periodos vista se pregunta (feature del modelo).
 
     Ejes combinados (cada uno normalizado a [0,1], sin ninguno hardcodeado al organismo):
 
@@ -1136,48 +1138,40 @@ _RANKER = None                                       # pesos cargados perezosame
 
 
 def _load_ranker():
-    """Carga los pesos del modelo entrenado (.npz versionado). Una vez, en memoria.
+    """Carga los pesos del MLP entrenado (.npz versionado). Una vez, en memoria.
 
-    Entrenar necesitó datos y librerías; INFERIR no: son 5 features, sus productos, y
-    un producto punto. El .npz de unos KB viaja en el wheel (como el engine.dll) y el
-    usuario nunca necesita torch ni reentrenar. Si falta el fichero, se cae con gracia
-    a los pesos por defecto — el modelo es opcional, no un requisito duro."""
+    Entrenar necesitó datos y (para explorar) torch; INFERIR no: son 3 multiplicaciones
+    de matrices con dos ReLU. El .npz de unos KB viaja en el wheel (como el engine.dll)
+    y el usuario nunca necesita torch ni reentrenar. Si falta el fichero, se cae con
+    gracia a la media de features — el modelo es opcional, no un requisito duro."""
     global _RANKER
     if _RANKER is None:
         import os
         path = os.path.join(os.path.dirname(__file__), "data", "ranker_weights.npz")
         try:
             d = np.load(path, allow_pickle=True)
-            _RANKER = (d["w"], float(d["b"]), d["mu"], d["sd"], d["pairs"])
+            _RANKER = {k: d[k] for k in ("W1", "b1", "W2", "b2", "W3", "b3",
+                                         "mu", "sd")}
         except (OSError, KeyError):
-            _RANKER = ()                              # sin modelo → fusión a mano
+            _RANKER = {}                             # sin modelo → media de features
     return _RANKER
 
 
-def _expand_features(feat: np.ndarray, pairs: np.ndarray) -> np.ndarray:
-    """(N, k) → (N, k + pares): añade los productos que codifican las interacciones.
-
-    Una neurona lineal solo suma; dándole el producto YA HECHO (p. ej.
-    conservación·mutabilidad, medido como el 2º peso más fuerte) puede usar una
-    interacción sin capa oculta — con la ventaja de que cada peso se sigue leyendo."""
-    prod = feat[:, pairs[:, 0]] * feat[:, pairs[:, 1]]
-    return np.hstack([feat, prod])
-
-
 def score_mutations(feats: np.ndarray) -> np.ndarray:
-    """Puntúa mutaciones con el modelo entrenado (regresión logística + interacciones).
+    """Puntúa mutaciones con el modelo entrenado (MLP 2×64, ReLU) — NumPy PURO.
 
     ``feats`` (N, 5) = [frecuencia, conservación, mutabilidad, crecimiento, horizonte]
-    por mutación candidata. Devuelve el logit (mayor = más probable que ascienda).
-    NumPy puro, sin dependencias. Si no hay pesos, promedia las features estandarizadas
-    (fusión neutra) — nunca falla por falta del modelo.
+    por mutación candidata. Devuelve el logit (mayor = más probable que ascienda): el
+    forward es estandarizar → capa→ReLU→capa→ReLU→capa. Sin torch, sin dependencias.
+    Si no hay pesos, promedia las features (fusión neutra) — nunca falla por su falta.
     """
-    r = _load_ranker()
-    if not r:                                        # sin .npz: media simple, robusta
+    P = _load_ranker()
+    if not P:                                        # sin .npz: media simple, robusta
         return feats.mean(axis=1)
-    w, b, mu, sd, pairs = r
-    X = _expand_features(feats.astype(np.float64), pairs)
-    return (X - mu) / sd @ w + b
+    Z = (feats.astype(np.float64) - P["mu"]) / P["sd"]
+    h1 = np.maximum(Z @ P["W1"] + P["b1"], 0.0)
+    h2 = np.maximum(h1 @ P["W2"] + P["b2"], 0.0)
+    return (h2 @ P["W3"] + P["b3"]).ravel()
 
 
 def escape_weights(symbols: np.ndarray, root: np.ndarray, *,

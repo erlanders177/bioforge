@@ -34,7 +34,7 @@ section (with examples) further down.
 | **Alignment** | pairwise (Needleman–Wunsch / banded / Smith–Waterman) · **multiple sequence alignment** (center-star) |
 | **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
-| **Evolution** *(in progress)* | strain-evolution modelling & forecasting — the niche no other tool occupies (MSA is its foundation) |
+| **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install

@@ -148,6 +148,65 @@ def score(X, w, b, mu, sd):
     return (X - mu) / sd @ w + b
 
 
+# ── MLP en NumPy PURO (sin torch): el modelo final se entrena y se sirve sin deps ──
+#
+# Torch fue el andamio para EXPLORAR (tamaños, semillas). Fijada la arquitectura
+# (2×64, la del punto dulce medido), el entrenador definitivo es NumPy: forward +
+# backprop (regla de la cadena) + Adam, ~40 líneas. Así el proyecto entero vuelve a
+# cero dependencias, como el engine.dll: exploramos con lo cómodo, entregamos lo
+# autocontenido.
+
+def _he(shape, rng):
+    return rng.standard_normal(shape) * np.sqrt(2.0 / shape[0])   # init de He (ReLU)
+
+
+def fit_mlp(X, y, *, hidden=64, epochs=400, lr=2e-3, wd=1e-4, seed=0):
+    """MLP de 2 capas ocultas (ReLU) por Adam, NumPy puro. Devuelve el dict de pesos
+    estandarizados listos para la inferencia (mismos que score_mlp espera)."""
+    rng = np.random.default_rng(seed)
+    mu, sd = X.mean(0), X.std(0); sd[sd == 0] = 1.0
+    Z = ((X - mu) / sd).astype(np.float64)
+    yv = y.astype(np.float64)[:, None]
+    pos_w = float((y == 0).sum() / max((y == 1).sum(), 1))     # pesar la clase rara
+    P = [_he((Z.shape[1], hidden), rng), np.zeros(hidden),
+         _he((hidden, hidden), rng), np.zeros(hidden),
+         _he((hidden, 1), rng), np.zeros(1)]
+    M = [np.zeros_like(p) for p in P]                          # momentos de Adam
+    V = [np.zeros_like(p) for p in P]
+    b1, b2, eps = 0.9, 0.999, 1e-8
+    n = Z.shape[0]
+    for step in range(1, epochs + 1):
+        h1 = np.maximum(Z @ P[0] + P[1], 0.0)                 # forward
+        h2 = np.maximum(h1 @ P[2] + P[3], 0.0)
+        logit = h2 @ P[4] + P[5]
+        p = 1.0 / (1.0 + np.exp(-logit))
+        w = np.where(yv > 0, pos_w, 1.0)                      # BCE con peso de clase
+        dlogit = w * (p - yv) / n                             # backprop
+        g4 = h2.T @ dlogit;               g5 = dlogit.sum(0)
+        dh2 = (dlogit @ P[4].T) * (h2 > 0)
+        g2 = h1.T @ dh2;                  g3 = dh2.sum(0)
+        dh1 = (dh2 @ P[2].T) * (h1 > 0)
+        g0 = Z.T @ dh1;                   g1 = dh1.sum(0)
+        grads = [g0, g1, g2, g3, g4, g5]
+        for i, g in enumerate(grads):
+            g = g + wd * P[i]                                 # weight decay
+            M[i] = b1 * M[i] + (1 - b1) * g
+            V[i] = b2 * V[i] + (1 - b2) * g * g
+            mhat = M[i] / (1 - b1 ** step)
+            vhat = V[i] / (1 - b2 ** step)
+            P[i] -= lr * mhat / (np.sqrt(vhat) + eps)
+    return {"W1": P[0], "b1": P[1], "W2": P[2], "b2": P[3],
+            "W3": P[4], "b3": P[5], "mu": mu, "sd": sd}
+
+
+def score_mlp(X, P):
+    """Inferencia del MLP: forward puro en NumPy (h→relu→h→relu→logit)."""
+    Z = (X - P["mu"]) / P["sd"]
+    h1 = np.maximum(Z @ P["W1"] + P["b1"], 0.0)
+    h2 = np.maximum(h1 @ P["W2"] + P["b2"], 0.0)
+    return (h2 @ P["W3"] + P["b3"]).ravel()
+
+
 def pairs(n):
     return [(i, j) for i in range(n) for j in range(i, n)]
 
@@ -173,25 +232,40 @@ def subsample(X, y, neg_per_pos=60, seed=0):
     return X[idx].astype(np.float32), y[idx].astype(np.float32)
 
 
-def train_and_save(path="bioforge/data/ranker_weights.npz"):
-    """Entrena el modelo distribuido sobre los 3 virus y versiona los pesos (.npz)."""
+def train_and_save(path="bioforge/data/ranker_weights.npz", hidden=64):
+    """Entrena el modelo distribuido (MLP 2×64, NumPy puro) sobre los 3 virus y
+    versiona los pesos (.npz). Tamaño 64 = el punto dulce medido (barrido de neuronas:
+    el techo se aplana ahí y 128 empieza a sobreajustar en H3N2)."""
     Xs, ys = [], []
     for v, term in ORGANISMS.items():
         X, y, _ = build_dataset(v, term)
         Xs.append(X)
         ys.append(y)
     X, y = np.vstack(Xs), np.concatenate(ys)
-    Xsub, ysub = subsample(X, y)              # PRIMERO submuestrear (barato) …
-    Xe = expand(Xsub)                         # … LUEGO expandir el conjunto pequeño
-    w, b, mu, sd = fit_logistic(Xe, ysub)
+    Xsub, ysub = subsample(X, y)                  # todos los positivos + 60x negativos
+    P = fit_mlp(Xsub, ysub, hidden=hidden)
     import os
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.savez(path, w=w, b=b, mu=mu, sd=sd,
-             features=np.array(FEATURES), pairs=np.array(pairs(len(FEATURES))))
-    a = _auc(score(Xe, w, b, mu, sd), ysub.astype(bool))
-    print(f"entrenado: {X.shape[0]:,} ejemplos → submuestra {Xe.shape[0]:,} · "
-          f"{len(w)} params · AUC {a:.4f} · guardado en {path}")
-    return w, b, mu, sd
+    np.savez(path, features=np.array(FEATURES), hidden=hidden, **P)
+    a = _auc(score_mlp(Xsub, P), ysub.astype(bool))
+    n_params = sum(P[k].size for k in ("W1", "b1", "W2", "b2", "W3", "b3"))
+    print(f"entrenado (MLP 2x{hidden}): {X.shape[0]:,} ejemplos → submuestra "
+          f"{Xsub.shape[0]:,} · {n_params:,} params · AUC {a:.4f} · {path}")
+    _print_detectors(P)
+    return P
+
+
+def _print_detectors(P, top=4):
+    """Los DETECTORES de la primera capa: qué combinación de las 5 features nombradas
+    dispara cada neurona oculta, ponderada por su peso de salida. Interpretabilidad
+    parcial del MLP (lo que se puede leer aunque los valores bailen entre semillas)."""
+    contrib = np.abs(P["W2"]).sum(1) if P["W2"].ndim == 2 else np.abs(P["W2"])
+    orden = np.argsort(-contrib)[:top]
+    print(f"  detectores más influyentes (capa 1, sobre {FEATURES}):")
+    for k in orden:
+        w = P["W1"][:, k]
+        terms = " ".join(f"{f[:4]}{w[i]:+.2f}" for i, f in enumerate(FEATURES))
+        print(f"    neurona {k:>2}: {terms}")
 
 
 def report(tag, s, y, base):
