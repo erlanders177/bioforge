@@ -36,6 +36,7 @@ import numpy as np
 
 from .biocore import (
     BioForgeError,
+    BioForgeIOError,
     SeqType,
     SequenceValueError,
     SmartImporter,
@@ -71,7 +72,12 @@ def _year_from_header(header: str) -> Optional[float]:
 
 def _read_dated_fasta(path: str) -> tuple[list[str], list[float]]:
     """FASTA → (secuencias, años). Descarta registros sin fecha reconocible."""
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError as e:
+        raise BioForgeIOError(f"archivo no encontrado: {path}") from e
+    except OSError as e:                              # permisos, es-un-directorio…
+        raise BioForgeIOError(f"no se pudo leer {path}: {e}") from e
     seqs, times, sin_fecha = [], [], 0
     for header, seq in _parse_fasta(text):
         y = _year_from_header(header)
@@ -199,10 +205,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     try:
         return args.func(args)
-    except FileNotFoundError:
-        print(f"Archivo no encontrado: {args.fasta}", file=sys.stderr)
-        return 1
-    except BioForgeError as exc:
+    except BioForgeError as exc:                      # incluye BioForgeIOError (ficheros)
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

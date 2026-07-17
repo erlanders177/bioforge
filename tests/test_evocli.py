@@ -79,3 +79,16 @@ def test_cli_rank_translate_desde_nucleotido(tmp_path, capsys):
     # entrada nucleótido + --translate → no debe fallar
     p = _write_dated_fasta(tmp_path / "n.fasta", protein=False)
     assert main(["rank", str(p), "--translate", "--top", "3"]) == 0
+
+
+def test_cli_directorio_como_fichero_no_revienta(tmp_path, capsys):
+    # Regla #8: un OSError que NO es FileNotFoundError (aquí, un directorio) debe
+    # salir como BioForgeIOError con mensaje limpio, no como traceback crudo.
+    assert main(["rank", str(tmp_path)]) == 1
+    assert "no se pudo leer" in capsys.readouterr().err.lower()
+
+
+def test_lectura_envuelve_oserror_en_bioforge(tmp_path):
+    from bioforge.biocore import BioForgeError
+    with pytest.raises(BioForgeError):        # directorio, no fichero → BioForgeIOError
+        _read_dated_fasta(str(tmp_path))

@@ -58,7 +58,8 @@ combining them (especially the evolution front).
 | vs Biopython — QC filter | **~5–6× faster**, identical result |
 | vs Biopython — load all in RAM | **~6.9× less memory** (115 MB vs 801 MB) · ~9.5× faster |
 | Compressed input | **`.gz` read transparently in C** (zlib, static-linked) |
-| Dependencies | **NumPy** (C engine included, pre-compiled) |
+| Evolution — mutation ranking | **cross-virus AUC ~0.77–0.95** on flu HA, beats a linear model on all 6 held-out tests (trained model runs in pure NumPy) |
+| Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 
 ---
 
@@ -356,6 +357,62 @@ loss). *Honest scope:* center-star is the simple, correct starting point and
 shines on similar sequences; serious aligners (Clustal Omega, MAFFT, MUSCLE) use
 progressive + iterative refinement for divergent sets — a future upgrade.
 
+### Evolution: rank the mutations that will rise (Level 5 — v7.0)
+
+Given dated sequences of a gene under selection (e.g. a flu HA across seasons),
+BioForge ranks **which mutations are most likely to rise next**, designates
+**stable lineages**, and **backtests every prediction against the trivial "tomorrow
+= today" baseline**. Genome-agnostic: nothing about flu or any organism is
+hard-coded. The date goes in the FASTA header (a year, or `YYYY-MM`).
+
+```bash
+# Rank candidate mutations (site, target residue) by probability of rising:
+bioforge-evolution rank strains.fasta --top 20
+
+# Only mutations never seen before — where counting can't help and this earns its keep:
+bioforge-evolution rank strains.fasta --novel --translate
+
+# Is the model actually better than "tomorrow = today"?  (the honest judge)
+bioforge-evolution backtest strains.fasta
+
+# Designate stable lineages (Pango/autolin-style) with their defining mutations:
+bioforge-evolution lineages strains.fasta
+```
+
+```python
+from bioforge import rank_mutations
+r = rank_mutations(protein_seqs, years, novel_only=True)
+for site, residue, score in r.ranked[:10]:
+    print(site + 1, residue, round(score, 3))
+```
+
+**How it works, and the honesty that comes with it** (this is a research tool, and
+its own measured limits are baked in):
+
+- **The right question.** Predicting exact *frequencies* is a dead end — it ties the
+  naive baseline at every horizon we tested (3–18 months), because the naive
+  baseline is nearly optimal there. So instead we do what the field actually does
+  (EVEscape, Łuksza): **rank mutations** (AUC). Here the naive baseline doesn't even
+  play — "nothing changes" ranks nothing.
+- **Three genome-agnostic axes** feed a small trained model: how a site has changed
+  in the past (a data-driven stand-in for structural accessibility), the
+  physico-chemical (dis)similarity of the substitution, and its recent growth.
+  Notably, the "escape" dissimilarity axis is **inverted** — in flu HA the
+  substitutions that rise are *conservative*, replicated across H3N2, H1N1 and B.
+  It measures **viability**, not escape (without a structural-accessibility term,
+  most of a domain is core: "disruptive" means "breaks the protein", not "escapes").
+- **The model is a tiny neural net (MLP 2×64) run in pure NumPy** — training used
+  PyTorch as scaffolding, but the shipped model is a 39 KB `.npz` and inference is
+  three matrix multiplies. No PyTorch, no GPU, runs on a laptop. It beats a plain
+  linear model on all six held-out tests (per-virus **and** cross-virus — trained on
+  two influenza types, tested on a third), which is where it helps most.
+- **What it is not.** None of this is scientifically novel — DERIVE, EVEscape and
+  Hie et al. already rank escape mutations and cross viruses, with more resources and
+  usually better. An optional ESM-2 axis (`pip install bioforge[ai]`) exists but
+  suffers **pretraining leakage** (its AUC drops ~0.20 on data after its training
+  cutoff — measured, and off by default). The value here is the *integrated, honest,
+  laptop-runnable box*, not a new state of the art.
+
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
@@ -404,6 +461,12 @@ bioforge/               Python package — all core modules
   minimizers.py         Level 4 — canonical (w, k) minimizers (C + NumPy)
   refindex.py           Level 4 — reference minimizer index (hash-sorted lookup)
   genomemap.py          Level 4 — GenomeAligner: seed-chain-align → PAF
+  msa.py                Multiple sequence alignment (center-star) — evolution's base
+  evolution.py          Level 5 — mutation ranking, stable lineages, backtesting
+  fetch.py              Level 5 — dated NCBI Entrez download (stdlib, cached + retries)
+  evocli.py             Level 5 — bioforge-evolution CLI (rank/backtest/lineages)
+  ai/viability.py       Level 5 — optional ESM-2 axis (bioforge[ai], lazy-loaded)
+  data/                 Trained mutation-ranker weights (.npz, in the wheel)
   analyze.py            Full pipeline: DNA + protein analysis, report generation
   qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
   bgzf.py               BGZF converter (parallel block gzip) — bioforge-bgzip
@@ -484,7 +547,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (375 tests)
+# Full test suite (452 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -535,8 +598,9 @@ python check.py
 - [x] Columnar `map_batch` output → full multi-core scaling *(v6.1)*
 - [x] Head-to-head benchmark vs minimap2 (`tools/bench_vs_minimap2.py`, WSL) — on par multi-core
 - [x] Multiple sequence alignment (center-star) — `align_multiple` *(v6.3)*
-- [ ] **Evolution front — Markov substitution baselines + backtesting** (the differentiator)
-- [ ] **Strain forecasting** with protein language models (ESM-2) — model how a sequence evolves
+- [x] **Evolution front — mutation ranking, stable lineages, honest backtesting** — `bioforge-evolution` *(v7.0)*
+- [x] **Trained mutation-ranker** (MLP in pure NumPy, no PyTorch at inference) + optional ESM-2 axis *(v7.0)*
+- [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
 
 ---

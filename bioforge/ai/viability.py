@@ -34,8 +34,12 @@ def _load(model_name: str):
         raise EngineError(
             "el eje B (viabilidad con ESM-2) requiere el extra opcional: "
             "'pip install bioforge[ai]' (torch + transformers).") from e
-    tok = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForMaskedLM.from_pretrained(model_name)
+    try:                                         # la descarga puede fallar (red, repo)
+        tok = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForMaskedLM.from_pretrained(model_name)
+    except Exception as e:                        # cualquier fallo de carga → EngineError
+        raise EngineError(
+            f"no se pudo cargar el modelo ESM-2 '{model_name}': {e}") from e
     model.eval()
     return tok, model, torch
 
