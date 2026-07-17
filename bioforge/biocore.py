@@ -754,34 +754,6 @@ def _gather_headers(
     return b"".join(parts), new_off
 
 
-# ── Cortes de ventana para el parser paralelo ────────────────────────────────
-# Devuelven el offset del INICIO del último registro del bloque; los registros
-# anteriores están completos y se parsean, el resto se arrastra a la siguiente
-# ventana. Asumen que el bloque empieza en un límite de registro.
-
-def _cut_fasta(data: bytes) -> int:
-    i = data.rfind(b"\n>")
-    return i + 1 if i != -1 else 0
-
-
-def _cut_fastq(data: bytes) -> int:
-    pos = len(data)
-    while True:
-        i = data.rfind(b"\n@", 0, pos)
-        if i == -1:
-            return 0
-        rec = i + 1
-        nl1 = data.find(b"\n", rec)
-        if nl1 == -1:
-            pos = i; continue
-        nl2 = data.find(b"\n", nl1 + 1)
-        if nl2 == -1:
-            pos = i; continue
-        if data[nl2 + 1: nl2 + 2] == b"+":   # verificado: registro real
-            return rec
-        pos = i
-
-
 def _columnar_batch(m, pack_buf, pack_off, n_syms, types,
                     hdr_buf, hdr_off, qual_buf, qual_off, fastq):
     """Construye un SequenceBatch/ReadBatch desde los buffers de salida de C.
@@ -1350,6 +1322,26 @@ class SmartImporter:
         finally:
             _c_parser_close(handle)
 
+    @staticmethod
+    def _alloc_batch_buffers(records: int, hdr_size: int, pack_size: int,
+                             fastq: bool):
+        """Reserva los buffers que comparten los tres caminos de parseo por lotes
+        (secuencial, columnar y paralelo). Devuelve la 8-tupla en orden fijo. Los
+        buffers de calidad son ``None`` si no es FASTQ."""
+        hdr_buf  = ctypes.create_string_buffer(hdr_size)
+        pack_buf = np.empty(pack_size, dtype=np.uint8)
+        hdr_off  = np.empty(records + 1, dtype=np.int32)
+        pack_off = np.empty(records + 1, dtype=np.int32)
+        n_syms   = np.empty(records, dtype=np.int32)
+        types    = np.empty(records, dtype=np.int32)
+        if fastq:
+            qual_buf = np.empty(pack_size, dtype=np.uint8)
+            qual_off = np.empty(records + 1, dtype=np.int32)
+        else:
+            qual_buf = qual_off = None
+        return (hdr_buf, hdr_off, pack_buf, pack_off, n_syms, types,
+                qual_buf, qual_off)
+
     @classmethod
     def _stream_batch(cls, path: str, force_type: int, fastq: bool):
         """Núcleo del modo por lotes — compartido por stream() y stream_fastq().
@@ -1361,17 +1353,9 @@ class SmartImporter:
         Yields PackedSequence (FASTA) o FastqRecord (FASTQ).
         """
         BR = cls._BATCH_RECORDS
-        hdr_buf  = ctypes.create_string_buffer(cls._BATCH_HDR)
-        pack_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
-        hdr_off  = np.empty(BR + 1, dtype=np.int32)
-        pack_off = np.empty(BR + 1, dtype=np.int32)
-        n_syms   = np.empty(BR, dtype=np.int32)
-        types    = np.empty(BR, dtype=np.int32)
-        if fastq:
-            qual_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
-            qual_off = np.empty(BR + 1, dtype=np.int32)
-        else:
-            qual_buf = qual_off = None
+        (hdr_buf, hdr_off, pack_buf, pack_off, n_syms, types,
+         qual_buf, qual_off) = cls._alloc_batch_buffers(
+            BR, cls._BATCH_HDR, cls._BATCH_PACK, fastq)
 
         handle = _c_parser_open(path)
         if not handle:
@@ -1437,17 +1421,9 @@ class SmartImporter:
             return
 
         BR = cls._BATCH_RECORDS
-        hdr_buf  = ctypes.create_string_buffer(cls._BATCH_HDR)
-        pack_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
-        hdr_off  = np.empty(BR + 1, dtype=np.int32)
-        pack_off = np.empty(BR + 1, dtype=np.int32)
-        n_syms   = np.empty(BR, dtype=np.int32)
-        types    = np.empty(BR, dtype=np.int32)
-        if fastq:
-            qual_buf = np.empty(cls._BATCH_PACK, dtype=np.uint8)
-            qual_off = np.empty(BR + 1, dtype=np.int32)
-        else:
-            qual_buf = qual_off = None
+        (hdr_buf, hdr_off, pack_buf, pack_off, n_syms, types,
+         qual_buf, qual_off) = cls._alloc_batch_buffers(
+            BR, cls._BATCH_HDR, cls._BATCH_PACK, fastq)
 
         handle = _c_parser_open(path)
         if not handle:
@@ -1539,17 +1515,9 @@ class SmartImporter:
         WIN = cls._PWINDOW
         MR  = cls._PMAXREC
         start_char = ord("@") if fastq else ord(">")
-        hdr_buf  = ctypes.create_string_buffer(cls._PBUF)
-        pack_buf = np.empty(cls._PBUF, dtype=np.uint8)
-        hdr_off  = np.empty(MR + 1, dtype=np.int32)
-        pack_off = np.empty(MR + 1, dtype=np.int32)
-        n_syms   = np.empty(MR, dtype=np.int32)
-        types    = np.empty(MR, dtype=np.int32)
-        if fastq:
-            qual_buf = np.empty(cls._PBUF, dtype=np.uint8)
-            qual_off = np.empty(MR + 1, dtype=np.int32)
-        else:
-            qual_buf = qual_off = None
+        (hdr_buf, hdr_off, pack_buf, pack_off, n_syms, types,
+         qual_buf, qual_off) = cls._alloc_batch_buffers(
+            MR, cls._PBUF, cls._PBUF, fastq)
 
         pos = 0 if arr[0] == start_char else \
             cls._boundary_before(buf, fastq, 0, size)
