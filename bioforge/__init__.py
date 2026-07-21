@@ -53,6 +53,7 @@ from .evolution import (
     rank_mutations,
     site_mutability,
 )
+from .evalkit import Context, EvolutionBenchmark, Report
 from .genomemap import GenomeAligner, Mapping
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
@@ -103,6 +104,10 @@ __all__ = [
     "predict_fusion",
     "predict_clade",
     "site_mutability",
+    # Juez honesto de predictores (L6, v8.0)
+    "EvolutionBenchmark",
+    "Context",
+    "Report",
     # Linajes estables (Pango/autolin, v7.0)
     "designate_lineages",
     "escape_weights",
