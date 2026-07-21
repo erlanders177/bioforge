@@ -68,31 +68,52 @@ class MSAResult(NamedTuple):
         return "".join(out)
 
 
-def _pack(seq: str):
-    return SmartImporter.from_string(f">x\n{seq}\n",
-                                     force_type=SeqType.NUCLEOTIDE)[0]
+_NUC_CHARS = set("ACGTUN-")
 
 
-def _pairwise(a, b: str) -> tuple[str, str]:
+def _infer_type(seqs: list[str]) -> SeqType:
+    """Tipo del CONJUNTO entero, decidido de una vez.
+
+    Decidir secuencia a secuencia es justo lo que falla (Regla #4): una proteína sin
+    residuos exclusivos pasa por ADN y, al empaquetarla como tal, **todo aminoácido
+    que no sea A/C/G/T se convierte en 'N'** — corrupción silenciosa. Mirando la
+    unión de todos los símbolos basta con que UNA secuencia del lote traiga una
+    letra imposible en ADN para clasificar bien el conjunto, que además es lo
+    correcto: un MSA mezcla secuencias homólogas, todas del mismo tipo.
+    """
+    alphabet: set[str] = set()
+    for s in seqs:
+        alphabet |= set(s)
+    return SeqType.NUCLEOTIDE if alphabet <= _NUC_CHARS else SeqType.PROTEIN
+
+
+def _pack(seq: str, seq_type: SeqType = SeqType.NUCLEOTIDE):
+    return SmartImporter.from_string(f">x\n{seq}\n", force_type=seq_type)[0]
+
+
+def _pairwise(a, b: str, seq_type: SeqType = SeqType.NUCLEOTIDE) -> tuple[str, str]:
     """Alineamiento global por pares (NW en C). Devuelve (a_alineada, b_alineada).
 
     ``a`` puede venir ya empaquetada (PackedSequence): en center-star la central se
     alinea contra las n−1 restantes, así que empaquetarla una sola vez evita n−1
     re-empaquetados idénticos (era el 2× de llamadas a _pack que vio el perfil)."""
-    pa = a if not isinstance(a, str) else _pack(a)
+    pa = a if not isinstance(a, str) else _pack(a, seq_type)
     # band="auto": banda adaptativa — EXACTA (se ensancha si el camino roza el
     # borde) pero varias veces más rápida gracias al SIMD banded del motor C.
     # En un MSA las secuencias son parecidas, que es justo su mejor caso.
-    res = SequenceAligner.align(pa, _pack(b), mode="global", band="auto",
+    res = SequenceAligner.align(pa, _pack(b, seq_type), mode="global", band="auto",
                                 detect_mutations=False)
     return res.aligned_a, res.aligned_b
 
 
-def align_multiple(sequences, center: Optional[int] = None) -> MSAResult:
+def align_multiple(sequences, center: Optional[int] = None, *,
+                   seq_type: Optional[SeqType] = None) -> MSAResult:
     """Alinea múltiples secuencias por el método center-star.
 
-    ``sequences`` : iterable de cadenas (ADN). Se pasan a mayúsculas.
+    ``sequences`` : iterable de cadenas (ADN **o** proteína). Se pasan a mayúsculas.
     ``center``    : índice de la secuencia central; si None, se usa la más larga.
+    ``seq_type``  : fuerza el tipo. Por defecto se infiere del conjunto entero
+                    (ver ``_infer_type``), que es lo correcto para un MSA.
 
     Lanza ``SequenceTypeError`` si algún elemento no es str, ``SequenceValueError``
     si no hay secuencias o alguna está vacía.
@@ -118,18 +139,19 @@ def align_multiple(sequences, center: Optional[int] = None) -> MSAResult:
         raise SequenceValueError(f"center fuera de rango: {ci} (n={n}).")
     C = seqs[ci]
     L = len(C)
+    st = seq_type if seq_type is not None else _infer_type(seqs)
 
     # ── 2. alinear cada secuencia contra la central; extraer inserciones y columnas
     # per_seq[i] = (ins_chars, col_char):
     #   ins_chars[p] (p=0..L)   : lista de residuos de i insertados ANTES de C[p]
     #   col_char[p] (p=0..L-1)  : el símbolo de i alineado a C[p] (residuo o '-')
     per_seq: list[tuple[list[list[str]], list[str]]] = []
-    C_packed = _pack(C)                              # empaquetar el centro UNA vez
+    C_packed = _pack(C, st)                          # empaquetar el centro UNA vez
     for i, S in enumerate(seqs):
         if i == ci:
             per_seq.append(([[] for _ in range(L + 1)], list(C)))
             continue
-        aC, aS = _pairwise(C_packed, S)
+        aC, aS = _pairwise(C_packed, S, st)
         ins_chars: list[list[str]] = [[] for _ in range(L + 1)]
         col_char: list[str] = ["-"] * L
         p = 0

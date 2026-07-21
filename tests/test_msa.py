@@ -13,8 +13,8 @@ Verifica las propiedades que DEBE cumplir cualquier MSA correcto:
 import numpy as np
 import pytest
 
-from bioforge.biocore import SequenceTypeError, SequenceValueError
-from bioforge.msa import MSAResult, align_multiple
+from bioforge.biocore import SeqType, SequenceTypeError, SequenceValueError
+from bioforge.msa import MSAResult, _infer_type, align_multiple
 
 
 def _rng_seq(n, seed):
@@ -90,6 +90,52 @@ def test_center_es_la_mas_larga_por_defecto():
 def test_center_explicito():
     r = align_multiple(["ACGTACGT", "ACGTACGT", "ACGTACGT"], center=2)
     assert r.center == 2
+
+
+# ── Proteínas: NO corromper (regresión del bug del MSA-como-ADN) ──────────────
+# Durante meses el MSA empaquetaba TODA secuencia como ADN: cada aminoácido que no
+# fuera A/C/G/T se convertía en 'N'. Silencioso y devastador — corrompía la base
+# entera del predictor L5. Toda la suite anterior usaba solo ACGT, así que nunca
+# saltó. Estos tests prueban con residuos imposibles en ADN.
+
+def _rng_prot(n, seed):
+    rng = np.random.default_rng(seed)
+    aa = "ACDEFGHIKLMNPQRSTVWY"
+    return "".join(aa[i] for i in rng.integers(0, len(aa), n))
+
+
+def test_infer_type_distingue_proteina_de_adn():
+    assert _infer_type(["ACGTACGT", "ACGTACGT"]) is SeqType.NUCLEOTIDE
+    assert _infer_type(["MKLPWY", "MKLPWF"]) is SeqType.PROTEIN
+    # basta que UNA del conjunto traiga una letra imposible en ADN
+    assert _infer_type(["ACGTACGT", "ACGTACGW"]) is SeqType.PROTEIN
+
+
+def test_proteina_no_se_corrompe():
+    """La propiedad clave, ahora con AMINOÁCIDOS: quitar huecos = original."""
+    base = _rng_prot(200, 11)
+    seqs = []
+    for i in range(8):
+        s = list(base)
+        rng = np.random.default_rng(100 + i)
+        for p in rng.choice(len(s), 8, replace=False):
+            s[p] = "ACDEFGHIKLMNPQRSTVWY"[int(rng.integers(0, 20))]
+        seqs.append("".join(s))
+    r = align_multiple(seqs)
+    assert _infer_type(seqs) is SeqType.PROTEIN
+    for original, fila in zip(seqs, r.aligned, strict=True):
+        assert fila.replace("-", "") == original      # ni una 'N' fabricada
+    # y ningún residuo raro W/E/F/P sobrevivió como 'N'
+    juntas = "".join(r.aligned)
+    assert set("WEFPYQ") & set(juntas)                 # los residuos siguen ahí
+
+
+def test_proteina_forzada_explicita():
+    """seq_type explícito manda sobre la inferencia."""
+    seqs = ["MKTAC", "MKTAG", "MKTAA"]
+    r = align_multiple(seqs, seq_type=SeqType.PROTEIN)
+    for original, fila in zip(seqs, r.aligned, strict=True):
+        assert fila.replace("-", "") == original
 
 
 # ── Consenso ──────────────────────────────────────────────────────────────────
