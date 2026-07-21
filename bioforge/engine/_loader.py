@@ -678,7 +678,8 @@ def c_parser_next_batch(
     q_off_ptr = qual_off.ctypes.data_as(_I32P) if qual_off is not None else None
     return _lib.bio_parser_next_batch(
         ctypes.c_void_p(handle), _I32(max_records), _I32(force_type),
-        hdr_buf, _I32(len(hdr_buf)), hdr_off.ctypes.data_as(_I32P),
+        hdr_buf.ctypes.data_as(ctypes.c_char_p), _I32(len(hdr_buf)),
+        hdr_off.ctypes.data_as(_I32P),
         pack_buf.ctypes.data_as(_U8P), _I32(len(pack_buf)),
         pack_off.ctypes.data_as(_I32P),
         n_syms.ctypes.data_as(_I32P), types.ctypes.data_as(_I32P),
@@ -712,7 +713,8 @@ def c_parse_mem_parallel(
     return _lib.bio_parse_mem_parallel(
         data.ctypes.data_as(_U8P), _I64(len(data)),
         _I32(fmt), _I32(n_threads), _I32(force_type),
-        hdr_buf, _I32(len(hdr_buf)), hdr_off.ctypes.data_as(_I32P),
+        hdr_buf.ctypes.data_as(ctypes.c_char_p), _I32(len(hdr_buf)),
+        hdr_off.ctypes.data_as(_I32P),
         pack_buf.ctypes.data_as(_U8P), _I64(len(pack_buf)),
         pack_off.ctypes.data_as(_I32P),
         n_syms.ctypes.data_as(_I32P), types.ctypes.data_as(_I32P),

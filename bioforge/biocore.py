@@ -767,7 +767,7 @@ def _columnar_batch(m, pack_buf, pack_off, n_syms, types,
     poff   = pack_off[: m + 1].copy()
     nsy    = n_syms[:m].copy()
     tps    = types[:m].copy()
-    hraw   = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
+    hraw   = hdr_buf[:hdr_used].tobytes()      # hdr_buf es np.uint8 (sin zeroing)
     hoff   = hdr_off[: m + 1].copy()
     if not fastq:
         return SequenceBatch(packed, poff, nsy, tps, hraw, hoff)
@@ -1327,8 +1327,14 @@ class SmartImporter:
                              fastq: bool):
         """Reserva los buffers que comparten los tres caminos de parseo por lotes
         (secuencial, columnar y paralelo). Devuelve la 8-tupla en orden fijo. Los
-        buffers de calidad son ``None`` si no es FASTQ."""
-        hdr_buf  = ctypes.create_string_buffer(hdr_size)
+        buffers de calidad son ``None`` si no es FASTQ.
+
+        ``hdr_buf`` es un ``np.empty``, NO un ``create_string_buffer``: este último
+        CERO-INICIALIZA la memoria, y en la ruta paralela (48 MB de cabeceras) eso
+        costaba ~39 ms por llamada — suficiente para comerse la ventaja del parseo
+        multinúcleo. C escribe encima igualmente, así que poner a cero es trabajo
+        tirado."""
+        hdr_buf  = np.empty(hdr_size, dtype=np.uint8)
         pack_buf = np.empty(pack_size, dtype=np.uint8)
         hdr_off  = np.empty(records + 1, dtype=np.int32)
         pack_off = np.empty(records + 1, dtype=np.int32)
@@ -1381,7 +1387,7 @@ class SmartImporter:
                 # no por registro. string_at copia solo los bytes usados, no los
                 # 2 MB completos del buffer de cabeceras.
                 hdr_used = int(hdr_off[m])
-                hraw = ctypes.string_at(ctypes.addressof(hdr_buf), hdr_used)
+                hraw = hdr_buf[:hdr_used].tobytes()
                 hoff = hdr_off[: m + 1].tolist()
                 poff = pack_off[: m + 1].tolist()
                 nlst = n_syms[:m].tolist()
