@@ -159,8 +159,12 @@ bioforge/                  paquete instalable (from bioforge import ...)
   __init__.py              API pública + __version__ (fuente única de versión)
   biocore.py               L1 — almacenamiento 5-bit, SmartImporter, FastqRecord,
                            SequenceBatch/ReadBatch (API columnar) — no tocar sin impacto global
-  smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement
-  aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman
+  smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement,
+                           translate_many() COLUMNAR (unpack/ATG/pack del lote entero
+                           en una travesía a C cada uno; 14x→4x vs seqkit)
+  aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman,
+                           band="auto" (banda ADAPTATIVA exacta: ensancha si el camino
+                           roza el borde; hasta 14.8x, 27x→7x vs parasail)
   minimizers.py            L4 — minimizers canónicos (w,k) vectorizados
   refindex.py              L4 — índice de la referencia (hash ordenado + searchsorted)
   genomemap.py             L4 — seed-chain-align: GenomeAligner.map → PAF
