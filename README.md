@@ -60,6 +60,7 @@ combining them (especially the evolution front).
 | vs Biopython — QC filter | **~5–6× faster**, identical result |
 | vs Biopython — load all in RAM | **~6.9× less memory** (115 MB vs 801 MB) · ~9.5× faster |
 | Compressed input | **`.gz` read transparently in C** (zlib, static-linked) |
+| FASTQ parsing — parallel (`n_threads=0`) | **~1.9× faster** than single-thread (500 K reads: 0.40 s → 0.21 s) — on par with `seqkit stats` single-threaded |
 | Evolution — mutation ranking | **cross-virus AUC ~0.77–0.95** on flu HA, beats a linear model on all 6 held-out tests (trained model runs in pure NumPy) |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 

@@ -102,8 +102,11 @@ compilado se versiona en git para que el usuario no necesite GCC.
 `stream_batches`/`stream_fastq_batches` aceptan `n_threads` (1=secuencial RAM
 constante; >1=hilos; 0=todos los núcleos). El motor enruta: plano→parseo paralelo
 (OpenMP, mmap sin copia); `.gz`→libdeflate (~2×) + parseo; fallback a zlib
-secuencial. El parseo paralelo está limitado por ancho de banda de memoria
-(poco en pocos núcleos); el win real es libdeflate en `.gz` (~1.6× end-to-end).
+secuencial. **El parseo paralelo da ~1.9× en plano** (500k reads: 0.40s→0.213s)
+desde que el buffer de cabeceras dejó de cero-inicializarse (`np.empty` en vez de
+`create_string_buffer`: los 48 MB de ceros costaban ~39 ms por llamada y se comían
+la ventaja del multinúcleo). Con eso BioForge en paralelo **empata con seqkit a
+1 hilo** y queda a ~1.33× de seqkit a 4 hilos. El otro win es libdeflate en `.gz`.
 **BGZF (palanca 3):** `.gz` por bloques independientes → descompresión
 paralela (~1.95×, la vía más rápida). Conversor `bioforge-bgzip` (bgzf.py);
 salida compatible con gunzip. El despachador detecta BGZF (subcampo `BC`) y
