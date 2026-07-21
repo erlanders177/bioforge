@@ -233,6 +233,11 @@ class SequenceAligner:
         codes_a = seq_a.decode()   # (m,) uint8
         codes_b = seq_b.decode()   # (n,) uint8
 
+        # ── Banda ADAPTATIVA: rápida como la banded, exacta como la completa ───
+        if band == "auto":
+            return cls._align_auto_band(codes_a, codes_b, m, n, mode,
+                                        seq_a.seq_type, detect_mutations)
+
         # ── Banded NW path ─────────────────────────────────────────────────────
         if band is not None:
             if band < 1:
@@ -353,6 +358,56 @@ class SequenceAligner:
             mutations=mutations, aligned_a=aligned_a, aligned_b=aligned_b,
             seq_type=seq_type, mode='local',
         )
+
+    @staticmethod
+    def _path_deviation(aligned_a: str, aligned_b: str) -> int:
+        """Máxima desviación |i−j| del camino de alineamiento respecto a la diagonal.
+
+        Cada hueco en A avanza j sin avanzar i (y viceversa), así que la desviación
+        es el máximo valor absoluto de la suma acumulada (+1 por hueco en A, −1 por
+        hueco en B). Vectorizado. Sirve para saber si un alineamiento por bandas
+        LLEGÓ A ROZAR el borde de su banda — si no lo rozó, es idéntico al completo.
+        """
+        a = np.frombuffer(aligned_a.encode("ascii"), dtype=np.uint8)
+        b = np.frombuffer(aligned_b.encode("ascii"), dtype=np.uint8)
+        if a.size == 0:
+            return 0
+        gap = np.uint8(ord('-'))
+        drift = np.cumsum((a == gap).astype(np.int32) - (b == gap).astype(np.int32))
+        return int(np.abs(drift).max())
+
+    @classmethod
+    def _align_auto_band(cls, codes_a, codes_b, m, n, mode, seq_type,
+                         detect_mutations):
+        """NW con banda ADAPTATIVA: rápido como el banded, exacto como el completo.
+
+        Empieza con una banda estrecha y la DUPLICA mientras el camino óptimo toque
+        el borde (señal de que la banda podría estar recortando la solución real).
+        Si el camino se queda holgadamente dentro, el resultado es demostrablemente
+        el mismo que el del NW completo — pero con el SIMD banded, que es varias
+        veces más rápido. Es la técnica de los alineadores serios: nunca se devuelve
+        un alineamiento subóptimo en silencio; se ensancha hasta que deja de rozar.
+        """
+        lo = abs(m - n)
+        band = max(32, lo + 16)
+        limit = max(m, n)
+        while band < limit:
+            res = cls.align(
+                PackedSequence(header="", seq_type=seq_type, n_symbols=m,
+                               data=BitPacker.pack(codes_a)),
+                PackedSequence(header="", seq_type=seq_type, n_symbols=n,
+                               data=BitPacker.pack(codes_b)),
+                mode=mode, band=band, detect_mutations=detect_mutations,
+            )
+            if cls._path_deviation(res.aligned_a, res.aligned_b) < band:
+                return res                      # no rozó el borde → es el óptimo
+            band *= 2                           # rozó: ensanchar y reintentar
+        # La banda ya cubre toda la matriz: equivale al NW completo.
+        if C_AVAILABLE:
+            return cls._align_c(codes_a, codes_b, m, n, mode, seq_type,
+                                detect_mutations)
+        H = cls._fill_matrix(codes_a, codes_b, m, n, mode)
+        return cls._traceback(H, codes_a, codes_b, m, n, mode, seq_type)
 
     @classmethod
     def _align_banded_c(

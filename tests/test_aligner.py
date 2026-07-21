@@ -561,3 +561,36 @@ def test_banded_error_tipo_incorrecto():
     prot = _prot("MKGE", "p")
     with pytest.raises(SequenceTypeError):
         SequenceAligner.align(nuc, prot, band=4)
+
+
+# ── banda ADAPTATIVA (band="auto") ───────────────────────────────────────────
+
+def test_auto_band_es_exacto_como_el_completo():
+    """band='auto' debe dar el MISMO score que el NW completo, incluso con
+    secuencias divergentes e indels — se ensancha hasta dejar de rozar el borde."""
+    import numpy as np
+    rng = np.random.default_rng(11)
+    mk = lambda s: SmartImporter.from_string(
+        f">x\n{s}\n", force_type=SeqType.NUCLEOTIDE)[0]
+    for div in (0.05, 0.25, 0.45):
+        for _ in range(12):
+            n = int(rng.integers(60, 300))
+            a = "".join(rng.choice(list("ACGT"), n))
+            b = list(a)
+            for i in range(len(b)):
+                if rng.random() < div:
+                    b[i] = rng.choice(list("ACGT"))
+            mid = len(b) // 2                      # indel que fuerza desviación
+            b = b[:mid] + list("".join(rng.choice(list("ACGT"), 15))) + b[mid:]
+            pa, pb = mk(a), mk("".join(b))
+            full = SequenceAligner.align(pa, pb, detect_mutations=False)
+            auto = SequenceAligner.align(pa, pb, band="auto",
+                                         detect_mutations=False)
+            assert auto.score == full.score
+
+
+def test_path_deviation_cuenta_la_desviacion():
+    """La desviación es el máximo |i-j| del camino (cumsum de huecos)."""
+    assert SequenceAligner._path_deviation("ACGT", "ACGT") == 0
+    assert SequenceAligner._path_deviation("AC--GT", "ACGTGT") == 2
+    assert SequenceAligner._path_deviation("ACGTGT", "AC--GT") == 2

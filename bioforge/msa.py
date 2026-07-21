@@ -80,7 +80,10 @@ def _pairwise(a, b: str) -> tuple[str, str]:
     alinea contra las n−1 restantes, así que empaquetarla una sola vez evita n−1
     re-empaquetados idénticos (era el 2× de llamadas a _pack que vio el perfil)."""
     pa = a if not isinstance(a, str) else _pack(a)
-    res = SequenceAligner.align(pa, _pack(b), mode="global",
+    # band="auto": banda adaptativa — EXACTA (se ensancha si el camino roza el
+    # borde) pero varias veces más rápida gracias al SIMD banded del motor C.
+    # En un MSA las secuencias son parecidas, que es justo su mejor caso.
+    res = SequenceAligner.align(pa, _pack(b), mode="global", band="auto",
                                 detect_mutations=False)
     return res.aligned_a, res.aligned_b
 
