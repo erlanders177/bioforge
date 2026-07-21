@@ -384,6 +384,10 @@ class SmartTranslator:
         n_cods = np.where(good, (lens - starts) // 3, 0)
         good &= n_cods > 0
 
+        # Los ORF se recogen con slices CONTIGUOS + concatenate. Probé sustituirlos
+        # por una indexación fancy "ragged" (repeat+offsets) y salió PEOR (0.33→0.47s):
+        # el gather disperso con un índice de decenas de MB pierde contra el memcpy
+        # de los slices. Vectorizar no siempre gana.
         chunks: list[np.ndarray] = []
         meta: list[tuple[int, int, int]] = []      # (idx, orf_start, n_codons)
         for k in np.flatnonzero(good).tolist():
