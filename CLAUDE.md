@@ -49,6 +49,22 @@ Niveles implementados y validados:
   científica (DERIVE/EVEscape/Hie ya existen y son mejores); el valor es la CAJA
   integrada, accesible, en portátil y honesta. Ver `docs/` y memoria del proyecto.
 
+- **L6 (v8.0) — el JUEZ de predictores** `bioforge/evalkit.py`. No un predictor más:
+  la herramienta que decide CUÁL es mejor. `EvolutionBenchmark(seqs, dates).judge(f)`
+  somete cualquier `f(Context) -> scores` a la batería completa. Cada prueba nace de
+  un autoengaño que sufrimos midiendo de verdad: (a) **listón trivial** — el rival no
+  es 0.5 sino el mejor eje gratis (frecuencia/mutabilidad/conservación); nuestro
+  "AUC 0.80" era exactamente la mutabilidad; (b) **régimen NUEVAS** — separa lo ya
+  circulante (basta contar) de lo nuevo (hay que predecir); (c) **IC95% bootstrap**;
+  (d) **detector de FUGA de preentrenamiento** — compara antes/después del corte
+  DESCONTANDO la caída de un eje trivial de control; (e) `cross_validate` entre
+  organismos. `Context` es leak-free por construcción (solo bins anteriores).
+  **Validado en H3N2 real** (1.080 secs, 187.891 candidatas): caza al azar, al
+  tautológico, al solo-fácil, y a un tramposo con AUC 0.845 e IC limpio (fuga −0.369).
+  **Nuestro propio v7.0 juzgado:** MLP entrenado 0.861 global / **0.613 en NUEVAS**
+  (APORTA), ejes manuales 0.837 / **0.523** (azar en NUEVAS) → eso es lo que aporta
+  la IA, medido por primera vez.
+
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
 
@@ -174,6 +190,8 @@ bioforge/                  paquete instalable (from bioforge import ...)
   msa.py                   MSA center-star (usa L3); soporte del predictor
   evolution.py             L5 — predicción de evolución: backtest, linajes estables
                            (designate_lineages), rank_mutations, score_mutations
+  evalkit.py               L6 — el JUEZ honesto: EvolutionBenchmark.judge/cross_validate,
+                           Context (leak-free), Report (veredicto)
   fetch.py                 L5 — descarga NCBI Entrez fechada (stdlib, caché + reintentos)
   ai/viability.py          L5 — eje B opcional: ESM-2 (bioforge[ai], carga perezosa)
   data/ranker_weights.npz  L5 — pesos del rankeador entrenado (2.2 KB, en el wheel)

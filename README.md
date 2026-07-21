@@ -417,6 +417,53 @@ its own measured limits are baked in):
   cutoff — measured, and off by default). The value here is the *integrated, honest,
   laptop-runnable box*, not a new state of the art.
 
+### Judge a predictor honestly (Level 6 — v8.0)
+
+Building the Level 5 predictor was mostly a fight against **our own measurements
+flattering us**. Every check below exists because it caught us:
+
+```python
+from bioforge import EvolutionBenchmark
+
+bench = EvolutionBenchmark(sequences, dates)      # real, dated sequences
+report = bench.judge(my_predictor)                # any f(Context) -> scores
+print(report)
+```
+
+```
+── VEREDICTO ─────────────────────────────────────────────
+  AUC global            0.861
+  AUC en NUEVAS         0.613   (el régimen difícil)
+  listón trivial        0.823   (mutabilidad del sitio)
+  IC95% del AUC         [0.847, 0.880]
+  (187,891 candidatas · 17 cortes)
+
+  → APORTA de verdad: supera el listón trivial y aguanta en NUEVAS.
+```
+
+- **The bar is not 0.5.** It is the best *free* axis (current frequency, site
+  mutability, physico-chemical conservation). Our own headline "AUC 0.80" turned
+  out to be **exactly** the mutability axis — a tautology, not a prediction.
+- **Two regimes.** Mutations already circulating (where counting is enough) are
+  split from genuinely new ones. Our hand-tuned axes score 0.52 on new mutations
+  — chance. The trained model scores 0.613. That gap *is* what the AI buys.
+- **Bootstrap CI.** Small wins evaporate when you resample. If the interval
+  touches 0.5, the verdict says *not demonstrated*.
+- **Pretraining-leakage detector.** Compares AUC before/after a model's training
+  cutoff, *subtracting* the drop of a trivial control axis. In a planted test a
+  cheating predictor scored **AUC 0.845 with a clean CI [0.834, 0.854] — better
+  than the trivial bar, strong on the hard regime — and was still flagged**
+  (leak −0.369). Without this check we would have published that number. It is
+  the same signature we measured on ESM-2 (−0.20 after its cutoff).
+- **`Context` is leak-free by construction**: a predictor is only ever handed
+  time bins *before* the one being scored, so lookahead is not possible by
+  accident.
+- **`cross_validate`** re-runs the battery on other organisms to test whether a
+  model generalises or memorised one virus.
+
+The point of Level 6 is not to win a benchmark. It is that a claim about
+predicting evolution should be *hard to make by mistake*.
+
 ### Full mutation analysis pipeline (DNA + protein)
 
 ```python
