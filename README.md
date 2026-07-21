@@ -50,6 +50,7 @@ combining them (especially the evolution front).
 | Memory (30M bases) | **18.75 MB** (37.5% less than plain ASCII) |
 | Translation throughput | **~5 M amino acids / second** (NumPy) · **~27× faster** with C engine |
 | NW alignment 1000×1000 nt | **~165 ms** (NumPy) · **~29× faster** with C engine |
+| NW with `band="auto"` (adaptive, **exact**) | **up to 14.8× faster** than full NW — widens the band until the optimal path no longer touches it, so the result is provably identical |
 | Genome mapping — speed vs minimap2 | **on par on multi-core**, ~1.18× behind single-thread (*E. coli* scale, `minimap2 -a`; `tools/bench_vs_minimap2.py`) |
 | Genome mapping — accuracy vs minimap2 | **~99.8% of reads mapped to the correct position** on real *E. coli*, matching minimap2 (`tools/accuracy_vs_minimap2.py`) |
 | FASTA ingestion (C batch parser) | **~80 M bases / second** |
