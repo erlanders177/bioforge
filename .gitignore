@@ -44,3 +44,6 @@ bioforge_graph.html
 
 # Datos de benchmark descargados (genomas reales, no versionar)
 _benchdata/
+
+# Datos REALES descargados para benchmarks (NCBI/ENA) — pesados, se rebajan solos
+data_real/
