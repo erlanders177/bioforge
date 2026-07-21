@@ -135,6 +135,10 @@ def _setup_signatures() -> None:
     _lib.nw_banded.argtypes          = _nw_banded_args
     _lib.nw_banded_semiglobal.restype  = _I32
     _lib.nw_banded_semiglobal.argtypes = _nw_banded_args
+    # Variante SIMD (AVX2: 16 carriles int16, o 8 int32) — MISMO DP y mismos
+    # resultados que nw_banded, solo que vectorizada. Solo modo GLOBAL.
+    _lib.nw_banded_diag_simd.restype   = _I32
+    _lib.nw_banded_diag_simd.argtypes  = _nw_banded_args
 
 
 _load()
@@ -432,7 +436,10 @@ def c_nw_banded(
     score = _I32(0); nm = _I32(0); nmi = _I32(0); ng = _I32(0)
     ca = np.ascontiguousarray(codes_a, dtype=np.uint8)
     cb = np.ascontiguousarray(codes_b, dtype=np.uint8)
-    fn = _lib.nw_banded_semiglobal if mode == "semi-global" else _lib.nw_banded
+    # Global → variante SIMD (int16/int32 AVX2), varias veces más rápida y
+    # bit-idéntica al escalar. Semi-global no tiene SIMD → núcleo escalar.
+    fn = (_lib.nw_banded_semiglobal if mode == "semi-global"
+          else _lib.nw_banded_diag_simd)
     aln_len = fn(
         ca.ctypes.data_as(_U8P), _I32(m),
         cb.ctypes.data_as(_U8P), _I32(n),

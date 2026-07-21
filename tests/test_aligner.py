@@ -594,3 +594,37 @@ def test_path_deviation_cuenta_la_desviacion():
     assert SequenceAligner._path_deviation("ACGT", "ACGT") == 0
     assert SequenceAligner._path_deviation("AC--GT", "ACGTGT") == 2
     assert SequenceAligner._path_deviation("ACGTGT", "AC--GT") == 2
+
+
+def test_banded_simd_identico_al_escalar():
+    """El banded global usa la variante SIMD del motor C (16 carriles int16).
+    Debe dar EXACTAMENTE lo mismo que el núcleo escalar — es código vectorizado,
+    y una divergencia aquí corrompería alineamientos en silencio."""
+    import numpy as np
+    from bioforge.engine import _loader as L
+    if not getattr(L, "C_AVAILABLE", False):
+        pytest.skip("motor C no disponible")
+    rng = np.random.default_rng(5)
+    dec = b"".join(bytes([ord(c)]) for c in "ACGT") + b"?" * 28
+    for _ in range(40):
+        n = int(rng.integers(40, 400))
+        a = rng.integers(0, 4, n, dtype=np.uint8)
+        b = a.copy()
+        m = rng.random(n) < 0.15
+        b[m] = rng.integers(0, 4, int(m.sum()), dtype=np.uint8)
+        band = int(rng.integers(16, 80))
+        # escalar (nw_banded) vs SIMD (nw_banded_diag_simd), mismos argumentos
+        import ctypes
+        outs = []
+        for fn in (L._lib.nw_banded, L._lib.nw_banded_diag_simd):
+            oa = ctypes.create_string_buffer(2 * n + 2)
+            ob = ctypes.create_string_buffer(2 * n + 2)
+            sc = ctypes.c_int32(0); nm = ctypes.c_int32(0)
+            nmi = ctypes.c_int32(0); ng = ctypes.c_int32(0)
+            fn(a.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), ctypes.c_int32(n),
+               b.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), ctypes.c_int32(n),
+               dec, ctypes.c_int32(1), ctypes.c_int32(-1), ctypes.c_int32(-1),
+               ctypes.c_int32(band), oa, ob,
+               ctypes.byref(sc), ctypes.byref(nm), ctypes.byref(nmi), ctypes.byref(ng))
+            outs.append(sc.value)
+        assert outs[0] == outs[1], f"SIMD {outs[1]} != escalar {outs[0]} (band={band})"
