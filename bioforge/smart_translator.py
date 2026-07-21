@@ -372,26 +372,28 @@ class SmartTranslator:
                         & (all_nuc[2:] == G))
         hit_pos = np.flatnonzero(hit)
 
-        # ③ ORF de cada secuencia → una sola tira contigua de codones
+        # ③ ORF de cada secuencia — decidido de forma VECTORIZADA (un searchsorted
+        #    para todo el lote en vez de uno por secuencia)
+        offs = np.asarray(sym_off, dtype=np.int64)
+        lens = np.array([s.n_symbols for _i, s in cand], dtype=np.int64)
+        j = np.searchsorted(hit_pos, offs)
+        inb = j < hit_pos.size
+        atg = np.where(inb, hit_pos[np.minimum(j, hit_pos.size - 1)], 0)
+        good = inb & (atg + 2 < offs + lens)        # el ATG cabe ENTERO en su registro
+        starts = np.where(good, atg - offs, 0)
+        n_cods = np.where(good, (lens - starts) // 3, 0)
+        good &= n_cods > 0
+
         chunks: list[np.ndarray] = []
         meta: list[tuple[int, int, int]] = []      # (idx, orf_start, n_codons)
-        total_codons = 0
-        for (i, seq), off in zip(cand, sym_off):
-            n = int(seq.n_symbols)
-            j = int(np.searchsorted(hit_pos, off))
-            # el ATG debe caber ENTERO dentro de este registro
-            if j >= hit_pos.size or hit_pos[j] + 2 >= off + n:
-                continue                            # sin ATG → None
-            start = int(hit_pos[j]) - off
-            n_cod = (n - start) // 3
-            if n_cod == 0:
-                continue
-            base = off + start
-            chunks.append(all_nuc[base: base + n_cod * 3])
-            meta.append((i, start, n_cod))
-            total_codons += n_cod
+        for k in np.flatnonzero(good).tolist():
+            st, nc, off = int(starts[k]), int(n_cods[k]), int(offs[k])
+            base = off + st
+            chunks.append(all_nuc[base: base + nc * 3])
+            meta.append((cand[k][0], st, nc))
         if not meta:
             return out
+        total_codons = int(n_cods[good].sum())
 
         flat = np.concatenate(chunks)
 
@@ -406,16 +408,22 @@ class SmartTranslator:
             aa_all = np.where(ok, cls.CODON_LUT[safe],
                               np.uint8(BioCode.UNK)).astype(np.uint8)
 
-        # ③ Cortar cada proteína en su primer STOP
-        prots: list[np.ndarray] = []
-        pos = 0
-        for _i, _start, n_cod in meta:
-            aa = aa_all[pos: pos + n_cod]
-            pos += n_cod
-            stop = aa == np.uint8(BioCode.STOP)
-            if stop.any():
-                aa = aa[: int(np.argmax(stop))]
-            prots.append(aa)
+        # ③ Cortar cada proteína en su primer STOP — VECTORIZADO: se localizan
+        #    todos los STOP de la tira de una vez y un searchsorted por lote dice
+        #    cuál es el primero de cada proteína (en vez de any()+argmax por una).
+        ncod_arr = np.array([nc for _i, _s, nc in meta], dtype=np.int64)
+        cum = np.concatenate(([0], np.cumsum(ncod_arr)))          # límites por proteína
+        stop_pos = np.flatnonzero(aa_all == np.uint8(BioCode.STOP))
+        first = np.searchsorted(stop_pos, cum[:-1])               # 1er STOP tras el inicio
+        has = first < stop_pos.size
+        stop_at = np.where(has, stop_pos[np.minimum(first, max(stop_pos.size - 1, 0))],
+                           np.iinfo(np.int64).max) if stop_pos.size else \
+            np.full(ncod_arr.size, np.iinfo(np.int64).max)
+        # longitud = hasta el STOP si cae dentro de esta proteína, si no toda ella
+        lens_aa = np.minimum(np.where(stop_at < cum[1:], stop_at - cum[:-1], ncod_arr),
+                             ncod_arr)
+        prots = [aa_all[cum[k]: cum[k] + int(lens_aa[k])]
+                 for k in range(ncod_arr.size)]
 
         # ④ Empaquetar TODO el lote con UNA sola llamada.
         #    Truco del formato: 8 símbolos = 40 bits = 5 bytes EXACTOS, así que
