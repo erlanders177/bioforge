@@ -44,6 +44,7 @@ CODON_LUT  (64 entries, Standard Genetic Code NCBI table #1)
 from __future__ import annotations
 
 import warnings
+from typing import Optional
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -318,6 +319,85 @@ class SmartTranslator:
             n_symbols = n_aa,
             data      = BitPacker.pack(aa_codes),
         )
+
+    @classmethod
+    def translate_many(
+        cls,
+        seqs: "list[PackedSequence]",
+        warn_short: bool = False,
+    ) -> "list[Optional[PackedSequence]]":
+        """Traduce MUCHAS secuencias en bloque — la vía rápida (estilo seqkit).
+
+        ``translate()`` paga por secuencia el coste de cruzar a C, y con miles de
+        registros ese peaje domina (medido: ~60 % del tiempo en la llamada C +
+        empaquetado, no en la traducción misma). Aquí se concatenan todos los ORF
+        en un único array y se cruza a C **una sola vez**, sea cual sea el número
+        de secuencias.
+
+        Devuelve una lista del mismo tamaño que ``seqs``; las secuencias sin ATG
+        o sin ningún codón completo salen como ``None`` (en lote es más útil
+        saltarlas que abortar todo el trabajo por una mala).
+        """
+        out: "list[Optional[PackedSequence]]" = [None] * len(seqs)
+        if not seqs:
+            return out
+
+        # ① ORF de cada secuencia; se recogen en una sola tira contigua
+        chunks: list[np.ndarray] = []
+        meta: list[tuple[int, int, int]] = []      # (idx, orf_start, n_codons)
+        total_codons = 0
+        for i, seq in enumerate(seqs):
+            if not isinstance(seq, PackedSequence) or \
+                    seq.seq_type != SeqType.NUCLEOTIDE or seq.n_symbols < 3:
+                continue
+            nuc = seq.decode()
+            try:
+                start = cls._find_orf_start(nuc)
+            except TranslationError:
+                continue                            # sin ATG → None
+            orf = nuc[start:]
+            n_cod = len(orf) // 3
+            if n_cod == 0:
+                continue
+            chunks.append(orf[: n_cod * 3])
+            meta.append((i, start, n_cod))
+            total_codons += n_cod
+        if not meta:
+            return out
+
+        flat = np.concatenate(chunks)
+
+        # ② UNA sola travesía a C para todos los codones del lote
+        if _C_AVAILABLE:
+            aa_all = _c_translate(cls.CODON_LUT, flat, total_codons)
+        else:
+            codons = flat.reshape(total_codons, 3)
+            idx16 = (codons.astype(np.uint16) * cls._CODON_WEIGHTS).sum(axis=1)
+            ok = idx16 < np.uint16(64)
+            safe = np.where(ok, idx16, np.uint16(0)).astype(np.uint8)
+            aa_all = np.where(ok, cls.CODON_LUT[safe],
+                              np.uint8(BioCode.UNK)).astype(np.uint8)
+
+        # ③ Repartir, cortar en el primer STOP y empaquetar
+        pos = 0
+        for i, start, n_cod in meta:
+            aa = aa_all[pos: pos + n_cod]
+            pos += n_cod
+            stop = aa == np.uint8(BioCode.STOP)
+            if stop.any():
+                aa = aa[: int(np.argmax(stop))]
+            n_aa = int(aa.size)
+            if warn_short and n_aa < cls._MIN_AA_LEN:
+                warnings.warn(
+                    f"Secuencia sospechosamente corta ({n_aa} aa < "
+                    f"{cls._MIN_AA_LEN} aa).", UserWarning, stacklevel=2)
+            out[i] = PackedSequence(
+                header    = f"[PROT | ORF@{start}] {seqs[i].header}",
+                seq_type  = SeqType.PROTEIN,
+                n_symbols = n_aa,
+                data      = BitPacker.pack(aa),
+            )
+        return out
 
     @classmethod
     def translate_all_frames(

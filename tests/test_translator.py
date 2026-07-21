@@ -456,3 +456,33 @@ def test_all_frames_longitud_minima_proteina():
     frames = SmartTranslator.translate_all_frames(seq)
     for prot in frames:
         assert prot.n_symbols >= 1
+
+
+# ── traducción POR LOTES (translate_many) ────────────────────────────────────
+
+def test_translate_many_identico_a_uno_a_uno():
+    """El lote debe dar exactamente lo mismo que traducir una por una."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    seqs = [SmartImporter.from_string(
+        ">s\n" + "ATG" + "".join(rng.choice(list("ACGT"), 60)) + "TAA\n",
+        force_type=SeqType.NUCLEOTIDE)[0] for _ in range(40)]
+    uno = [SmartTranslator.translate(s, warn_short=False).to_string() for s in seqs]
+    lote = [p.to_string() for p in SmartTranslator.translate_many(seqs)]
+    assert uno == lote
+
+
+def test_translate_many_marca_none_las_malas():
+    """Sin ATG o sin codón completo → None, sin abortar el resto del lote."""
+    buena = SmartImporter.from_string(
+        ">b\nATGAAACCCGGGTAA\n", force_type=SeqType.NUCLEOTIDE)[0]
+    sin_atg = SmartImporter.from_string(
+        ">m\nCCCCCCCCCCCC\n", force_type=SeqType.NUCLEOTIDE)[0]
+    res = SmartTranslator.translate_many([buena, sin_atg, buena])
+    assert res[1] is None
+    assert res[0] is not None and res[2] is not None
+    assert res[0].to_string() == res[2].to_string()
+
+
+def test_translate_many_vacio():
+    assert SmartTranslator.translate_many([]) == []

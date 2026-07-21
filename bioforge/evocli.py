@@ -97,14 +97,20 @@ def _read_dated_fasta(path: str) -> tuple[list[str], list[float]]:
 
 def _translate_all(seqs: list[str]) -> list[str]:
     """Traduce nucleótido→proteína con nuestro traductor; descarta lo intraducible."""
-    out = []
-    for s in seqs:
+    packed, idx = [], []
+    for i, s in enumerate(seqs):
         try:
-            packed = SmartImporter.from_string(f">s\n{s}\n",
-                                               force_type=SeqType.NUCLEOTIDE)[0]
-            out.append(SmartTranslator.translate(packed, warn_short=False).to_string())
+            packed.append(SmartImporter.from_string(
+                f">s\n{s}\n", force_type=SeqType.NUCLEOTIDE)[0])
+            idx.append(i)
         except BioForgeError:
-            out.append(None)
+            pass                                   # ilegible → se queda en None
+    # Traducción POR LOTES: una sola travesía al motor C para todo el conjunto.
+    out: list = [None] * len(seqs)
+    for i, prot in zip(idx, SmartTranslator.translate_many(packed,
+                                                           warn_short=False)):
+        if prot is not None:
+            out[i] = prot.to_string()
     return out
 
 
