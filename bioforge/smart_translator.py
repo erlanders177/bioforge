@@ -342,24 +342,52 @@ class SmartTranslator:
         if not seqs:
             return out
 
-        # ① ORF de cada secuencia; se recogen en una sola tira contigua
+        # ① DESEMPAQUETADO DEL LOTE ENTERO en una sola llamada.
+        #    Mismo truco del formato que en el empaquetado: dando a cada registro
+        #    una ranura de ceil(n/8)*5 bytes, todos empiezan en frontera de byte y
+        #    en un offset de símbolo múltiplo de 8 → un único unpack los saca todos.
+        cand = [(i, s) for i, s in enumerate(seqs)
+                if isinstance(s, PackedSequence)
+                and s.seq_type == SeqType.NUCLEOTIDE and s.n_symbols >= 3]
+        if not cand:
+            return out
+        slots = [(s.n_symbols + 7) // 8 for _i, s in cand]        # bloques de 8 símbolos
+        buf = np.zeros(sum(slots) * 5, dtype=np.uint8)
+        sym_off: list[int] = []
+        cur_b = 0
+        for (_i, s), sl in zip(cand, slots):
+            d = s.data
+            buf[cur_b: cur_b + d.size] = d
+            sym_off.append(cur_b // 5 * 8)
+            cur_b += sl * 5
+        all_nuc = BitPacker.unpack(buf, sum(slots) * 8)
+
+        # ② Búsqueda de ATG VECTORIZADA sobre toda la tira (sin una llamada C por
+        #    secuencia): una máscara de tripletes y luego un searchsorted por registro.
+        A, T, G = (np.uint8(x) for x in cls._START_CODON)
+        hit = np.empty(all_nuc.size, dtype=bool)
+        hit[:] = False
+        if all_nuc.size >= 3:
+            hit[:-2] = ((all_nuc[:-2] == A) & (all_nuc[1:-1] == T)
+                        & (all_nuc[2:] == G))
+        hit_pos = np.flatnonzero(hit)
+
+        # ③ ORF de cada secuencia → una sola tira contigua de codones
         chunks: list[np.ndarray] = []
         meta: list[tuple[int, int, int]] = []      # (idx, orf_start, n_codons)
         total_codons = 0
-        for i, seq in enumerate(seqs):
-            if not isinstance(seq, PackedSequence) or \
-                    seq.seq_type != SeqType.NUCLEOTIDE or seq.n_symbols < 3:
-                continue
-            nuc = seq.decode()
-            try:
-                start = cls._find_orf_start(nuc)
-            except TranslationError:
+        for (i, seq), off in zip(cand, sym_off):
+            n = int(seq.n_symbols)
+            j = int(np.searchsorted(hit_pos, off))
+            # el ATG debe caber ENTERO dentro de este registro
+            if j >= hit_pos.size or hit_pos[j] + 2 >= off + n:
                 continue                            # sin ATG → None
-            orf = nuc[start:]
-            n_cod = len(orf) // 3
+            start = int(hit_pos[j]) - off
+            n_cod = (n - start) // 3
             if n_cod == 0:
                 continue
-            chunks.append(orf[: n_cod * 3])
+            base = off + start
+            chunks.append(all_nuc[base: base + n_cod * 3])
             meta.append((i, start, n_cod))
             total_codons += n_cod
         if not meta:
@@ -378,24 +406,45 @@ class SmartTranslator:
             aa_all = np.where(ok, cls.CODON_LUT[safe],
                               np.uint8(BioCode.UNK)).astype(np.uint8)
 
-        # ③ Repartir, cortar en el primer STOP y empaquetar
+        # ③ Cortar cada proteína en su primer STOP
+        prots: list[np.ndarray] = []
         pos = 0
-        for i, start, n_cod in meta:
+        for _i, _start, n_cod in meta:
             aa = aa_all[pos: pos + n_cod]
             pos += n_cod
             stop = aa == np.uint8(BioCode.STOP)
             if stop.any():
                 aa = aa[: int(np.argmax(stop))]
+            prots.append(aa)
+
+        # ④ Empaquetar TODO el lote con UNA sola llamada.
+        #    Truco del formato: 8 símbolos = 40 bits = 5 bytes EXACTOS, así que
+        #    rellenando cada proteína a múltiplo de 8 cada una arranca en frontera
+        #    de byte y su trozo del buffer común es un PackedSequence válido por sí
+        #    solo. Así se evita una travesía a C por secuencia (eran miles).
+        pad_len = [(a.size + 7) // 8 * 8 for a in prots]
+        flat_aa = np.zeros(sum(pad_len), dtype=np.uint8)
+        cur = 0
+        byte_off: list[int] = []
+        for a, pl in zip(prots, pad_len):
+            flat_aa[cur: cur + a.size] = a
+            byte_off.append(cur // 8 * 5)          # cur es múltiplo de 8 → byte exacto
+            cur += pl
+        packed_all = BitPacker.pack(flat_aa) if flat_aa.size else np.empty(0, np.uint8)
+
+        # ⑤ Cortar el buffer común y construir los resultados
+        for (i, start, _n_cod), aa, off in zip(meta, prots, byte_off):
             n_aa = int(aa.size)
             if warn_short and n_aa < cls._MIN_AA_LEN:
                 warnings.warn(
                     f"Secuencia sospechosamente corta ({n_aa} aa < "
                     f"{cls._MIN_AA_LEN} aa).", UserWarning, stacklevel=2)
+            nbytes = BitPacker.packed_size(n_aa)
             out[i] = PackedSequence(
                 header    = f"[PROT | ORF@{start}] {seqs[i].header}",
                 seq_type  = SeqType.PROTEIN,
                 n_symbols = n_aa,
-                data      = BitPacker.pack(aa),
+                data      = packed_all[off: off + nbytes].copy(),
             )
         return out
 
