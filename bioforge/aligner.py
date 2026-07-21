@@ -388,17 +388,18 @@ class SequenceAligner:
         veces más rápido. Es la técnica de los alineadores serios: nunca se devuelve
         un alineamiento subóptimo en silencio; se ensancha hasta que deja de rozar.
         """
-        lo = abs(m - n)
-        band = max(32, lo + 16)
+        band = max(32, abs(m - n) + 16)
         limit = max(m, n)
         while band < limit:
-            res = cls.align(
-                PackedSequence(header="", seq_type=seq_type, n_symbols=m,
-                               data=BitPacker.pack(codes_a)),
-                PackedSequence(header="", seq_type=seq_type, n_symbols=n,
-                               data=BitPacker.pack(codes_b)),
-                mode=mode, band=band, detect_mutations=detect_mutations,
-            )
+            # Se llama al banded DIRECTAMENTE con los códigos ya decodificados: pasar
+            # por align() obligaría a re-empaquetar y volver a desempaquetar en cada
+            # intento (2 pack + 2 unpack por vuelta, puro peaje).
+            if C_AVAILABLE:
+                res = cls._align_banded_c(codes_a, codes_b, m, n, band, mode,
+                                          seq_type, detect_mutations)
+            else:
+                H = cls._fill_matrix_banded(codes_a, codes_b, m, n, band, mode)
+                res = cls._traceback(H, codes_a, codes_b, m, n, mode, seq_type)
             if cls._path_deviation(res.aligned_a, res.aligned_b) < band:
                 return res                      # no rozó el borde → es el óptimo
             band *= 2                           # rozó: ensanchar y reintentar
