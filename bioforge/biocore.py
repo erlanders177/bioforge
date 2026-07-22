@@ -334,6 +334,18 @@ _IS_PROTEIN_CHAR: np.ndarray = np.zeros(256, dtype=np.bool_)
 for _ch in "EFILPQefilpq*":
     _IS_PROTEIN_CHAR[ord(_ch)] = True
 
+# ── Anti-corrupción: bytes que caen en UNK LEGÍTIMAMENTE por tipo ───────────────
+# La LUT manda todo carácter desconocido a BioCode.UNK. Eso es lo que convirtió
+# proteínas en 'N' cuando se forzaban como ADN (bug del MSA, v8.0). Salvo 'N' (ADN)
+# y 'X' (proteína), un símbolo que acabe en UNK es un carácter que NO pertenece al
+# alfabeto → señal de tipo equivocado. _encode mide esa fracción y se niega a
+# corromper en silencio (ver SmartImporter._encoding_loss).
+_NUC_LEGIT_UNK: np.ndarray = np.frombuffer(b"Nn", dtype=np.uint8)
+_AA_LEGIT_UNK:  np.ndarray = np.frombuffer(b"Xx", dtype=np.uint8)
+# Umbral de corrupción: proteína-como-ADN ronda 0.6 de UNK ilegítimo; datos bien
+# tipados dan ~0. 0.4 separa con margen sin molestar a ADN degenerado (IUPAC) real.
+_MAX_UNK_FRACTION: float = 0.4
+
 # ── Vectorised decode LUTs  (BioCode index → ASCII byte) ────────────────────────
 # Pre-built once at module load.  to_string() indexes into these arrays with a
 # single fancy-index op, then calls .tobytes().decode('ascii') — no Python loop.
@@ -1888,6 +1900,29 @@ class SmartImporter:
         )
 
     @staticmethod
+    def _encoding_loss(
+        ascii_bytes: np.ndarray,
+        codes:       np.ndarray,
+        seq_type:    SeqType,
+    ) -> float:
+        """Fracción de símbolos que cayeron en UNK SIN ser ambiguos legítimos.
+
+        La red de seguridad contra la corrupción silenciosa: un carácter que acaba
+        en ``BioCode.UNK`` sin ser 'N' (ADN) o 'X' (proteína) es un símbolo ajeno al
+        alfabeto. Si son muchos, el tipo está equivocado y encodearlo destruiría los
+        datos convirtiéndolos en 'N' (exactamente el bug del MSA que motivó esto).
+        Todo vectorizado, coste O(n) sobre el array ya calculado."""
+        if codes.size == 0:
+            return 0.0
+        unk = codes == BioCode.UNK
+        if not unk.any():
+            return 0.0
+        legit = (_NUC_LEGIT_UNK if seq_type == SeqType.NUCLEOTIDE
+                 else _AA_LEGIT_UNK)
+        illegitimate = unk & ~np.isin(ascii_bytes, legit)
+        return float(illegitimate.sum()) / float(codes.size)
+
+    @staticmethod
     def _encode(
         raw_seq:    str,
         header:     str,
@@ -1932,6 +1967,21 @@ class SmartImporter:
         # ③ Translate ASCII ordinals → 5-bit BioCode (single LUT index op)
         lut:   np.ndarray = NUC_LUT if seq_type == SeqType.NUCLEOTIDE else AA_LUT
         codes: np.ndarray = lut[ascii_bytes]          # shape (n,), dtype uint8
+
+        # ③b Red de seguridad: negarse a corromper en silencio. Si demasiados
+        #     símbolos no pertenecen al alfabeto, el tipo está equivocado y seguir
+        #     los convertiría en 'N' (el bug del MSA de v8.0). Fallar ruidosamente.
+        loss = SmartImporter._encoding_loss(ascii_bytes, codes, seq_type)
+        if loss > _MAX_UNK_FRACTION:
+            other = ("proteína" if seq_type == SeqType.NUCLEOTIDE
+                     else "nucleótido")
+            forced = " (forzado con force_type)" if force_type is not None else ""
+            raise SequenceValueError(
+                f"el {loss:.0%} de los símbolos no son válidos como "
+                f"{seq_type.name}{forced}: casi con seguridad es una secuencia de "
+                f"{other} mal tipada. Encodearla la corrompería (→ 'N'). Corrige "
+                f"force_type= o deja la auto-detección. "
+                f"Cabecera: {header[:50]!r}")
 
         # ④ Compress 5-bit codes → packed byte array
         packed: np.ndarray = BitPacker.pack(codes)
