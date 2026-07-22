@@ -432,11 +432,11 @@ print(report)
 
 ```
 ── VEREDICTO ─────────────────────────────────────────────
-  AUC global            0.861
-  AUC en NUEVAS         0.613   (el régimen difícil)
-  listón trivial        0.823   (mutabilidad del sitio)
-  IC95% del AUC         [0.847, 0.880]
-  (187,891 candidatas · 17 cortes)
+  AUC global            0.837
+  AUC en NUEVAS         0.631   (el régimen difícil)
+  listón trivial        0.793   (mutabilidad del sitio)
+  IC95% del AUC         [0.830, 0.848]
+  (220,092 candidatas · 20 cortes)
 
   → APORTA de verdad: supera el listón trivial y aguanta en NUEVAS.
 ```
@@ -445,16 +445,16 @@ print(report)
   mutability, physico-chemical conservation). Our own headline "AUC 0.80" turned
   out to be **exactly** the mutability axis — a tautology, not a prediction.
 - **Two regimes.** Mutations already circulating (where counting is enough) are
-  split from genuinely new ones. Our hand-tuned axes score 0.52 on new mutations
-  — chance. The trained model scores 0.613. That gap *is* what the AI buys.
+  split from genuinely new ones. Our hand-tuned axes score ~0.52 on new mutations
+  — chance. The trained model scores 0.631. That gap *is* what the AI buys.
 - **Bootstrap CI.** Small wins evaporate when you resample. If the interval
   touches 0.5, the verdict says *not demonstrated*.
 - **Pretraining-leakage detector.** Compares AUC before/after a model's training
   cutoff, *subtracting* the drop of a trivial control axis. In a planted test a
-  cheating predictor scored **AUC 0.845 with a clean CI [0.834, 0.854] — better
-  than the trivial bar, strong on the hard regime — and was still flagged**
-  (leak −0.369). Without this check we would have published that number. It is
-  the same signature we measured on ESM-2 (−0.20 after its cutoff).
+  cheating predictor scored **AUC 0.863 with a clean CI [0.859, 0.866] — better
+  than the trivial bar (0.793), and 0.857 on the hard regime — and was still
+  flagged** (leak −0.438). Without this check we would have published that
+  number. It is the same signature we measured on ESM-2 (−0.20 after its cutoff).
 - **`Context` is leak-free by construction**: a predictor is only ever handed
   time bins *before* the one being scored, so lookahead is not possible by
   accident.
@@ -463,6 +463,48 @@ print(report)
 
 The point of Level 6 is not to win a benchmark. It is that a claim about
 predicting evolution should be *hard to make by mistake*.
+
+> These numbers are measured on real H3N2 hemagglutinin (900 sequences, 2013–2022,
+> 220k candidate mutations). An earlier draft reported 0.861/0.613 — computed, we
+> later found, on a **corrupted multiple alignment** (a silent bug that packed every
+> protein as DNA, turning non-ACGT residues into `N`). The bug is fixed, the model
+> retrained on clean alignments, and every figure above re-measured. The two
+> honesty tools in this section are what surfaced the corruption in the first place.
+
+### Filter another tool's hits by reality (Level 6 — v8.0)
+
+`evalkit` judges a whole *predictor*. `RealityCheck` judges individual *mutations*:
+of the "concerning" variants some other tool (EVEscape, ESM-2, a DMS assay) hands
+you, which ones have **real traction in the population**? It plugs in behind any of
+them.
+
+```python
+from bioforge import RealityCheck
+
+rc = RealityCheck(sequences, dates)          # real, dated sequences
+survivors = rc.filter(candidates_from_another_tool)   # keeps only what has traction
+print(rc.check("N145K"))
+```
+
+- **Two tiers, never mixed.** `OBSERVADO` — the mutation already exists in the
+  record, so we return its real trajectory (this is *evidence*). `ESTIMADO` — never
+  seen, so the trained model *estimates* it (this is a *conjecture*, and it says so).
+- **Each tier's reliability is measured separately** and travels with the verdict.
+  On real H3N2: observed **AUC 0.97** (survival of already-circulating variants is
+  largely *seen*, not guessed), estimated **AUC 0.72** (genuine prediction for the
+  novel ones).
+- **"Survival" means reaching or holding real presence**, not "rising 5%". A variant
+  already at 98 % cannot rise but is the clearest survivor there is — scoring *rise*
+  would mark it a failure (ceiling effect). That is exactly the question you asked:
+  *would this mutation survive out there?*
+- **Calibrated** against the historical record: 0.70 means ≈70 % of past mutations
+  that scored ~0.70 went on to establish. **Resilient**: one malformed entry in a
+  batch never sinks the rest (it comes back `NO EVALUABLE`).
+
+> Coordinates note: positions are alignment-column indices of *your* data, not a
+> standard scheme (e.g. H3 numbering). If you paste `N145K` from a paper, the tool
+> tells you when the wildtype residue it expected there disagrees — a hint you are
+> in a different numbering.
 
 ### Full mutation analysis pipeline (DNA + protein)
 
