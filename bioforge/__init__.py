@@ -55,6 +55,7 @@ from .evolution import (
 )
 from .evalkit import Context, EvolutionBenchmark, Report
 from .genomemap import GenomeAligner, Mapping
+from .realitycheck import RealityCheck, Verdict
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
 
@@ -108,6 +109,9 @@ __all__ = [
     "EvolutionBenchmark",
     "Context",
     "Report",
+    # Filtro de realidad: ¿esta mutación sobreviviría? (L6, v8.0)
+    "RealityCheck",
+    "Verdict",
     # Linajes estables (Pango/autolin, v7.0)
     "designate_lineages",
     "escape_weights",
