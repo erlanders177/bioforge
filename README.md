@@ -35,6 +35,7 @@ section (with examples) further down.
 | **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
+| **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -62,7 +63,9 @@ combining them (especially the evolution front).
 | vs Biopython — load all in RAM | **~6.9× less memory** (115 MB vs 801 MB) · ~9.5× faster |
 | Compressed input | **`.gz` read transparently in C** (zlib, static-linked) |
 | FASTQ parsing — parallel (`n_threads=0`) | **~1.9× faster** than single-thread (500 K reads: 0.40 s → 0.21 s) — on par with `seqkit stats` single-threaded |
-| Evolution — mutation ranking | **cross-virus AUC ~0.77–0.95** on flu HA, beats a linear model on all 6 held-out tests (trained model runs in pure NumPy) |
+| Evolution — mutation ranking | **cross-virus AUC ~0.74–0.91** on flu HA, beats the best trivial axis on all 6 held-out tests (trained model runs in pure NumPy) |
+| Evolution — judged honestly (Level 6) | on real H3N2: model **AUC 0.837 global / 0.631 on novel mutations**, over the trivial mutability bar (0.793) — *measured by our own `EvolutionBenchmark`* |
+| Data integrity | **anti-corruption guard** refuses to mis-encode a mistyped sequence · property-based invariants over both alphabets · `tools/integrity_check.py` certificate |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 
 ---
@@ -71,6 +74,12 @@ combining them (especially the evolution front).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
+│  Level 6 — evalkit · realitycheck        Honest judgment      │
+│  judge a predictor · filter mutations by real-world traction  │
+├──────────────────────────────────────────────────────────────┤
+│  Level 5 — evolution · msa · fetch · ai  Evolution predictor  │
+│  mutation ranking · stable lineages · trained MLP (pure NumPy)│
+├──────────────────────────────────────────────────────────────┤
 │  Level 4 — genomemap · minimizers · refindex   Genome mapper  │
 │  seed-chain-align (minimap2-style) · whole pipeline in C      │
 ├──────────────────────────────────────────────────────────────┤
@@ -589,6 +598,11 @@ tests/
   test_refindex.py      L4: reference index lookup
   test_genomemap.py     L4: seed-chain-align, multi-contig, PAF, robustness
   test_cindex.py        L4: opaque C index parity (bio_index_build)
+  test_msa.py           MSA: no-corruption invariant (DNA + protein)
+  test_evolution.py     L5: ranking, stable lineages, trained model
+  test_evalkit.py       L6: the honest judge (baselines, leakage, regimes)
+  test_realitycheck.py  L6: mutation reality filter (observed vs estimated)
+  test_integrity.py     Anti-corruption net: property-based, both alphabets
 
 docs/
   architecture.md       Design rules, levels, encoding details
@@ -657,7 +671,8 @@ python check.py
 | Limitation | Detail |
 |------------|--------|
 | Aligner memory (full NW) | O(m·n) matrix — sequences > 15 000 bp may exhaust RAM. Use `band=N` for large sequences. |
-| Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. |
+| Protein auto-detection | Sequences without E/F/I/L/P/Q/* are classified as nucleotides. Use `force_type=SeqType.PROTEIN` to override. Since v8.0, mis-encoding is no longer silent: the encoder **refuses** a sequence that is mostly invalid for its type (would-be corruption raises `SequenceValueError`). |
+| RealityCheck coordinates | Positions are alignment-column indices of *your* data, not a standard scheme (e.g. H3 numbering). The tool warns when the wildtype it expected at a position disagrees with what you passed. |
 | C engine | Ships pre-compiled in the PyPI wheels. Building from source on an unsupported platform needs GCC (`python bioforge/engine/build.py`). |
 | Banded NW (NumPy fallback) | Without the C engine, banded NW uses the full matrix with NEG_INF masking — same result, standard RAM. |
 | Genome mapper — tested scale | Benchmarked on par with minimap2 on multi-core and ~1.18× behind single-threaded at *E. coli* scale with simulated reads (`tools/bench_vs_minimap2.py`). Not yet validated at human-genome scale or on real noisy data, where minimap2 may pull ahead. |
@@ -693,8 +708,13 @@ python check.py
 - [x] Multiple sequence alignment (center-star) — `align_multiple` *(v6.3)*
 - [x] **Evolution front — mutation ranking, stable lineages, honest backtesting** — `bioforge-evolution` *(v7.0)*
 - [x] **Trained mutation-ranker** (MLP in pure NumPy, no PyTorch at inference) + optional ESM-2 axis *(v7.0)*
+- [x] **Level 6 — honest predictor judge** `EvolutionBenchmark` (trivial-baseline bar · novel-regime split · bootstrap CI · pretraining-leakage detector) *(v8.0)*
+- [x] **Level 6 — reality filter** `RealityCheck`: rank another tool's mutation hits by real-world traction, observed vs estimated tiers *(v8.0)*
+- [x] **Anti-corruption integrity net** — encode guard + property-based invariants (both alphabets) + `tools/integrity_check.py` *(v8.0)*
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
+- [ ] **Phase 2 — desktop application** (local, no servers, privacy-first: your DNA never leaves the machine)
+- [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 
 ---
 

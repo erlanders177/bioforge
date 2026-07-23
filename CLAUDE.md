@@ -4,7 +4,7 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **5.0.0**,
+Es un paquete instalable: `from bioforge import ...` (versión actual **8.0.0**,
 publicada en PyPI con wheels nativos Win/Linux/Mac).
 
 Niveles implementados y validados:
