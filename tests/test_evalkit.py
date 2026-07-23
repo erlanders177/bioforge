@@ -65,6 +65,17 @@ def test_caza_al_predictor_aleatorio():
     assert "NO" in r.verdict or "no" in r.verdict
 
 
+def test_times_por_bin_consistente_con_n_bins():
+    """Regresión: self.times debe tener longitud nb (tiempo POR BIN), aun cuando
+    el usuario pasa n_bins ≠ nº de instantes. Si no, el detector de fuga indexa
+    self.times[bin] con un mapa temporal equivocado."""
+    s, d = _dated_protein()
+    for nbins in (None, 5, 8):
+        b = EvolutionBenchmark(s, d, n_bins=nbins)
+        assert len(b.times) == b.nb
+        assert np.all(np.diff(b.times) > 0)      # tiempos de bin, crecientes
+
+
 def test_el_liston_no_es_el_azar():
     """El listón debe ser el MEJOR eje trivial, nunca 0.5 — nuestro error de hoy."""
     b = _bench()

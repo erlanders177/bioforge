@@ -158,7 +158,13 @@ class EvolutionBenchmark:
                 f"(hay {self.nb}). Usa fechas más finas o n_bins.")
         self.freq = _freqs(arr, self.bins, self.nb, symbols)
         self.symbols = symbols
-        self.times = np.unique(t)
+        # tiempo representativo POR BIN (longitud nb), no por instante único: si el
+        # usuario pasa n_bins, #bins ≠ #tiempos y self.times[bin] debe seguir siendo
+        # el tiempo de ESE bin (lo usa el detector de fuga). Con n_bins=None ambos
+        # coinciden. Media del bin; NaN si quedara vacío.
+        self.times = np.array(
+            [t[self.bins == b].mean() if np.any(self.bins == b) else np.nan
+             for b in range(self.nb)])
         self._rise = rise
         self._minor = min_freq_rise
         self._real = np.isin(symbols, _AA20)
