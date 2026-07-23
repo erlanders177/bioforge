@@ -36,7 +36,7 @@ las mutaciones que sacaron ~0.70 en el pasado, aproximadamente el 70% despegó. 
 logit crudo de la red no significaría nada.
 """
 
-from typing import Callable, NamedTuple, Optional, Sequence
+from typing import NamedTuple, Optional, Sequence
 
 import numpy as np
 

@@ -272,7 +272,7 @@ class EvolutionBenchmark:
             verdict = ("APORTA solo en lo fácil: en mutaciones NUEVAS (donde contar no "
                        "sirve) se queda en el azar.")
         else:
-            verdict = f"APORTA de verdad: supera el listón trivial y aguanta en NUEVAS."
+            verdict = "APORTA de verdad: supera el listón trivial y aguanta en NUEVAS."
         return Report(auc=auc, auc_novel=auc_novel, skill_vs_naive=skill, ci95=ci,
                       best_trivial=best_val, best_trivial_name=best_name,
                       beats_trivial=beats, leakage=leak,

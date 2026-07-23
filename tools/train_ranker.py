@@ -68,8 +68,12 @@ RISE = 0.05                        # que sabe a qué distancia le preguntas → 
 MINOR = 0.5                        # aprender a persistir
 FEATURES = ["frecuencia", "conservacion", "mutabilidad", "crecimiento", "horizonte"]
 #                                              ↑ crecimiento = DETECTOR DE MENTIRAS:
-#      está medido que es ruido (AUC 0.42). Si el modelo le pone peso alto, el
-#      entrenamiento está roto y lo sabemos sin discutir.
+#      medido que en solitario es ruido (AUC ~0.42). ABLACIÓN (v8.0, proxy logístico,
+#      examen temporal held-out): quitarla mueve el AUC H3N2 +0.000 / H1N1 −0.006 /
+#      gripeB +0.007 → neutra (±0.007, nivel de ruido), ni ayuda ni estorba a la
+#      generalización. Se mantiene: cambiarla obligaría a re-medir todo sin ganancia.
+#      Que sea neutra (no dañina) confirma que el modelo NO se apoya en ella para
+#      generalizar. Reejecutar la ablación con el MLP queda para v8.1.
 
 
 def build_dataset(name, term, per_year=PER_YEAR, cache=True):
