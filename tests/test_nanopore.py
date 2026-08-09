@@ -12,10 +12,20 @@ import pytest
 from bioforge.nanopore import (
     SignalRead,
     detect_events,
+    kmer_levels,
     normalize_signal,
     random_pore_model,
     simulate_signal,
+    viterbi_decode,
 )
+
+
+def _identity(a: str, b: str) -> float:
+    """Fracción de bases coincidentes en la misma posición (0..1)."""
+    n = min(len(a), len(b))
+    if n == 0:
+        return 0.0
+    return sum(x == y for x, y in zip(a[:n], b[:n])) / max(len(a), len(b))
 
 
 # ── normalización ─────────────────────────────────────────────────────────────
@@ -108,3 +118,42 @@ def _di(dimer: str) -> int:
     """Índice base-4 de un di-mero (A=0 C=1 G=2 T=3), para armar pore models de test."""
     code = {"A": 0, "C": 1, "G": 2, "T": 3}
     return code[dimer[0]] * 4 + code[dimer[1]]
+
+
+# ── Viterbi: el decodificador (matemáticas, no IA) ────────────────────────────
+
+def test_viterbi_recupera_secuencia_sin_ruido():
+    """Con niveles ideales (sin ruido) debe recuperar la secuencia EXACTA."""
+    k = 3
+    pm = random_pore_model(k, seed=5)
+    seq = "ACGTAGCTAGCATCGATCGTACGATCGATG"    # sin homopolímeros largos
+    levels = kmer_levels(seq, pm, k)           # la 'verdad' de nivel
+    out = viterbi_decode(levels, pm, k, sigma=0.5)
+    assert len(out) == len(seq)                # T eventos → T+k-1 bases
+    assert _identity(out, seq) == 1.0          # reconstrucción perfecta
+
+
+def test_viterbi_longitud_correcta():
+    k = 3
+    pm = random_pore_model(k, seed=6)
+    levels = kmer_levels("ACGTACGTACGT", pm, k)   # 12 bases → 10 niveles
+    out = viterbi_decode(levels, pm, k)
+    assert len(out) == 10 + k - 1                 # eventos + k - 1
+
+def test_viterbi_aguanta_ruido_moderado():
+    """Con ruido moderado en los niveles, la mayoría de bases siguen bien."""
+    k = 3
+    pm = random_pore_model(k, seed=7)
+    seq = "ACGTAGCTAGCATCGATCGTACGATCGATGCATGCAT"
+    levels = kmer_levels(seq, pm, k)
+    rng = np.random.default_rng(0)
+    ruidoso = levels + rng.normal(0, 0.25, levels.size)
+    out = viterbi_decode(ruidoso, pm, k, sigma=0.4)
+    assert _identity(out, seq) > 0.85          # el contexto corrige casi todo
+
+def test_viterbi_valida_tamano_del_pore_model():
+    with pytest.raises(ValueError):
+        viterbi_decode(np.zeros(5), random_pore_model(3), k=2)   # 4**2≠4**3
+
+def test_viterbi_vacio():
+    assert viterbi_decode(np.array([]), random_pore_model(3), k=3) == ""

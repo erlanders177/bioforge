@@ -39,6 +39,9 @@ __all__ = [
     "normalize_signal",
     "detect_events",
     "simulate_signal",
+    "random_pore_model",
+    "kmer_levels",
+    "viterbi_decode",
 ]
 
 # Bases canónicas ↔ código 0..3 (mismo criterio que el resto del motor: A C G T).
@@ -213,3 +216,80 @@ def random_pore_model(k: int, *, seed: int = 0,
     """
     rng = np.random.default_rng(seed)
     return rng.uniform(low, high, size=4 ** k)
+
+
+def kmer_levels(sequence: str, pore_model: np.ndarray, k: int) -> np.ndarray:
+    """Corriente ideal por k-mero de una secuencia (los niveles que 'vería' el poro).
+
+    Útil para validar el decodificador sin el ruido de la detección de eventos: es la
+    verdad de nivel que Viterbi debería recuperar. Vectorizado (Horner base-4)."""
+    codes = np.array([_BASE_CODE[b] for b in sequence.upper() if b in _BASE_CODE])
+    if codes.size < k:
+        raise ValueError(f"la secuencia debe tener al menos k={k} bases")
+    win = np.lib.stride_tricks.sliding_window_view(codes, k)
+    powers = 4 ** np.arange(k - 1, -1, -1)
+    return pore_model[win @ powers]
+
+
+def viterbi_decode(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
+                   sigma: float = 1.0) -> str:
+    """Decodifica una secuencia de niveles de corriente en bases — VITERBI, NumPy puro.
+
+    El estado oculto es el k-mero que hay en el poro (4**k estados). Al avanzar el ADN
+    una base, el k-mero se desplaza: sale la base 5' más vieja y entra una nueva por el
+    3'. Eso restringe las transiciones —de cada k-mero solo se puede ir a 4 (los que
+    comparten k−1 bases)— que es justo lo que hace el problema resoluble pese a la
+    ambigüedad de un nivel suelto. La emisión es gaussiana: qué probable es ver la
+    corriente observada si en el poro estuviera el k-mero s (media = pore_model[s]).
+
+    Viterbi elige el camino de k-meros de máxima verosimilitud. El bucle es sobre
+    EVENTOS (dependencia de datos secuencial, inevitable —como el traceback del
+    alineador—); todo el trabajo por estado va vectorizado sobre los 4**k a la vez.
+
+    Modelo v1 "solo-avance": un evento = un paso de k-mero. No modela todavía
+    'quedarse' (mismo k-mero varios eventos) ni 'saltar'; por eso los homopolímeros
+    (repeticiones) no se pueden contar —limitación FÍSICA, no del código—. Se
+    documentará y se medirá con honestidad.
+
+    Devuelve la cadena de bases (longitud = nº de eventos + k − 1).
+    Memoria O(T·4**k): mantener k pequeño (real: 5-6) es parte del diseño edge.
+    """
+    m = np.asarray(event_means, dtype=np.float64).ravel()
+    M = 4 ** k
+    if pore_model.shape[0] != M:
+        raise ValueError(f"pore_model debe tener 4**k = {M} niveles, "
+                         f"tiene {pore_model.shape[0]}")
+    T = m.size
+    if T == 0:
+        return ""
+
+    # log-emisión gaussiana (constantes fuera; solo importa el orden) → (T, M)
+    inv2s2 = 1.0 / (2.0 * sigma * sigma)
+    emit = -inv2s2 * (m[:, None] - pore_model[None, :]) ** 2
+
+    # los 4 predecesores de cada estado t: t//4 + j·(M/4), j=0..3 (base que salió)
+    step = M // 4
+    preds = (np.arange(M) // 4)[:, None] + (np.arange(4) * step)[None, :]   # (M,4)
+    ar = np.arange(M)
+
+    V = emit[0].copy()                          # prior uniforme (constante, se ignora)
+    back = np.empty((T, M), dtype=np.intp)
+    back[0] = ar
+    for i in range(1, T):                       # bucle sobre eventos (data-dependencia)
+        cand = V[preds]                         # (M,4): mejor prev por predecesor
+        best = cand.argmax(axis=1)
+        V = emit[i] + cand[ar, best]
+        back[i] = preds[ar, best]
+
+    # backtrack del camino de k-meros
+    path = np.empty(T, dtype=np.intp)
+    path[-1] = int(V.argmax())
+    for i in range(T - 1, 0, -1):
+        path[i - 1] = back[i, path[i]]
+
+    # k-meros → bases: el primero aporta k bases; cada siguiente, su última base
+    first = int(path[0])
+    first_bases = [(first // (4 ** (k - 1 - j))) % 4 for j in range(k)]
+    rest = (path[1:] % 4).tolist()
+    codes = first_bases + rest
+    return "".join(_BASES[c] for c in codes)
