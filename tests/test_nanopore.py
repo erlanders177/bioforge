@@ -6,6 +6,8 @@ desde un pore model conocido). NO afirman precisión sobre señal real — esa c
 exige datos reales de Oxford Nanopore y se medirá aparte antes de tocar v9.0.
 """
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -201,3 +203,59 @@ def test_circulo_completo_estimar_y_decodificar():
     tl = verdad[kmer_indices(test, k)] + rng.normal(0, 0.15, len(test) - k + 1)
     out = viterbi_decode(tl, modelo, k, sigma=0.4)
     assert _identity(out, test) > 0.9              # el círculo se cierra en sintético
+
+
+# ── Lector POD5 (dependencia opcional 'pod5') ─────────────────────────────────
+
+def test_read_pod5_sin_libreria_mensaje_claro(monkeypatch):
+    """Sin la librería opcional, debe fallar con un mensaje accionable, no críptico."""
+    import bioforge.nanopore as nano
+    monkeypatch.setitem(sys.modules, "pod5", None)      # simula 'pod5' ausente
+    with pytest.raises(ImportError, match="bioforge\\[nanopore\\]"):
+        list(nano.read_pod5("cualquiera.pod5"))
+
+
+def test_read_pod5_ida_y_vuelta(tmp_path):
+    """Con la librería presente: escribe un POD5 mínimo y compruébalo con NUESTRO
+    lector (se salta si 'pod5' no está instalado — es un extra opcional)."""
+    pod5 = pytest.importorskip("pod5")
+    import datetime
+    import uuid
+
+    from pod5.pod5_types import (
+        Calibration,
+        EndReason,
+        EndReasonEnum,
+        Pore,
+        Read,
+        RunInfo,
+    )
+    from bioforge.nanopore import read_pod5
+
+    sig = (np.sin(np.arange(1500) / 20) * 100 + 300).astype(np.int16)
+    t0 = datetime.datetime(2020, 1, 1)
+    run = RunInfo(acquisition_id="a", acquisition_start_time=t0, adc_max=4095,
+                  adc_min=-4096, context_tags={}, experiment_name="e",
+                  flow_cell_id="f", flow_cell_product_code="p", protocol_name="n",
+                  protocol_run_id="r", protocol_start_time=t0, sample_id="s",
+                  sample_rate=4000, sequencing_kit="k", sequencer_position="x",
+                  sequencer_position_type="t", software="w", system_name="sn",
+                  system_type="st", tracking_id={})
+    rd = Read(read_id=uuid.uuid4(), pore=Pore(channel=1, well=1, pore_type="p"),
+              calibration=Calibration(offset=3.0, scale=0.2), read_number=1,
+              start_sample=0, median_before=100.0,
+              end_reason=EndReason(reason=EndReasonEnum.SIGNAL_POSITIVE, forced=False),
+              run_info=run, signal=sig)
+    p = tmp_path / "mini.pod5"
+    with pod5.Writer(str(p)) as w:
+        w.add_read(rd)
+
+    got = list(read_pod5(str(p)))
+    assert len(got) == 1
+    r0 = got[0]
+    assert r0.n_samples == sig.size
+    assert np.array_equal(np.asarray(r0.signal), sig)   # señal intacta
+    assert r0.sample_rate == 4000.0
+    # calibración preservada (POD5 guarda scale en float32 → comparación aproximada)
+    assert r0.scale == pytest.approx(0.2, abs=1e-6)
+    assert r0.offset == pytest.approx(3.0, abs=1e-6)

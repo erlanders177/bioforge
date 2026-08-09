@@ -51,6 +51,12 @@ ai = [
     "torch>=2.0",
     "transformers>=4.30",
 ]
+nanopore = [
+    # Lectura de señal cruda de nanoporo (POD5 moderno, FAST5 antiguo). OPCIONAL —
+    # solo para ingerir el archivo; toda la CIENCIA (normalizar, eventos, pore model,
+    # Viterbi) es NumPy puro en bioforge.nanopore, sin estas dependencias.
+    "pod5>=0.3",
+]
 
 [project.urls]
 Homepage = "https://github.com/erlanders177/bioforge"

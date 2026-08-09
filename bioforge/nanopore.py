@@ -36,6 +36,7 @@ import numpy as np
 __all__ = [
     "SignalRead",
     "EventTable",
+    "read_pod5",
     "normalize_signal",
     "detect_events",
     "simulate_signal",
@@ -73,6 +74,39 @@ class SignalRead(NamedTuple):
     def to_picoamperes(self) -> np.ndarray:
         """Corriente en pA aplicando la calibración del aparato (vectorizado)."""
         return self.scale * (self.signal.astype(np.float64) + self.offset)
+
+
+def read_pod5(path: str):
+    """Lee un archivo POD5 (formato moderno de Oxford Nanopore) → iterador de
+    ``SignalRead``, en streaming (una lectura cada vez, RAM acotada).
+
+    Leer POD5 es FONTANERÍA (un contenedor Apache Arrow), no ciencia: reimplementarlo
+    a mano no aportaría nada y sería un pozo sin fondo. Por eso se apoya en la librería
+    oficial ``pod5`` como DEPENDENCIA OPCIONAL —igual que el eje ESM-2 con torch—. El
+    núcleo de BioForge sigue siendo solo-NumPy; esto solo se activa si el usuario va a
+    tocar señal cruda e instala el extra:  ``pip install "bioforge[nanopore]"``.
+
+    Falla con un mensaje accionable si la librería no está, en vez de un ImportError
+    críptico. Toda la CIENCIA de después (normalizar, eventos, pore model, Viterbi) es
+    nuestra y en NumPy puro.
+    """
+    try:
+        import pod5
+    except ImportError as exc:                       # dep opcional ausente
+        raise ImportError(
+            "leer POD5 necesita la librería 'pod5' (fontanería del formato). "
+            "Instala el extra opcional:  pip install \"bioforge[nanopore]\"") from exc
+
+    with pod5.Reader(str(path)) as reader:
+        for rd in reader.reads():                    # bucle por LECTURA, no por muestra
+            cal = rd.calibration
+            yield SignalRead(
+                signal=np.asarray(rd.signal),        # corriente cruda int16
+                read_id=str(rd.read_id),
+                sample_rate=float(rd.run_info.sample_rate),
+                offset=float(cal.offset),            # pA = scale·(señal + offset)
+                scale=float(cal.scale),
+            )
 
 
 class EventTable(NamedTuple):
