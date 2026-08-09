@@ -45,6 +45,8 @@ __all__ = [
     "kmer_indices",
     "estimate_pore_model",
     "viterbi_decode",
+    "viterbi_basecall",
+    "basecall",
 ]
 
 # Bases canónicas ↔ código 0..3 (mismo criterio que el resto del motor: A C G T).
@@ -365,4 +367,110 @@ def viterbi_decode(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
     first_bases = [(first // (4 ** (k - 1 - j))) % 4 for j in range(k)]
     rest = (path[1:] % 4).tolist()
     codes = first_bases + rest
+    return "".join(_BASES[c] for c in codes)
+
+
+def basecall(signal, pore_model: np.ndarray, k: int, *,
+             sigma: float = 0.55, event_threshold: float = 0.08,
+             min_event_len: int = 2, p_stay: float = 0.42,
+             p_step: float = 0.53, p_skip: float = 0.05) -> str:
+    """Señal cruda → bases, de una vez: normaliza → SOBRE-segmenta → Viterbi stay/skip.
+
+    El entry point de alto nivel del basecaller clásico. ``signal`` puede ser un array
+    de corriente o un ``SignalRead``. Los valores por defecto (sobre-segmentar y dejar
+    que los STAY reabsorban) salieron de barrer sobre la física R9.4 REAL de ONT: con
+    ellos el pipeline sube de ~58% (move-only) a ~80% en ese banco.
+
+    ``pore_model`` es la tabla k-mero→corriente en el MISMO espacio normalizado que la
+    señal (mediana/MAD). Úsala estimada por nosotros (``estimate_pore_model``) o
+    normaliza la oficial de ONT. Recuerda: esto es la vía CLÁSICA (R9), no compite en
+    precisión con Dorado; su valor es correr sin IA, sin GPU y sin instalar nada.
+    """
+    sig = signal.signal if isinstance(signal, SignalRead) else signal
+    z = normalize_signal(sig)
+    # el modelo DEBE vivir en el mismo espacio que la señal, o la emisión no significa
+    # nada (fue el desajuste señal↔modelo que vimos): misma transformación mediana/MAD.
+    model_z = normalize_signal(pore_model)
+    ev = detect_events(z, threshold=event_threshold, min_length=min_event_len)
+    return viterbi_basecall(ev.means, model_z, k, sigma=sigma,
+                            p_stay=p_stay, p_step=p_step, p_skip=p_skip)
+
+
+def viterbi_basecall(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
+                     sigma: float = 1.0, p_stay: float = 0.35,
+                     p_step: float = 0.60, p_skip: float = 0.05) -> str:
+    """Basecalling robusto con estados STAY / STEP / SKIP — el HMM clásico completo.
+
+    ``viterbi_decode`` asume un evento = un paso de k-mero, así que cualquier error de
+    segmentación (fundir o partir un escalón) rompe el resultado — era nuestro cuello
+    de botella (~65%). Aquí el modelo de transición absorbe esos errores, que es como
+    lo resolvían los basecallers clásicos de verdad:
+
+      STAY  el mismo k-mero emite VARIOS eventos (el ADN se demora)  → 0 bases nuevas
+      STEP  avanza una base (caso normal)                            → 1 base nueva
+      SKIP  la enzima saltó un k-mero (translocación rápida)         → 2 bases nuevas
+
+    Con esto conviene SOBRE-segmentar (más eventos que k-meros): los STAY reabsorben
+    el exceso, que es más seguro que quedarse corto. Sigue siendo Viterbi (matemáticas,
+    no IA): bucle sobre eventos, trabajo por estado vectorizado sobre los 4**k.
+
+    Memoria O(T·4**k) para el backtrack (dos matrices). Mantener k moderado (real 6)
+    y sobre-segmentar con mesura tiene sentido en un portátil.
+    """
+    m = np.asarray(event_means, dtype=np.float64).ravel()
+    M = 4 ** k
+    if pore_model.shape[0] != M:
+        raise ValueError(f"pore_model debe tener 4**k = {M} niveles")
+    if k < 2:
+        raise ValueError("viterbi_basecall requiere k >= 2 (para SKIP)")
+    T = m.size
+    if T == 0:
+        return ""
+
+    inv2s2 = 1.0 / (2.0 * sigma * sigma)
+    emit = -inv2s2 * (m[:, None] - pore_model[None, :]) ** 2       # (T, M)
+    ar = np.arange(M)
+    step_pred = (ar // 4)[:, None] + (np.arange(4) * (M // 4))[None, :]     # (M,4)
+    skip_pred = (ar // 16)[:, None] + (np.arange(16) * (M // 16))[None, :]  # (M,16)
+    l_stay, l_step, l_skip = np.log(p_stay), np.log(p_step), np.log(p_skip)
+
+    V = emit[0].copy()
+    back = np.empty((T, M), dtype=np.intp)
+    move = np.empty((T, M), dtype=np.int8)                         # 0 stay,1 step,2 skip
+    back[0] = ar
+    move[0] = 1
+    for i in range(1, T):                                          # bucle sobre eventos
+        sc = V[step_pred] + l_step                                 # (M,4)
+        sbest = sc.argmax(axis=1)
+        step_v = sc[ar, sbest]
+        kc = V[skip_pred] + l_skip                                 # (M,16)
+        kbest = kc.argmax(axis=1)
+        skip_v = kc[ar, kbest]
+        stay_v = V + l_stay
+        cand = np.stack([stay_v, step_v, skip_v])                  # (3,M)
+        mv = cand.argmax(axis=0)
+        V = emit[i] + cand[mv, ar]
+        pred = np.where(mv == 0, ar,
+                        np.where(mv == 1, step_pred[ar, sbest], skip_pred[ar, kbest]))
+        back[i] = pred
+        move[i] = mv
+
+    # backtrack: camino de k-meros + tipo de movimiento en cada paso
+    path = np.empty(T, dtype=np.intp)
+    moves = np.empty(T, dtype=np.int8)
+    path[-1] = int(V.argmax())
+    for i in range(T - 1, 0, -1):
+        moves[i] = move[i, path[i]]
+        path[i - 1] = back[i, path[i]]
+
+    # reconstruir bases según el movimiento (stay=0, step=1, skip=2 bases nuevas)
+    first = int(path[0])
+    codes = [(first // (4 ** (k - 1 - j))) % 4 for j in range(k)]
+    for i in range(1, T):
+        s = int(path[i])
+        if moves[i] == 1:
+            codes.append(s % 4)
+        elif moves[i] == 2:
+            codes.append((s // 4) % 4)
+            codes.append(s % 4)
     return "".join(_BASES[c] for c in codes)

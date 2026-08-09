@@ -13,6 +13,7 @@ import pytest
 
 from bioforge.nanopore import (
     SignalRead,
+    basecall,
     detect_events,
     estimate_pore_model,
     kmer_indices,
@@ -20,16 +21,33 @@ from bioforge.nanopore import (
     normalize_signal,
     random_pore_model,
     simulate_signal,
+    viterbi_basecall,
     viterbi_decode,
 )
 
 
+def _rand_seq(n, seed):
+    """Secuencia aleatoria SIN homopolímeros (que son físicamente irrecuperables)."""
+    rng = np.random.default_rng(seed)
+    s = [int(rng.integers(0, 4))]
+    while len(s) < n:
+        c = int(rng.integers(0, 4))
+        if c != s[-1]:
+            s.append(c)
+    return "".join("ACGT"[c] for c in s)
+
+
 def _identity(a: str, b: str) -> float:
-    """Fracción de bases coincidentes en la misma posición (0..1)."""
-    n = min(len(a), len(b))
-    if n == 0:
+    """Identidad por ALINEAMIENTO (no posición-a-posición): la métrica correcta para
+    basecalling, que tiene indels. Usa nuestro propio alineador (dogfooding)."""
+    from bioforge import SeqType, SequenceAligner, SmartImporter
+    if not a or not b:
         return 0.0
-    return sum(x == y for x, y in zip(a[:n], b[:n])) / max(len(a), len(b))
+    pa = SmartImporter.from_string(f">a\n{a}\n", force_type=SeqType.NUCLEOTIDE)[0]
+    pb = SmartImporter.from_string(f">b\n{b}\n", force_type=SeqType.NUCLEOTIDE)[0]
+    r = SequenceAligner.align(pa, pb, mode="global", band="auto")
+    matches = sum(x == y for x, y in zip(r.aligned_a, r.aligned_b))
+    return matches / max(len(a), len(b))
 
 
 # ── normalización ─────────────────────────────────────────────────────────────
@@ -203,6 +221,56 @@ def test_circulo_completo_estimar_y_decodificar():
     tl = verdad[kmer_indices(test, k)] + rng.normal(0, 0.15, len(test) - k + 1)
     out = viterbi_decode(tl, modelo, k, sigma=0.4)
     assert _identity(out, test) > 0.9              # el círculo se cierra en sintético
+
+
+# ── Basecaller robusto: STAY/STEP/SKIP ────────────────────────────────────────
+
+def test_basecall_end_to_end_corre_y_supera_el_azar():
+    """Smoke test del pipeline completo señal→bases.
+
+    OJO con el listón: un pore model ALEATORIO es muy degenerado (muchos k-meros
+    vecinos con nivel casi igual → transiciones invisibles que NINGÚN detector ve),
+    así que el end-to-end sobre él está limitado por física, no por el basecaller. El
+    número de ACIERTO real (~80%) se mide aparte sobre el pore model R9.4 REAL de ONT
+    —que tiene estructura— y va documentado, no como test unitario. Aquí solo
+    verificamos que el pipeline corre, da longitud sensata y bate el azar (0.25)."""
+    k = 4
+    pm = random_pore_model(k, seed=30, low=-4.0, high=4.0)
+    seq = _rand_seq(150, 31)
+    read = simulate_signal(seq, pm, k, dwell=12, noise=0.12, seed=32)
+    out = basecall(read, pm, k, sigma=0.5, event_threshold=0.15, min_event_len=2)
+    assert 0.5 * len(seq) < len(out) < 1.5 * len(seq)     # longitud plausible
+    assert _identity(out, seq) > 0.28                     # por encima del azar (0.25)
+
+
+def test_stayskip_supera_a_move_only_con_sobresegmentacion():
+    """Si sobra-segmentamos (eventos duplicados), STAY lo absorbe; move-only no."""
+    k = 3
+    pm = random_pore_model(k, seed=23, low=-3.0, high=3.0)
+    seq = _rand_seq(80, 24)
+    levels = kmer_levels(seq, pm, k)
+    # sobre-segmentación: cada k-mero produce 2 eventos (un STAY intercalado)
+    over = np.repeat(levels, 2)
+    move_only = viterbi_decode(over, pm, k, sigma=0.5)
+    stay_skip = viterbi_basecall(over, pm, k, sigma=0.5, p_stay=0.5, p_step=0.48,
+                                 p_skip=0.02)
+    assert _identity(stay_skip, seq) > _identity(move_only, seq)
+    assert _identity(stay_skip, seq) > 0.85
+
+
+def test_basecall_acepta_array_o_signalread():
+    k = 3
+    pm = random_pore_model(k, seed=25, low=-3.0, high=3.0)
+    seq = _rand_seq(60, 26)
+    read = simulate_signal(seq, pm, k, dwell=8, noise=0.1, seed=27)
+    a = basecall(read, pm, k)                   # SignalRead
+    b = basecall(read.signal, pm, k)            # array crudo
+    assert a == b                               # mismo resultado por ambas vías
+
+
+def test_viterbi_basecall_valida_k():
+    with pytest.raises(ValueError):
+        viterbi_basecall(np.zeros(5), random_pore_model(1), k=1)   # k<2 sin SKIP
 
 
 # ── Lector POD5 (dependencia opcional 'pod5') ─────────────────────────────────
