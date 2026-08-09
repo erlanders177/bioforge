@@ -41,6 +41,8 @@ __all__ = [
     "simulate_signal",
     "random_pore_model",
     "kmer_levels",
+    "kmer_indices",
+    "estimate_pore_model",
     "viterbi_decode",
 ]
 
@@ -229,6 +231,43 @@ def kmer_levels(sequence: str, pore_model: np.ndarray, k: int) -> np.ndarray:
     win = np.lib.stride_tricks.sliding_window_view(codes, k)
     powers = 4 ** np.arange(k - 1, -1, -1)
     return pore_model[win @ powers]
+
+
+def kmer_indices(sequence: str, k: int) -> np.ndarray:
+    """Índices base-4 de los k-meros deslizantes de una secuencia (A=0..T=3)."""
+    codes = np.array([_BASE_CODE[b] for b in sequence.upper() if b in _BASE_CODE])
+    if codes.size < k:
+        raise ValueError(f"la secuencia debe tener al menos k={k} bases")
+    win = np.lib.stride_tricks.sliding_window_view(codes, k)
+    return win @ (4 ** np.arange(k - 1, -1, -1))
+
+
+def estimate_pore_model(event_means: np.ndarray, kmer_idx: np.ndarray, k: int, *,
+                        min_count: int = 1) -> np.ndarray:
+    """Estima el pore model (corriente media por k-mero) desde señal ETIQUETADA.
+
+    Esta es la pieza que nos hace INDEPENDIENTES: en vez de copiar la tabla del
+    fabricante, la aprendemos de datos —eventos ya asignados a su k-mero (por una
+    alineación a una referencia conocida)—. Y como se estima en el MISMO espacio
+    normalizado que la señal, resuelve de raíz el desajuste de escala señal↔modelo.
+
+    Es un promedio por grupo, vectorizado con ``bincount`` (sin bucles por evento):
+    para cada k-mero, la media de las corrientes observadas cuando estaba en el poro.
+    Los k-meros no vistos (o con < ``min_count`` ejemplos) caen a la media global —
+    un respaldo neutro, nunca un hueco que rompa el decodificador.
+
+    event_means : (E,) corriente media de cada evento (señal normalizada).
+    kmer_idx    : (E,) índice base-4 del k-mero de cada evento (la etiqueta).
+    """
+    M = 4 ** k
+    m = np.asarray(event_means, dtype=np.float64).ravel()
+    idx = np.asarray(kmer_idx, dtype=np.intp).ravel()
+    sums = np.bincount(idx, weights=m, minlength=M)
+    counts = np.bincount(idx, minlength=M)
+    model = np.full(M, m.mean() if m.size else 0.0)     # respaldo: media global
+    seen = counts >= min_count
+    model[seen] = sums[seen] / counts[seen]
+    return model
 
 
 def viterbi_decode(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,

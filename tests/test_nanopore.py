@@ -12,6 +12,8 @@ import pytest
 from bioforge.nanopore import (
     SignalRead,
     detect_events,
+    estimate_pore_model,
+    kmer_indices,
     kmer_levels,
     normalize_signal,
     random_pore_model,
@@ -157,3 +159,45 @@ def test_viterbi_valida_tamano_del_pore_model():
 
 def test_viterbi_vacio():
     assert viterbi_decode(np.array([]), random_pore_model(3), k=3) == ""
+
+
+# ── Estimar nuestro propio pore model + el CÍRCULO COMPLETO ───────────────────
+
+def test_estima_el_pore_model_desde_etiquetas():
+    """Recupera la tabla del fabricante desde datos etiquetados (con ruido)."""
+    k = 3
+    verdad = random_pore_model(k, seed=8)
+    seq = "ACGTAGCTAGCATCGATCGTACGATCGATG" * 3          # cubre muchos k-meros
+    idx = kmer_indices(seq, k)
+    rng = np.random.default_rng(0)
+    niveles = verdad[idx] + rng.normal(0, 0.1, idx.size)  # 'medidos' con ruido
+    est = estimate_pore_model(niveles, idx, k)
+    vistos = np.bincount(idx, minlength=4 ** k) > 0
+    assert np.allclose(est[vistos], verdad[vistos], atol=0.15)   # recupera el modelo
+
+
+def test_kmeros_no_vistos_no_rompen():
+    k = 3
+    idx = kmer_indices("ACGTACGT", k)               # solo unos pocos k-meros
+    est = estimate_pore_model(np.zeros(idx.size), idx, k)
+    assert est.shape[0] == 4 ** k and np.all(np.isfinite(est))   # sin NaN ni huecos
+
+
+def test_circulo_completo_estimar_y_decodificar():
+    """El pipeline autocontenido en su forma más pura: sin conocer la tabla del
+    fabricante, la ESTIMAMOS de datos etiquetados y luego decodificamos señal nueva.
+    Sobre datos sintéticos con verdad conocida, debe cerrar el círculo con acierto
+    alto. (Sobre señal REAL el número será menor: eso se mide aparte.)"""
+    k = 3
+    verdad = random_pore_model(k, seed=9)
+    # 1) ENTRENAR: estimar el modelo de una secuencia etiquetada
+    train = "ACGTAGCTAGCATCGATCGTACGATCGATGCATGCATTAGC" * 2
+    tidx = kmer_indices(train, k)
+    rng = np.random.default_rng(1)
+    tlev = verdad[tidx] + rng.normal(0, 0.15, tidx.size)
+    modelo = estimate_pore_model(tlev, tidx, k)
+    # 2) DECODIFICAR: una secuencia NUEVA, con el modelo estimado
+    test = "TAGCATCGATCGTACGATCGATGCATGGCTAGCATCGA"
+    tl = verdad[kmer_indices(test, k)] + rng.normal(0, 0.15, len(test) - k + 1)
+    out = viterbi_decode(tl, modelo, k, sigma=0.4)
+    assert _identity(out, test) > 0.9              # el círculo se cierra en sintético
