@@ -55,6 +55,17 @@ from .evolution import (
 )
 from .evalkit import Context, EvolutionBenchmark, Report
 from .genomemap import GenomeAligner, Mapping
+from .nanopore import (
+    EventTable,
+    SignalRead,
+    basecall,
+    detect_events,
+    estimate_pore_model,
+    normalize_signal,
+    read_fast5,
+    read_pod5,
+    viterbi_basecall,
+)
 from .realitycheck import RealityCheck, Verdict
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
@@ -112,6 +123,16 @@ __all__ = [
     # Filtro de realidad: ¿esta mutación sobreviviría? (L6, v8.0)
     "RealityCheck",
     "Verdict",
+    # Nanoporo: señal cruda → bases, basecaller clásico NumPy puro (v9.0)
+    "SignalRead",
+    "EventTable",
+    "read_pod5",
+    "read_fast5",
+    "normalize_signal",
+    "detect_events",
+    "estimate_pore_model",
+    "viterbi_basecall",
+    "basecall",
     # Linajes estables (Pango/autolin, v7.0)
     "designate_lineages",
     "escape_weights",

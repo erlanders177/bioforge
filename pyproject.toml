@@ -54,8 +54,9 @@ ai = [
 nanopore = [
     # Lectura de señal cruda de nanoporo (POD5 moderno, FAST5 antiguo). OPCIONAL —
     # solo para ingerir el archivo; toda la CIENCIA (normalizar, eventos, pore model,
-    # Viterbi) es NumPy puro en bioforge.nanopore, sin estas dependencias.
-    "pod5>=0.3",
+    # Viterbi, basecalling) es NumPy puro en bioforge.nanopore, sin estas dependencias.
+    "pod5>=0.3",     # formato POD5 (trae h5py y numpy como dependencias)
+    "h5py>=3.0",     # formato FAST5 (HDF5)
 ]
 
 [project.urls]

@@ -37,6 +37,7 @@ __all__ = [
     "SignalRead",
     "EventTable",
     "read_pod5",
+    "read_fast5",
     "normalize_signal",
     "detect_events",
     "simulate_signal",
@@ -109,6 +110,45 @@ def read_pod5(path: str):
                 offset=float(cal.offset),            # pA = scale·(señal + offset)
                 scale=float(cal.scale),
             )
+
+
+def read_fast5(path: str):
+    """Lee un archivo FAST5 (formato antiguo de Oxford Nanopore) → ``SignalRead``.
+
+    FAST5 es HDF5; se apoya en ``h5py`` como DEPENDENCIA OPCIONAL (``bioforge[nanopore]``),
+    igual que POD5 en ``pod5`` — es fontanería del formato, no ciencia. Maneja los dos
+    sabores: single-read (un read por archivo, `/Raw/Reads/Read_N`) y multi-read
+    (`/read_<uuid>`). Calibración a pA: ``pA = (señal + offset)·range/digitisation``.
+    """
+    try:
+        import h5py
+    except ImportError as exc:
+        raise ImportError(
+            "leer FAST5 necesita la librería 'h5py' (fontanería del formato). "
+            "Instala el extra opcional:  pip install \"bioforge[nanopore]\"") from exc
+
+    def _emit(sig, rid, ch):
+        digit = float(ch["digitisation"]); rng = float(ch["range"])
+        return SignalRead(signal=np.asarray(sig), read_id=str(rid),
+                          sample_rate=float(ch["sampling_rate"]),
+                          offset=float(ch["offset"]), scale=rng / digit)
+
+    with h5py.File(str(path), "r") as f:
+        if "Raw" in f:                                   # single-read (antiguo)
+            ch = f["UniqueGlobalKey/channel_id"].attrs
+            for rk in f["Raw/Reads"]:                    # normalmente uno
+                g = f["Raw/Reads/" + rk]
+                rid = g.attrs["read_id"]
+                yield _emit(g["Signal"][:], rid.decode() if isinstance(rid, bytes)
+                            else rid, ch)
+        else:                                            # multi-read
+            for name in f:                               # bucle por read (no por muestra)
+                if not name.startswith("read_"):
+                    continue
+                g = f[name]
+                ch = g["channel_id"].attrs
+                rid = name[5:]
+                yield _emit(g["Raw/Signal"][:], rid, ch)
 
 
 class EventTable(NamedTuple):
@@ -371,28 +411,33 @@ def viterbi_decode(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
 
 
 def basecall(signal, pore_model: np.ndarray, k: int, *,
-             sigma: float = 0.55, event_threshold: float = 0.08,
+             sigma: float = 0.25, event_threshold: float = 0.12,
              min_event_len: int = 2, p_stay: float = 0.42,
              p_step: float = 0.53, p_skip: float = 0.05) -> str:
     """Señal cruda → bases, de una vez: normaliza → SOBRE-segmenta → Viterbi stay/skip.
 
     El entry point de alto nivel del basecaller clásico. ``signal`` puede ser un array
-    de corriente o un ``SignalRead``. Los valores por defecto (sobre-segmentar y dejar
-    que los STAY reabsorban) salieron de barrer sobre la física R9.4 REAL de ONT: con
-    ellos el pipeline sube de ~58% (move-only) a ~80% en ese banco.
+    de corriente o un ``SignalRead``. Los valores por defecto salieron de barrer sobre
+    señal R9.4 REAL capturada (E. coli): sobre-segmentar y dejar que los STAY reabsorban.
 
-    ``pore_model`` es la tabla k-mero→corriente en el MISMO espacio normalizado que la
-    señal (mediana/MAD). Úsala estimada por nosotros (``estimate_pore_model``) o
-    normaliza la oficial de ONT. Recuerda: esto es la vía CLÁSICA (R9), no compite en
-    precisión con Dorado; su valor es correr sin IA, sin GPU y sin instalar nada.
+    Escala por-read por MOMENTOS: lleva las medias de evento Y el pore model cada uno a
+    media 0 / desviación 1. Esto —igualar la distribución de NIVELES, no la del raw—
+    fue clave: en señal real capturada subió el acierto de ~53% (median/MAD del raw) a
+    ~69%. Cada poro/lectura tiene su escala; ajustar por-read es lo que hacen los pro.
+
+    ``pore_model`` es la tabla k-mero→corriente (en cualquier escala; se normaliza aquí).
+    Úsala estimada por nosotros (``estimate_pore_model``) o la oficial de ONT. Recuerda:
+    es la vía CLÁSICA (R9), no compite en precisión con Dorado; su valor es correr sin
+    IA, sin GPU y sin instalar nada.
     """
     sig = signal.signal if isinstance(signal, SignalRead) else signal
     z = normalize_signal(sig)
-    # el modelo DEBE vivir en el mismo espacio que la señal, o la emisión no significa
-    # nada (fue el desajuste señal↔modelo que vimos): misma transformación mediana/MAD.
-    model_z = normalize_signal(pore_model)
     ev = detect_events(z, threshold=event_threshold, min_length=min_event_len)
-    return viterbi_basecall(ev.means, model_z, k, sigma=sigma,
+    # escala por-read por momentos: medias de evento y modelo a media 0 / desv 1
+    em = ev.means
+    em_z = (em - em.mean()) / (em.std() or 1.0)
+    model_z = (pore_model - pore_model.mean()) / (pore_model.std() or 1.0)
+    return viterbi_basecall(em_z, model_z, k, sigma=sigma,
                             p_stay=p_stay, p_step=p_step, p_skip=p_skip)
 
 

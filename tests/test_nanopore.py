@@ -283,6 +283,39 @@ def test_read_pod5_sin_libreria_mensaje_claro(monkeypatch):
         list(nano.read_pod5("cualquiera.pod5"))
 
 
+def test_read_fast5_sin_libreria_mensaje_claro(monkeypatch):
+    import bioforge.nanopore as nano
+    monkeypatch.setitem(sys.modules, "h5py", None)      # simula 'h5py' ausente
+    with pytest.raises(ImportError, match="bioforge\\[nanopore\\]"):
+        list(nano.read_fast5("cualquiera.fast5"))
+
+
+def test_read_fast5_ida_y_vuelta(tmp_path):
+    """Escribe un FAST5 single-read mínimo y compruébalo con NUESTRO lector."""
+    h5py = pytest.importorskip("h5py")
+    from bioforge.nanopore import read_fast5
+
+    sig = (np.sin(np.arange(1200) / 15) * 90 + 300).astype(np.int16)
+    p = tmp_path / "mini.fast5"
+    with h5py.File(str(p), "w") as f:
+        ch = f.create_group("UniqueGlobalKey/channel_id")
+        ch.attrs["digitisation"] = 8192.0
+        ch.attrs["offset"] = 26.0
+        ch.attrs["range"] = 1444.86
+        ch.attrs["sampling_rate"] = 4000.0
+        rd = f.create_group("Raw/Reads/Read_42")
+        rd.attrs["read_id"] = b"test-read-0001"
+        rd.create_dataset("Signal", data=sig)
+
+    got = list(read_fast5(str(p)))
+    assert len(got) == 1
+    r0 = got[0]
+    assert np.array_equal(np.asarray(r0.signal), sig)          # señal intacta
+    assert r0.read_id == "test-read-0001"
+    assert r0.sample_rate == 4000.0
+    assert r0.scale == pytest.approx(1444.86 / 8192.0, abs=1e-6)   # calibración
+
+
 def test_read_pod5_ida_y_vuelta(tmp_path):
     """Con la librería presente: escribe un POD5 mínimo y compruébalo con NUESTRO
     lector (se salta si 'pod5' no está instalado — es un extra opcional)."""
