@@ -13,13 +13,14 @@ solo tenga que hacer doble clic, sin instalar nada.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))          # para importar backend
+sys.path.insert(0, str(HERE.parent))   # para importar bioforge sin instalarlo (repo)
 
 import webview  # noqa: E402
 
 from backend import Api  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
 _FILTER = ("Secuencias (*.fasta;*.fa;*.fna;*.fastq;*.fq;*.txt)",
            "Señal nanoporo (*.pod5;*.fast5)", "Todos los archivos (*.*)")
 
