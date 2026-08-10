@@ -437,6 +437,9 @@ def basecall(signal, pore_model: np.ndarray, k: int, *,
     IA, sin GPU y sin instalar nada.
     """
     sig = signal.signal if isinstance(signal, SignalRead) else signal
+    sig = np.asarray(sig, dtype=np.float64).ravel()
+    if sig.size == 0:
+        return ""
     z = normalize_signal(sig)
     ev = detect_events(z, threshold=event_threshold, min_length=min_event_len)
     # escala por-read por momentos: medias de evento y modelo a media 0 / desv 1
@@ -444,7 +447,8 @@ def basecall(signal, pore_model: np.ndarray, k: int, *,
     model_z = (pore_model - pore_model.mean()) / (pore_model.std() or 1.0)
     kw = dict(sigma=sigma, p_stay=p_stay, p_step=p_step, p_skip=p_skip)
 
-    if refit and em_z.size > 20:
+    # el refit necesita datos finitos (señal corrupta con inf/nan → sáltalo, no revientes)
+    if refit and em_z.size > 20 and np.all(np.isfinite(em_z)):
         # 1er pase → k-mero por evento; reajusta la escala a ESOS niveles (mínimos
         # cuadrados robustos, descartando el 20% de eventos con mayor residuo).
         _, path = viterbi_basecall(em_z, model_z, k, return_path=True, **kw)
@@ -487,7 +491,7 @@ def viterbi_basecall(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
         raise ValueError("viterbi_basecall requiere k >= 2 (para SKIP)")
     T = m.size
     if T == 0:
-        return ""
+        return ("", np.empty(0, dtype=np.intp)) if return_path else ""
 
     # log-emisión gaussiana. sigma puede ser ESCALAR o un array por k-mero (4**k):
     # con ruido por-k-mero (la columna level_stdv del pore model) el término −log σ

@@ -273,6 +273,26 @@ def test_viterbi_basecall_valida_k():
         viterbi_basecall(np.zeros(5), random_pore_model(1), k=1)   # k<2 sin SKIP
 
 
+def test_viterbi_basecall_vacio_con_return_path():
+    """Regresión: T==0 + return_path debe devolver una TUPLA, no una str suelta
+    (o el refit de basecall reventaría al desempaquetar)."""
+    bases, path = viterbi_basecall(np.array([]), random_pore_model(3), k=3,
+                                   return_path=True)
+    assert bases == "" and path.size == 0
+
+
+def test_basecall_robusto_ante_basura():
+    """Regresión del barrido de bugs: entradas patológicas NO revientan el basecaller.
+    Señal vacía → ''; inf/nan → se degrada (salta el refit), nunca crash."""
+    pm = random_pore_model(3, seed=0)
+    assert basecall(np.array([]), pm, 3) == ""                     # vacía → ''
+    rng = np.random.default_rng(0)
+    for tail in ([np.inf] * 4, [np.nan] * 4, [np.inf, np.nan, -np.inf]):
+        sig = np.concatenate([rng.normal(0, 1, 300), tail])
+        out = basecall(sig, pm, 3)                                 # no crash
+        assert isinstance(out, str)
+
+
 # ── Lector POD5 (dependencia opcional 'pod5') ─────────────────────────────────
 
 def test_read_pod5_sin_libreria_mensaje_claro(monkeypatch):
