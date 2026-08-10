@@ -291,8 +291,18 @@ class Api:
             return {"error": "no existe el archivo"}
         ext = os.path.splitext(path)[1].lower()
         if ext == ".pod5":
+            try:
+                import pod5  # noqa: F401
+            except ImportError:
+                return {"error": "para leer POD5 falta la librería 'pod5'. "
+                                 "Instálala con:  pip install pod5"}
             sigs = list(_read_pod5(path))
         elif ext in (".fast5", ".h5"):
+            try:
+                import h5py  # noqa: F401
+            except ImportError:
+                return {"error": "el lector de nanoporo aún se está instalando en "
+                                 "segundo plano. Espera 1–2 minutos y reinténtalo."}
             sigs = list(_read_fast5(path))
         else:
             return {"error": "formato de señal no reconocido (usa .pod5 o .fast5)"}

@@ -28,15 +28,22 @@ if not defined PY (
   exit /b 1
 )
 
-REM --- asegurar dependencias la primera vez (pywebview + h5py para nanoporo) ---
-%PY% -c "import webview, h5py" 2>nul
+REM --- asegurar pywebview (imprescindible para abrir la ventana) ---
+%PY% -c "import webview" 2>nul
 if errorlevel 1 (
-  echo   Instalando dependencias la primera vez ^(pywebview, h5py^), espera...
-  %PY% -m pip install pywebview h5py
+  echo   Instalando pywebview la primera vez, espera un momento...
+  %PY% -m pip install pywebview
   echo(
 )
 
-REM --- abrir la app ---
+REM --- lector de nanoporo (h5py) en SEGUNDO PLANO: no bloquea la app ---
+%PY% -c "import h5py" 2>nul
+if errorlevel 1 (
+  echo   ^(instalando el lector de nanoporo en segundo plano; estara listo en 1-2 min^)
+  start "" /b %PY% -m pip install h5py >nul 2>&1
+)
+
+REM --- abrir la app (se abre ya; el nanoporo estara listo en cuanto acabe la de arriba) ---
 echo   Abriendo la ventana...
 %PY% "app\main.py"
 
