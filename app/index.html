@@ -135,13 +135,18 @@ $("#nav").addEventListener("click",e=>{
 function setActiveNav(v){ document.querySelectorAll("#nav a").forEach(x=>x.classList.toggle("active",x.dataset.view===v)); }
 
 $("#openBtn").addEventListener("click",async()=>{
-  const ws=await API.pick_and_open();
-  if(ws.cancelled) return;
-  if(ws.error){toast(ws.error);return;}
-  STATE.workspace=ws;
-  STATE.summary=await API.summary();
-  VIEW="secuencias"; setActiveNav("secuencias");
-  renderTabs(); render();
+  try{
+    if(!API){ toast("El puente con Python aún no está listo. Espera un segundo y reinténtalo."); return; }
+    if(typeof API.pick_and_open!=="function"){ toast("El puente no expone 'pick_and_open' (revisar backend)."); return; }
+    const ws=await API.pick_and_open();
+    if(ws===undefined||ws===null){ toast("El diálogo de archivos no devolvió nada (create_file_dialog vacío)."); return; }
+    if(ws.cancelled) return;
+    if(ws.error){ toast(ws.error); return; }
+    STATE.workspace=ws;
+    STATE.summary=await API.summary();
+    VIEW="secuencias"; setActiveNav("secuencias");
+    renderTabs(); render();
+  }catch(e){ toast("Error al abrir: "+(e&&e.message?e.message:String(e))); }
 });
 
 // barra de pestañas: los archivos abiertos, el activo resaltado, × para cerrar
@@ -406,8 +411,10 @@ function soon(title,desc){
 }
 
 // arranque
-ready(()=>{ $("#openBtn").disabled=false; renderTabs(); render(); });
+$("#openBtn").disabled=false;                  // siempre clicable; el handler avisa si el puente no está
+ready(()=>{ renderTabs(); render(); });
 setTimeout(()=>{ if(!API) render(); }, 300);   // muestra algo aunque el puente tarde
+setTimeout(()=>{ if(!API) toast("Aviso: el puente con Python no se conectó (window.pywebview.api no está disponible). Dímelo para arreglarlo."); }, 2500);
 render();
 </script>
 </body>
