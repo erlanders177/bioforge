@@ -58,6 +58,11 @@ nanopore = [
     "pod5>=0.3",     # formato POD5 (trae h5py y numpy como dependencias)
     "h5py>=3.0",     # formato FAST5 (HDF5)
 ]
+app = [
+    # App de escritorio (v10.0): ventana nativa LOCAL con interfaz web (sin servidor).
+    # OPCIONAL — el motor y la CLI funcionan sin esto.
+    "pywebview>=5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/erlanders177/bioforge"

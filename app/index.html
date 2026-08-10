@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioForge</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#26314c;
+    --text:#e7ecf5; --dim:#93a0bd; --accent:#4f8cff; --accent2:#37d39b;
+    --warn:#ffb454; --bad:#ff6b6b; --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);
+       color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:14px;padding:12px 20px;
+         background:var(--panel);border-bottom:1px solid var(--line)}
+  .logo{font-weight:700;font-size:18px;letter-spacing:.3px}
+  .logo b{color:var(--accent)}
+  .badge{font-size:12px;color:var(--accent2);border:1px solid var(--accent2);
+         border-radius:20px;padding:3px 10px;opacity:.9}
+  .grow{flex:1}
+  button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);
+         padding:8px 14px;border-radius:8px;cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--accent);background:#223055}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover{background:#3f7cf0}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  main{flex:1;display:flex;min-height:0}
+  .side{width:300px;border-right:1px solid var(--line);background:var(--panel);
+        display:flex;flex-direction:column;min-height:0}
+  .side .nav{padding:10px}
+  .nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--dim);
+         text-decoration:none;cursor:pointer;margin-bottom:4px}
+  .nav a.active{background:var(--panel2);color:var(--text)}
+  .nav a:hover{color:var(--text)}
+  .content{flex:1;overflow:auto;padding:22px 26px;min-width:0}
+  h2{margin:0 0 4px}
+  .sub{color:var(--dim);margin:0 0 20px;font-size:14px}
+  .cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:14px 18px;min-width:120px}
+  .card .k{font-size:12px;color:var(--dim)}
+  .card .v{font-size:22px;font-weight:700;margin-top:2px}
+  .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+         height:100%;gap:16px;color:var(--dim);text-align:center}
+  .empty .big{font-size:52px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;position:sticky;top:0;background:var(--bg)}
+  tr.pick{cursor:pointer}
+  tr.pick:hover td{background:var(--panel)}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
+  .tag.dna{color:#8ecbff;border-color:#2b4a70}
+  .tag.prot{color:#c8a8ff;border-color:#4a3a70}
+  .mono{font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+  .seqbox{background:#0b0f1a;border:1px solid var(--line);border-radius:8px;padding:12px;
+          overflow:auto;max-height:180px;white-space:pre-wrap;word-break:break-all;
+          line-height:1.6}
+  .aln{background:#0b0f1a;border:1px solid var(--line);border-radius:8px;padding:12px;
+       overflow:auto;line-height:1.5}
+  .aln .mm{color:var(--bad);font-weight:700}
+  .aln .gap{color:var(--warn)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  .hint{color:var(--dim);font-size:13px}
+  .err{color:var(--bad);background:#2a1520;border:1px solid #52212e;padding:10px 14px;
+       border-radius:8px;margin:10px 0}
+  .soon{color:var(--dim);border:1px dashed var(--line);border-radius:var(--radius);
+        padding:30px;text-align:center}
+  .selbar{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+          padding:10px 14px;display:flex;align-items:center;gap:12px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><b>Bio</b>Forge</div>
+  <span class="badge">● local · sin conexión · privado</span>
+  <div class="grow"></div>
+  <button class="primary" id="openBtn" disabled>Abrir archivo…</button>
+</header>
+
+<main>
+  <nav class="side">
+    <div class="nav" id="nav">
+      <a data-view="inicio" class="active">Inicio</a>
+      <a data-view="secuencias">Secuencias</a>
+      <a data-view="alinear">Alinear</a>
+      <a data-view="nanoporo">Nanoporo</a>
+      <a data-view="evolucion">Evolución</a>
+    </div>
+  </nav>
+  <section class="content" id="content"></section>
+</main>
+
+<script>
+let API = null;                 // window.pywebview.api cuando esté listo
+let STATE = {summary:null};     // resumen del archivo cargado
+let VIEW = "inicio";
+const $ = (s,el=document)=>el.querySelector(s);
+const el = (h)=>{const d=document.createElement("div");d.innerHTML=h.trim();return d.firstChild;};
+const esc = (s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+function ready(fn){
+  if(window.pywebview && window.pywebview.api){API=window.pywebview.api;fn();}
+  else window.addEventListener("pywebviewready",()=>{API=window.pywebview.api;fn();});
+}
+
+// ── navegación ────────────────────────────────────────────────────────────
+$("#nav").addEventListener("click",e=>{
+  const a=e.target.closest("a"); if(!a)return;
+  document.querySelectorAll("#nav a").forEach(x=>x.classList.remove("active"));
+  a.classList.add("active"); VIEW=a.dataset.view; render();
+});
+$("#openBtn").addEventListener("click",async()=>{
+  const r=await API.pick_and_open();
+  if(r.cancelled) return;
+  if(r.error){toast(r.error);return;}
+  STATE.summary=r; VIEW="secuencias";
+  document.querySelectorAll("#nav a").forEach(x=>x.classList.toggle("active",x.dataset.view==="secuencias"));
+  render();
+});
+
+function toast(msg){ const c=$("#content"); c.prepend(el(`<div class="err">${esc(msg)}</div>`)); }
+
+// ── vistas ─────────────────────────────────────────────────────────────────
+function render(){
+  const c=$("#content");
+  if(VIEW==="inicio")      return c.replaceChildren(viewInicio());
+  if(VIEW==="secuencias")  return renderSecuencias(c);
+  if(VIEW==="alinear")     return renderAlinear(c);
+  if(VIEW==="nanoporo")    return c.replaceChildren(soon("Nanoporo","Cargar una señal POD5/FAST5 y convertirla en bases con nuestro basecaller clásico (74,5% en R9.4 real)."));
+  if(VIEW==="evolucion")   return c.replaceChildren(soon("Evolución","Rankear mutaciones, juzgar predictores (evalkit) y filtrar por realidad (RealityCheck)."));
+}
+
+function viewInicio(){
+  const s=STATE.summary;
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Bienvenido a BioForge</h2>`));
+  box.append(el(`<p class="sub">Un motor bioinformático que corre entero en tu ordenador. Tus datos no salen de aquí.</p>`));
+  if(!s){
+    box.append(el(`<div class="empty"><div class="big">🧬</div>
+      <div>Abre un archivo FASTA/FASTQ para empezar</div>
+      <button class="primary" onclick="document.getElementById('openBtn').click()">Abrir archivo…</button></div>`));
+  }else{
+    box.append(summaryCards(s));
+    box.append(el(`<p class="hint">Archivo cargado: <b>${esc(s.filename)}</b>. Ve a <b>Secuencias</b> para explorarlo.</p>`));
+  }
+  return box;
+}
+
+function summaryCards(s){
+  const wrap=el(`<div class="cards"></div>`);
+  const card=(k,v)=>el(`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`);
+  wrap.append(card("Secuencias",s.count));
+  wrap.append(card("ADN",s.nucleotide));
+  wrap.append(card("Proteína",s.protein));
+  wrap.append(card("Símbolos",s.total_symbols.toLocaleString()));
+  wrap.append(card("Longitud media",s.mean_len));
+  return wrap;
+}
+
+async function renderSecuencias(c){
+  if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">📄</div><div>Aún no hay archivo. Pulsa "Abrir archivo…".</div></div>`)); return; }
+  c.replaceChildren(el(`<h2>Secuencias</h2>`),el(`<p class="sub">${STATE.summary.count} en <b>${esc(STATE.summary.filename)}</b></p>`),summaryCards(STATE.summary));
+  const page=await API.records_page(0,200);
+  const t=el(`<table><thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Largo</th><th>Vista previa</th></tr></thead><tbody></tbody></table>`);
+  const tb=$("tbody",t);
+  page.items.forEach(it=>{
+    const tag=it.type==="ADN"?`<span class="tag dna">ADN</span>`:`<span class="tag prot">proteína</span>`;
+    const tr=el(`<tr class="pick"><td>${it.index}</td><td>${esc(it.header)}</td><td>${tag}</td><td>${it.length}</td><td class="mono">${esc(it.preview)}…</td></tr>`);
+    tr.addEventListener("click",()=>showDetail(it.index));
+    tb.append(tr);
+  });
+  c.append(t);
+  c.append(el(`<div id="detail"></div>`));
+}
+
+async function showDetail(index){
+  const d=await API.sequence_detail(index);
+  const box=$("#detail"); if(!box)return;
+  if(d.error){box.replaceChildren(el(`<div class="err">${esc(d.error)}</div>`));return;}
+  const comp=Object.entries(d.composition).map(([k,v])=>`${k}:${v}`).join("  ");
+  box.replaceChildren(el(`
+    <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+      <h2>#${index} · ${esc(d.header)}</h2>
+      <p class="sub">${d.type} · ${d.length} símbolos · composición: <span class="mono">${esc(comp)}</span></p>
+      <div class="row">
+        ${d.type==="ADN"?`<button class="primary" id="trBtn">Traducir a proteína</button>`:``}
+      </div>
+      <div class="seqbox mono">${esc(d.sequence)}</div>
+      <div id="tr"></div>
+    </div>`));
+  const b=$("#trBtn");
+  if(b) b.addEventListener("click",async()=>{
+    const r=await API.translate(index);
+    const o=$("#tr");
+    o.replaceChildren(r.error?el(`<div class="err">${esc(r.error)}</div>`)
+      :el(`<div style="margin-top:12px"><p class="hint">Proteína (${r.length} aa):</p><div class="seqbox mono">${esc(r.protein)}</div></div>`));
+  });
+}
+
+async function renderAlinear(c){
+  if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">🧬</div><div>Carga un archivo con al menos 2 secuencias.</div></div>`)); return; }
+  const page=await API.records_page(0,500);
+  const opts=page.items.map(it=>`<option value="${it.index}">#${it.index} · ${esc(it.header)} (${it.length})</option>`).join("");
+  c.replaceChildren(el(`<h2>Alinear dos secuencias</h2>`),el(`<p class="sub">Compara dos y ve sus diferencias (mutaciones).</p>`));
+  const bar=el(`<div class="selbar">
+     <span>A</span><select id="selA">${opts}</select>
+     <span>B</span><select id="selB">${opts}</select>
+     <button class="primary" id="alnBtn">Alinear</button></div>`);
+  c.append(bar);
+  c.append(el(`<div id="alnOut"></div>`));
+  if(page.items.length>1) $("#selB",bar).selectedIndex=1;
+  $("#alnBtn",bar).addEventListener("click",async()=>{
+    const i=+$("#selA").value, j=+$("#selB").value;
+    const out=$("#alnOut"); out.replaceChildren(el(`<p class="hint">Alineando…</p>`));
+    const r=await API.align(i,j);
+    if(r.error){out.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`));return;}
+    out.replaceChildren(el(`
+      <div class="cards">
+        <div class="card"><div class="k">Identidad</div><div class="v">${r.identity}%</div></div>
+        <div class="card"><div class="k">Mutaciones</div><div class="v">${r.n_mutations}</div></div>
+        <div class="card"><div class="k">Longitud</div><div class="v">${r.length}</div></div>
+      </div>
+      <div class="aln mono">${colorAln(r.aligned_a,r.aligned_b)}</div>`));
+  });
+}
+
+function colorAln(a,b){
+  let A="",B="";
+  for(let i=0;i<a.length;i++){
+    const ca=a[i],cb=b[i];
+    if(ca==="-"||cb==="-"){A+=`<span class="gap">${ca}</span>`;B+=`<span class="gap">${cb}</span>`;}
+    else if(ca!==cb){A+=`<span class="mm">${ca}</span>`;B+=`<span class="mm">${cb}</span>`;}
+    else{A+=ca;B+=cb;}
+  }
+  return `A  ${A}\nB  ${B}`;
+}
+
+function soon(title,desc){
+  return el(`<div><h2>${esc(title)}</h2><p class="sub">${esc(desc)}</p>
+    <div class="soon">En construcción — próxima versión de la app.<br>El motor ya lo hace; falta la cara gráfica.</div></div>`);
+}
+
+// arranque
+ready(()=>{ $("#openBtn").disabled=false; render(); });
+setTimeout(()=>{ if(!API) render(); }, 300);   // muestra algo aunque el puente tarde
+render();
+</script>
+</body>
+</html>
