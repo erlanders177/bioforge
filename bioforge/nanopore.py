@@ -412,8 +412,8 @@ def viterbi_decode(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
 
 def basecall(signal, pore_model: np.ndarray, k: int, *,
              sigma: float = 0.25, event_threshold: float = 0.12,
-             min_event_len: int = 2, p_stay: float = 0.42,
-             p_step: float = 0.53, p_skip: float = 0.05) -> str:
+             min_event_len: int = 2, refit: bool = True, p_stay: float = 0.50,
+             p_step: float = 0.45, p_skip: float = 0.05) -> str:
     """Señal cruda → bases, de una vez: normaliza → SOBRE-segmenta → Viterbi stay/skip.
 
     El entry point de alto nivel del basecaller clásico. ``signal`` puede ser un array
@@ -423,7 +423,13 @@ def basecall(signal, pore_model: np.ndarray, k: int, *,
     Escala por-read por MOMENTOS: lleva las medias de evento Y el pore model cada uno a
     media 0 / desviación 1. Esto —igualar la distribución de NIVELES, no la del raw—
     fue clave: en señal real capturada subió el acierto de ~53% (median/MAD del raw) a
-    ~69%. Cada poro/lectura tiene su escala; ajustar por-read es lo que hacen los pro.
+    ~70%. Cada poro/lectura tiene su escala; ajustar por-read es lo que hacen los pro.
+
+    ``refit`` (v9.1): un segundo pase de REFINADO. El primer basecall dice qué k-mero
+    toca cada evento; con eso se reajusta la escala a los niveles REALES de esos k-meros
+    (no a la distribución global del modelo), corrigiendo el sesgo de composición del
+    read. Junto con ``p_stay=0.5`` (el 0.42 penalizaba de más los STAY de la
+    sobre-segmentación) subió el acierto en señal R9.4 real de ~70% a ~75%.
 
     ``pore_model`` es la tabla k-mero→corriente (en cualquier escala; se normaliza aquí).
     Úsala estimada por nosotros (``estimate_pore_model``) o la oficial de ONT. Recuerda:
@@ -434,16 +440,27 @@ def basecall(signal, pore_model: np.ndarray, k: int, *,
     z = normalize_signal(sig)
     ev = detect_events(z, threshold=event_threshold, min_length=min_event_len)
     # escala por-read por momentos: medias de evento y modelo a media 0 / desv 1
-    em = ev.means
-    em_z = (em - em.mean()) / (em.std() or 1.0)
+    em_z = (ev.means - ev.means.mean()) / (ev.means.std() or 1.0)
     model_z = (pore_model - pore_model.mean()) / (pore_model.std() or 1.0)
-    return viterbi_basecall(em_z, model_z, k, sigma=sigma,
-                            p_stay=p_stay, p_step=p_step, p_skip=p_skip)
+    kw = dict(sigma=sigma, p_stay=p_stay, p_step=p_step, p_skip=p_skip)
+
+    if refit and em_z.size > 20:
+        # 1er pase → k-mero por evento; reajusta la escala a ESOS niveles (mínimos
+        # cuadrados robustos, descartando el 20% de eventos con mayor residuo).
+        _, path = viterbi_basecall(em_z, model_z, k, return_path=True, **kw)
+        exp = model_z[path]
+        a, b = np.polyfit(exp, em_z, 1)
+        keep = np.abs(em_z - (a * exp + b)) <= np.quantile(np.abs(em_z - (a * exp + b)), 0.8)
+        a, b = np.polyfit(exp[keep], em_z[keep], 1)
+        if abs(a) > 1e-6:
+            em_z = (em_z - b) / a
+
+    return viterbi_basecall(em_z, model_z, k, **kw)
 
 
 def viterbi_basecall(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
-                     sigma: float = 1.0, p_stay: float = 0.35,
-                     p_step: float = 0.60, p_skip: float = 0.05) -> str:
+                     sigma=1.0, p_stay: float = 0.35, p_step: float = 0.60,
+                     p_skip: float = 0.05, return_path: bool = False):
     """Basecalling robusto con estados STAY / STEP / SKIP — el HMM clásico completo.
 
     ``viterbi_decode`` asume un evento = un paso de k-mero, así que cualquier error de
@@ -472,8 +489,15 @@ def viterbi_basecall(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
     if T == 0:
         return ""
 
-    inv2s2 = 1.0 / (2.0 * sigma * sigma)
-    emit = -inv2s2 * (m[:, None] - pore_model[None, :]) ** 2       # (T, M)
+    # log-emisión gaussiana. sigma puede ser ESCALAR o un array por k-mero (4**k):
+    # con ruido por-k-mero (la columna level_stdv del pore model) el término −log σ
+    # deja de ser constante y hay que incluirlo para comparar estados de forma justa.
+    sig = np.asarray(sigma, dtype=np.float64)
+    if sig.ndim == 0:
+        emit = -(m[:, None] - pore_model[None, :]) ** 2 / (2.0 * sig * sig)
+    else:
+        emit = (-((m[:, None] - pore_model[None, :]) / sig[None, :]) ** 2 / 2.0
+                - np.log(sig)[None, :])
     ar = np.arange(M)
     step_pred = (ar // 4)[:, None] + (np.arange(4) * (M // 4))[None, :]     # (M,4)
     skip_pred = (ar // 16)[:, None] + (np.arange(16) * (M // 16))[None, :]  # (M,16)
@@ -518,4 +542,7 @@ def viterbi_basecall(event_means: np.ndarray, pore_model: np.ndarray, k: int, *,
         elif moves[i] == 2:
             codes.append((s // 4) % 4)
             codes.append(s % 4)
-    return "".join(_BASES[c] for c in codes)
+    bases = "".join(_BASES[c] for c in codes)
+    if return_path:
+        return bases, path            # path[i] = k-mero asignado al evento i
+    return bases

@@ -36,7 +36,7 @@ section (with examples) further down.
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
-| **Nanopore basecalling** *(v9.0)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip). Pure NumPy, no AI — **~70% on real R9.4 signal** |
+| **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -67,7 +67,7 @@ combining them (especially the evolution front).
 | Evolution — mutation ranking | **cross-virus AUC ~0.74–0.91** on flu HA, beats the best trivial axis on all 6 held-out tests (trained model runs in pure NumPy) |
 | Evolution — judged honestly (Level 6) | on real H3N2: model **AUC 0.837 global / 0.631 on novel mutations**, over the trivial mutability bar (0.793) — *measured by our own `EvolutionBenchmark`* |
 | Data integrity | **anti-corruption guard** refuses to mis-encode a mistyped sequence · property-based invariants over both alphabets · `tools/integrity_check.py` certificate |
-| Nanopore basecaller (Level 7) | **~70% identity on real R9.4 signal** (E. coli, n=36, vs production Guppy) — from-scratch classical Viterbi, pure NumPy, no AI. *Reproducible: `tools/bench_basecaller.py`* |
+| Nanopore basecaller (Level 7) | **~74% identity on real R9.4 signal** (E. coli, n=36, vs production Guppy; v9.0 was 70%, v9.1 lifted it) — from-scratch classical Viterbi, pure NumPy, no AI. *Reproducible: `tools/bench_basecaller.py`* |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 
 ---
@@ -542,10 +542,13 @@ bases = basecall(read.to_picoamperes(), pore_model, k=6)
   than shipping someone else's table.
 - **Viterbi with stay/step/skip** (`viterbi_basecall`) so imperfect segmentation no
   longer breaks the call — the classical fix that took us from 58 % to 70 %.
+- **Iterative rescaling** (v9.1): a first pass tells us which k-mer each event is, then
+  the per-read scale is refit to the *actual* levels of those k-mers — that plus a
+  better stay probability lifted real-signal accuracy from ~70 % to ~74 %.
 
 **Honest, reproducible numbers.** On **real captured R9.4** signal (E. coli, n=36,
 identity to the production Guppy basecall, aligned locally with our own aligner):
-**mean ~70 %, median ~71 %, range 63–77 %**. That is squarely in the range of the
+**mean ~74.5 %, median ~74 %, range 68–82 %**. That is squarely in the range of the
 historical classical basecallers (nanocall ~68–85 %) and far below the ~99 % of the
 neural Dorado — which is the honest point: *the classical route is an R9-era method,
 and without AI it has a ceiling*. Reproduce it yourself: `python tools/bench_basecaller.py`.
@@ -757,7 +760,8 @@ python check.py
 - [x] **Level 6 — reality filter** `RealityCheck`: rank another tool's mutation hits by real-world traction, observed vs estimated tiers *(v8.0)*
 - [x] **Anti-corruption integrity net** — encode guard + property-based invariants (both alphabets) + `tools/integrity_check.py` *(v8.0)*
 - [x] **Level 7 — nanopore basecaller from scratch** (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi stay/skip · pure NumPy) — **~70 % on real R9.4** *(v9.0)*
-- [ ] Nanopore: lift the ~70 % (per-read scale/drift refinement, per-k-mer noise, homopolymers); pluggable Dorado backend when present
+- [x] Nanopore: **iterative per-read rescaling + tuned transitions → ~74 %** on real R9.4 *(v9.1)*
+- [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
 - [ ] **Phase 2 — desktop application** (local, no servers, privacy-first: your DNA never leaves the machine)

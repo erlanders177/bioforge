@@ -4,7 +4,7 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **9.0.0**,
+Es un paquete instalable: `from bioforge import ...` (versión actual **9.1.0**,
 publicada en PyPI con wheels nativos Win/Linux/Mac).
 
 Niveles implementados y validados:
@@ -82,8 +82,9 @@ Niveles implementados y validados:
   copia); `viterbi_decode` (move-only) y `viterbi_basecall` (STAY/STEP/SKIP — el HMM
   completo, absorbe errores de segmentación); `basecall` (entry point: normaliza →
   sobre-segmenta → escala por-read por MOMENTOS → Viterbi). **Números REALES medidos:**
-  decodificador 100% sobre niveles ideales; **70% sobre señal R9.4 REAL capturada**
-  (E. coli, n=36, vs Guppy, identidad local con nuestro alineador) — en el rango de los
+  decodificador 100% sobre niveles ideales; **74.5% sobre señal R9.4 REAL capturada**
+  (E. coli, n=36, vs Guppy, identidad local con nuestro alineador; v9.0 daba 70.3%, la
+  v9.1 lo subió con refit iterativo + p_stay=0.5) — en el rango de los
   clásicos históricos (nanocall ~68-85%), lejos del ~99% neuronal de Dorado. **Verdad
   no negociable:** es la vía clásica de la era R9; **R10 queda fuera por diseño** (9-mer
   = 4⁹ = 262.144 estados → Viterbi O(T·estados) inviable en portátil; ONT no publica
@@ -223,7 +224,7 @@ bioforge/                  paquete instalable (from bioforge import ...)
                            Verdict (OBSERVADO=evidencia | ESTIMADO=conjetura)
   nanopore.py              L7 — basecaller de nanoporo desde cero: read_pod5/read_fast5,
                            detect_events, estimate_pore_model, viterbi_basecall (STAY/
-                           STEP/SKIP), basecall. NumPy puro, sin IA. 70% en R9.4 real
+                           STEP/SKIP), basecall. NumPy puro, sin IA. 74.5% en R9.4 real
   fetch.py                 L5 — descarga NCBI Entrez fechada (stdlib, caché + reintentos)
   ai/viability.py          L5 — eje B opcional: ESM-2 (bioforge[ai], carga perezosa)
   data/ranker_weights.npz  L5 — pesos del rankeador entrenado (2.2 KB, en el wheel)

@@ -16,7 +16,7 @@ alineamiento LOCAL, con nuestro propio alineador) contra el basecall de producci
 Uso:  python tools/bench_basecaller.py [n_reads]
 
 Requiere el extra:  pip install "bioforge[nanopore]"  (h5py, para leer FAST5).
-Números de referencia medidos: media ~70% (mediana ~71%, n=36) — en el rango de los
+Números de referencia medidos: media ~74.5% (mediana ~74%, n=36; v9.1) — en el rango de los
 basecallers clásicos históricos (nanocall), lejísimos aún del ~99% neuronal de Dorado,
 que es justo la lección honesta: el método clásico es de la era R9 y sin IA tiene techo.
 """

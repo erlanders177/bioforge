@@ -70,7 +70,7 @@ from .realitycheck import RealityCheck, Verdict
 from .msa import MSAResult, align_multiple
 from .smart_translator import SmartTranslator
 
-__version__ = "9.0.0"
+__version__ = "9.1.0"
 __author__  = "Aarón Aranda Torrijos"
 
 __all__ = [
