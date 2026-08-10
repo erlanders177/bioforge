@@ -79,5 +79,19 @@ def test_indice_fuera_de_rango_es_error(fasta):
     assert "error" in api.sequence_detail(99)
 
 
+def test_open_fastq(tmp_path):
+    """Regresión: la app dice cargar FASTA *y FASTQ*; el FASTQ debe cargar de verdad."""
+    p = tmp_path / "reads.fastq"
+    p.write_text(
+        "@r1 lectura\nACGTACGTAC\n+\nIIIIIIIIII\n"
+        "@r2 lectura\nTTGGCCAATT\n+\nIIIIFFFFII\n",
+        encoding="utf-8")
+    api = Api()
+    s = api.open_file(str(p))
+    assert s["loaded"] and s["count"] == 2
+    assert s["has_quality"] is True                  # FASTQ trae calidades
+    assert api.records_page(0, 5)["items"][0]["length"] == 10
+
+
 def test_ping():
     assert Api().ping()["ok"] is True

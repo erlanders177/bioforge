@@ -52,15 +52,23 @@ class Api:
 
     def __init__(self) -> None:
         self.records: list = []          # PackedSequence cargadas
+        self.qualities: list = []        # calidades Phred por lectura (solo FASTQ)
         self.filename: str = ""
 
     # ── carga de archivos ────────────────────────────────────────────────────
     @_guard
     def open_file(self, path: str) -> dict[str, Any]:
-        """Carga un FASTA (y FASTQ básico) y devuelve un resumen del conjunto."""
+        """Carga FASTA o FASTQ (por extensión) y devuelve un resumen del conjunto."""
         if not path or not os.path.exists(path):
             return {"error": "no existe el archivo"}
-        records = list(SmartImporter.from_file(path))
+        ext = os.path.splitext(path)[1].lower()
+        if ext in (".fastq", ".fq"):
+            recs = list(SmartImporter.stream_fastq(path))
+            records = [r.sequence for r in recs]
+            self.qualities = [r.quality for r in recs]
+        else:
+            records = list(SmartImporter.from_file(path))
+            self.qualities = []
         if not records:
             return {"error": "el archivo no contiene secuencias legibles"}
         self.records = records
@@ -84,6 +92,7 @@ class Api:
             "min_len": int(min(lengths)),
             "max_len": int(max(lengths)),
             "mean_len": round(sum(lengths) / len(lengths), 1),
+            "has_quality": bool(self.qualities),
         }
 
     @_guard
