@@ -177,5 +177,18 @@ def test_nanoporo_formato_no_valido():
         os.unlink(name)
 
 
+def test_add_sequence_usable_en_otras_partes(fasta):
+    """Un basecall (o cualquier secuencia) se añade como genoma y sirve en todo."""
+    api = Api()
+    api.open_file(fasta)                              # ya hay 1 archivo (3 secuencias)
+    ws = api.add_sequence("basecall_test", "ATGAAAGGGTTTCCCTAA")
+    assert ws["n_files"] == 2 and ws["active"] == 1   # se añadió y quedó activo
+    # ahora es un genoma de primera: se lista, se traduce, se alinea
+    assert api.records_page(0, 5)["items"][0]["header"] == "basecall_test"
+    assert api.translate(0)["protein"].startswith("MKG")
+    # se puede alinear contra sí mismo (identidad 100)
+    assert api.align(0, 0)["identity"] == 100.0
+
+
 def test_ping():
     assert Api().ping()["ok"] is True

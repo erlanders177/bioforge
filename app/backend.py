@@ -265,6 +265,24 @@ class Api:
                           for row in r.base_frac.tolist()],
         }
 
+    @_guard
+    def add_sequence(self, header: str, sequence: str) -> dict[str, Any]:
+        """Añade una secuencia (p.ej. un basecall) como NUEVO archivo, usable en todo.
+
+        Cierra el círculo: lo que sale de Nanoporo (o de una traducción) pasa a ser un
+        genoma más, disponible en Secuencias, Alinear y demás. Se deja activo.
+        """
+        seq = "".join(str(sequence).split()).upper()
+        if not seq:
+            return {"error": "secuencia vacía"}
+        name = (header or "secuencia").strip()[:60]
+        rec = SmartImporter.from_string(f">{name}\n{seq}\n",
+                                        force_type=SeqType.NUCLEOTIDE)[0]
+        self.datasets.append({"filename": name, "path": "",
+                              "records": [rec], "qualities": []})
+        self.active = len(self.datasets) - 1
+        return self.workspace()
+
     # ── nanoporo: señal cruda → bases ─────────────────────────────────────────
     @_guard
     def open_signal(self, path: str) -> dict[str, Any]:

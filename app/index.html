@@ -371,16 +371,24 @@ async function doBasecall(index){
   out.replaceChildren(el(`<p class="hint">Basecalling… (unos segundos)</p>`));
   const r=await API.basecall_read(index);
   if(r.error){ out.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
-  out.replaceChildren(el(`
+  const node=el(`
     <div style="margin-top:10px">
       <div class="cards">
         <div class="card"><div class="k">Bases obtenidas</div><div class="v">${r.n_bases}</div></div>
         <div class="card"><div class="k">Muestras</div><div class="v">${r.n_samples.toLocaleString()}</div></div>
       </div>
       <h3>Señal medida (squiggle)</h3><div class="chart">${svgSignal(r.signal)}</div>
-      <h3 style="margin-top:14px">Bases</h3><div class="seqbox mono">${esc(r.bases)}</div>
+      <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Bases</h3>
+        <button class="primary" id="addSeq" title="Lo añade como un genoma más, para alinearlo o analizarlo">Usar en las otras pestañas →</button></div>
+      <div class="seqbox mono">${esc(r.bases)}</div>
       <p class="hint">Basecaller clásico (Viterbi, NumPy puro, sin IA). ~74% de acierto en R9.4 real; llegar al 99% de Dorado exige una red neuronal.</p>
-    </div>`));
+    </div>`);
+  out.replaceChildren(node);
+  $("#addSeq",node).addEventListener("click",async()=>{
+    STATE.workspace=await API.add_sequence("basecall_"+r.read_id.slice(0,8),r.bases);
+    STATE.summary=await API.summary();
+    renderTabs(); VIEW="secuencias"; setActiveNav("secuencias"); render();
+  });
 }
 function svgSignal(vals){
   const w=720,h=170,L=42,B=22,T=10,R=14,n=vals.length; if(!n) return "";
