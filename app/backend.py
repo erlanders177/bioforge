@@ -46,62 +46,105 @@ def _guard(fn: Callable) -> Callable:
 class Api:
     """API que PyWebview expone a la interfaz como ``window.pywebview.api``.
 
-    Mantiene el ESTADO de la sesión (el archivo cargado y sus secuencias) entre
-    llamadas, para que la interfaz no tenga que reenviar los datos cada vez.
+    Mantiene VARIOS archivos abiertos a la vez (como pestañas de genomas) y uno
+    ACTIVO. Cada archivo es un ``dataset`` = {filename, records, qualities}. Las
+    operaciones (traducir, alinear…) trabajan sobre el archivo activo.
     """
 
     def __init__(self) -> None:
-        self.records: list = []          # PackedSequence cargadas
-        self.qualities: list = []        # calidades Phred por lectura (solo FASTQ)
-        self.filename: str = ""
+        self.datasets: list[dict] = []   # cada uno: {filename, records, qualities}
+        self.active: int = -1            # índice del archivo activo (-1 = ninguno)
 
-    # ── carga de archivos ────────────────────────────────────────────────────
+    # ── carga y gestión de MÚLTIPLES archivos ────────────────────────────────
     @_guard
     def open_file(self, path: str) -> dict[str, Any]:
-        """Carga FASTA o FASTQ (por extensión) y devuelve un resumen del conjunto."""
+        """AÑADE un archivo (FASTA o FASTQ) a los abiertos y lo deja activo."""
         if not path or not os.path.exists(path):
             return {"error": "no existe el archivo"}
         ext = os.path.splitext(path)[1].lower()
         if ext in (".fastq", ".fq"):
             recs = list(SmartImporter.stream_fastq(path))
             records = [r.sequence for r in recs]
-            self.qualities = [r.quality for r in recs]
+            qualities = [r.quality for r in recs]
         else:
             records = list(SmartImporter.from_file(path))
-            self.qualities = []
+            qualities = []
         if not records:
             return {"error": "el archivo no contiene secuencias legibles"}
-        self.records = records
-        self.filename = os.path.basename(path)
+        self.datasets.append({"filename": os.path.basename(path),
+                              "records": records, "qualities": qualities})
+        self.active = len(self.datasets) - 1
+        return self.workspace()
+
+    @_guard
+    def workspace(self) -> dict[str, Any]:
+        """Estado del área de trabajo: los archivos abiertos y cuál está activo."""
+        return {
+            "files": [self._file_entry(i) for i in range(len(self.datasets))],
+            "active": self.active,
+            "n_files": len(self.datasets),
+        }
+
+    @_guard
+    def select_file(self, index: int) -> dict[str, Any]:
+        """Cambia el archivo activo y devuelve su resumen."""
+        if not 0 <= int(index) < len(self.datasets):
+            return {"error": "archivo no válido"}
+        self.active = int(index)
         return self.summary()
 
     @_guard
+    def close_file(self, index: int) -> dict[str, Any]:
+        """Cierra un archivo abierto; reajusta cuál queda activo."""
+        i = int(index)
+        if not 0 <= i < len(self.datasets):
+            return {"error": "archivo no válido"}
+        self.datasets.pop(i)
+        if not self.datasets:
+            self.active = -1
+        elif self.active >= i:                       # el activo se movió o se cerró
+            self.active = max(0, self.active - 1)
+        return self.workspace()
+
+    def _file_entry(self, i: int) -> dict[str, Any]:
+        recs = self.datasets[i]["records"]
+        n_nuc = sum(1 for r in recs if r.seq_type == SeqType.NUCLEOTIDE)
+        return {"index": i, "filename": self.datasets[i]["filename"],
+                "count": len(recs), "nucleotide": n_nuc,
+                "protein": len(recs) - n_nuc, "active": i == self.active}
+
+    @_guard
     def summary(self) -> dict[str, Any]:
-        """Resumen del conjunto cargado: cuántas, tipos, longitudes."""
-        if not self.records:
-            return {"loaded": False}
-        lengths = [r.n_symbols for r in self.records]
-        n_nuc = sum(1 for r in self.records if r.seq_type == SeqType.NUCLEOTIDE)
+        """Resumen del archivo ACTIVO: cuántas secuencias, tipos, longitudes."""
+        if self.active < 0 or not self.datasets:
+            return {"loaded": False, "n_files": len(self.datasets)}
+        ds = self.datasets[self.active]
+        recs = ds["records"]
+        lengths = [r.n_symbols for r in recs]
+        n_nuc = sum(1 for r in recs if r.seq_type == SeqType.NUCLEOTIDE)
         return {
             "loaded": True,
-            "filename": self.filename,
-            "count": len(self.records),
+            "filename": ds["filename"],
+            "active_index": self.active,
+            "n_files": len(self.datasets),
+            "count": len(recs),
             "nucleotide": n_nuc,
-            "protein": len(self.records) - n_nuc,
+            "protein": len(recs) - n_nuc,
             "total_symbols": int(sum(lengths)),
             "min_len": int(min(lengths)),
             "max_len": int(max(lengths)),
             "mean_len": round(sum(lengths) / len(lengths), 1),
-            "has_quality": bool(self.qualities),
+            "has_quality": bool(ds["qualities"]),
         }
 
     @_guard
     def records_page(self, offset: int = 0, limit: int = 50) -> dict[str, Any]:
-        """Una página de la lista de secuencias (para no volcar miles de golpe)."""
+        """Una página de la lista de secuencias del archivo activo (paginado)."""
         offset, limit = int(offset), int(limit)
-        page = self.records[offset:offset + limit]
+        records = self._records()
+        page = records[offset:offset + limit]
         return {
-            "total": len(self.records),
+            "total": len(records),
             "offset": offset,
             "items": [{
                 "index": offset + i,
@@ -163,11 +206,17 @@ class Api:
         }
 
     # ── util ─────────────────────────────────────────────────────────────────
+    def _records(self) -> list:
+        if self.active < 0 or not self.datasets:
+            raise IndexError("no hay ningún archivo activo")
+        return self.datasets[self.active]["records"]
+
     def _get(self, index: int):
+        records = self._records()
         idx = int(index)
-        if not 0 <= idx < len(self.records):
-            raise IndexError(f"índice {idx} fuera de rango (hay {len(self.records)})")
-        return self.records[idx]
+        if not 0 <= idx < len(records):
+            raise IndexError(f"índice {idx} fuera de rango (hay {len(records)})")
+        return records[idx]
 
     def ping(self) -> dict[str, Any]:
         """Prueba de vida del puente interfaz↔Python (lo usa el arranque)."""

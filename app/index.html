@@ -74,6 +74,17 @@
         padding:30px;text-align:center}
   .selbar{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
           padding:10px 14px;display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .tabs{display:flex;gap:6px;align-items:center;padding:7px 16px;background:var(--panel);
+        border-bottom:1px solid var(--line);overflow-x:auto}
+  .tabs:empty{display:none}
+  .tab{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;
+       border:1px solid var(--line);background:var(--panel2);cursor:pointer;
+       white-space:nowrap;font-size:13px;max-width:260px}
+  .tab.active{border-color:var(--accent);background:#223055}
+  .tab .fn{overflow:hidden;text-overflow:ellipsis}
+  .tab .n{color:var(--dim);font-size:12px}
+  .tab .x{color:var(--dim);padding:0 2px;border-radius:4px}
+  .tab .x:hover{color:var(--bad);background:#2a1520}
 </style>
 </head>
 <body>
@@ -83,6 +94,8 @@
   <div class="grow"></div>
   <button class="primary" id="openBtn" disabled>Abrir archivo…</button>
 </header>
+
+<div id="tabs" class="tabs"></div>
 
 <main>
   <nav class="side">
@@ -98,8 +111,8 @@
 </main>
 
 <script>
-let API = null;                 // window.pywebview.api cuando esté listo
-let STATE = {summary:null};     // resumen del archivo cargado
+let API = null;                        // window.pywebview.api cuando esté listo
+let STATE = {workspace:null, summary:null};  // archivos abiertos + resumen del activo
 let VIEW = "inicio";
 const $ = (s,el=document)=>el.querySelector(s);
 const el = (h)=>{const d=document.createElement("div");d.innerHTML=h.trim();return d.firstChild;};
@@ -116,14 +129,41 @@ $("#nav").addEventListener("click",e=>{
   document.querySelectorAll("#nav a").forEach(x=>x.classList.remove("active"));
   a.classList.add("active"); VIEW=a.dataset.view; render();
 });
+function setActiveNav(v){ document.querySelectorAll("#nav a").forEach(x=>x.classList.toggle("active",x.dataset.view===v)); }
+
 $("#openBtn").addEventListener("click",async()=>{
-  const r=await API.pick_and_open();
-  if(r.cancelled) return;
-  if(r.error){toast(r.error);return;}
-  STATE.summary=r; VIEW="secuencias";
-  document.querySelectorAll("#nav a").forEach(x=>x.classList.toggle("active",x.dataset.view==="secuencias"));
-  render();
+  const ws=await API.pick_and_open();
+  if(ws.cancelled) return;
+  if(ws.error){toast(ws.error);return;}
+  STATE.workspace=ws;
+  STATE.summary=await API.summary();
+  VIEW="secuencias"; setActiveNav("secuencias");
+  renderTabs(); render();
 });
+
+// barra de pestañas: los archivos abiertos, el activo resaltado, × para cerrar
+async function renderTabs(){
+  const bar=$("#tabs"), ws=STATE.workspace;
+  if(!ws || !ws.files || !ws.files.length){ bar.replaceChildren(); return; }
+  bar.replaceChildren();
+  ws.files.forEach(f=>{
+    const t=el(`<div class="tab ${f.active?"active":""}" title="${esc(f.filename)} · ${f.count} secuencias">
+      <span class="fn">${esc(f.filename)}</span><span class="n">${f.count}</span>
+      <span class="x" title="Cerrar">×</span></div>`);
+    t.addEventListener("click",async e=>{
+      if(e.target.classList.contains("x")){
+        e.stopPropagation();
+        STATE.workspace=await API.close_file(f.index);
+        STATE.summary=await API.summary();
+        renderTabs(); render(); return;
+      }
+      STATE.summary=await API.select_file(f.index);
+      STATE.workspace=await API.workspace();
+      renderTabs(); render();
+    });
+    bar.append(t);
+  });
+}
 
 function toast(msg){ const c=$("#content"); c.prepend(el(`<div class="err">${esc(msg)}</div>`)); }
 
@@ -251,7 +291,7 @@ function soon(title,desc){
 }
 
 // arranque
-ready(()=>{ $("#openBtn").disabled=false; render(); });
+ready(()=>{ $("#openBtn").disabled=false; renderTabs(); render(); });
 setTimeout(()=>{ if(!API) render(); }, 300);   // muestra algo aunque el puente tarde
 render();
 </script>

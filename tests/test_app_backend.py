@@ -28,10 +28,36 @@ def fasta(tmp_path):
 
 def test_open_file_resume_el_conjunto(fasta):
     api = Api()
-    s = api.open_file(fasta)
+    ws = api.open_file(fasta)                         # ahora devuelve el workspace
+    assert ws["n_files"] == 1 and ws["active"] == 0
+    s = api.summary()
     assert s["loaded"] and s["count"] == 3
     assert s["nucleotide"] == 2 and s["protein"] == 1
     assert s["filename"] == "muestra.fasta"
+
+
+def test_multiples_archivos_abiertos(fasta, tmp_path):
+    """Se pueden tener VARIOS genomas abiertos a la vez y cambiar entre ellos."""
+    p2 = tmp_path / "otro.fasta"
+    p2.write_text(">x descripcion\nACGTACGTACGT\n", encoding="utf-8")
+    api = Api()
+    api.open_file(fasta)
+    ws = api.open_file(str(p2))
+    assert ws["n_files"] == 2 and ws["active"] == 1   # el recién abierto queda activo
+    assert api.summary()["filename"] == "otro.fasta"
+    # volver al primero por su índice
+    s = api.select_file(0)
+    assert s["filename"] == "muestra.fasta" and s["count"] == 3
+    # cerrar el archivo 0 → queda solo el otro, y sigue accesible
+    ws2 = api.close_file(0)
+    assert ws2["n_files"] == 1
+    assert api.summary()["filename"] == "otro.fasta"
+
+
+def test_sin_archivo_activo_es_error():
+    api = Api()
+    assert "error" in api.records_page()              # nada abierto → dato, no crash
+    assert api.summary()["loaded"] is False
 
 
 def test_archivo_inexistente_devuelve_error_no_crash():
@@ -87,7 +113,8 @@ def test_open_fastq(tmp_path):
         "@r2 lectura\nTTGGCCAATT\n+\nIIIIFFFFII\n",
         encoding="utf-8")
     api = Api()
-    s = api.open_file(str(p))
+    api.open_file(str(p))
+    s = api.summary()
     assert s["loaded"] and s["count"] == 2
     assert s["has_quality"] is True                  # FASTQ trae calidades
     assert api.records_page(0, 5)["items"][0]["length"] == 10
