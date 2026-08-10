@@ -204,15 +204,32 @@ class Api:
 
     @_guard
     def translate(self, index: int) -> dict[str, Any]:
-        """Traduce una secuencia de ADN a proteína (primer ORF desde ATG)."""
+        """Traduce una secuencia de ADN a proteína (primer ORF desde ATG).
+
+        Devuelve además la lectura codón→aminoácido de los primeros tripletes, para
+        poder EXPLICAR en la app cómo el ADN se convierte en proteína.
+        """
         r = self._get(index)
         if r.seq_type != SeqType.NUCLEOTIDE:
-            return {"error": "esta secuencia ya es una proteína"}
+            return {"error": "esta secuencia ya es una proteína (no hay nada que "
+                             "traducir; la traducción va de ADN a proteína)"}
         prot = SmartTranslator.translate(r)
+        protein = prot.to_string()
+        dna = r.to_string().upper()
+        orf = dna.find("ATG")                        # inicio del marco de lectura
+        codons = []
+        if orf >= 0:
+            for i, aa in enumerate(protein):
+                c = dna[orf + 3 * i: orf + 3 * i + 3]
+                if len(c) < 3:
+                    break
+                codons.append({"codon": c, "aa": aa})
         return {
             "index": int(index),
-            "protein": prot.to_string(),
+            "protein": protein,
             "length": prot.n_symbols,
+            "orf_start": int(orf),
+            "codons": codons[:60],
         }
 
     @_guard

@@ -70,6 +70,11 @@
   .hint{color:var(--dim);font-size:13px}
   .chart{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
   h3{margin:0 0 2px;font-size:15px}
+  .codons{display:flex;gap:8px;flex-wrap:wrap}
+  .codon{background:#0b0f1a;border:1px solid var(--line);border-radius:8px;padding:6px 9px;text-align:center;min-width:44px}
+  .cbase{font-size:13px;letter-spacing:1px;color:var(--dim)}
+  .carr{color:var(--dim);font-size:11px;line-height:1.1}
+  .caa{font-size:17px;font-weight:700;font-family:"Cascadia Code",Consolas,monospace}
   .err{color:var(--bad);background:#2a1520;border:1px solid #52212e;padding:10px 14px;
        border-radius:8px;margin:10px 0}
   .soon{color:var(--dim);border:1px dashed var(--line);border-radius:var(--radius);
@@ -251,10 +256,32 @@ async function showDetail(index){
   if(b) b.addEventListener("click",async()=>{
     const r=await API.translate(index);
     const o=$("#tr");
-    o.replaceChildren(r.error?el(`<div class="err">${esc(r.error)}</div>`)
-      :el(`<div style="margin-top:12px"><p class="hint">Proteína (${r.length} aa):</p><div class="seqbox mono">${esc(r.protein)}</div></div>`));
+    if(r.error){ o.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+    o.replaceChildren(el(`
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+        <h3>Proteína · ${r.length} aminoácidos</h3>
+        <p class="hint">Traducir convierte el ADN en proteína: la célula lee el ADN <b>de 3 en 3 letras</b> (cada trío es un <b>codón</b>) y cada codón nombra un <b>aminoácido</b>. Encadenados, los aminoácidos forman la proteína — la molécula que hace el trabajo en el cuerpo. Cada letra de abajo es un aminoácido, coloreado por su tipo:</p>
+        <div class="row" style="gap:6px;margin:6px 0 4px">${aaLegend()}</div>
+        <div class="seqbox mono">${colorProtein(r.protein)}</div>
+        ${(r.codons&&r.codons.length)?`
+          <h3 style="margin-top:16px">Cómo se lee (primeros codones)</h3>
+          <p class="hint" style="margin:0 0 8px">Cada trío de letras de ADN → un aminoácido:</p>
+          <div class="codons">${r.codons.slice(0,12).map(codonCell).join("")}</div>`:``}
+      </div>`));
   });
 }
+// ── aminoácidos: color por tipo, nombres y helpers educativos ─────────────────
+const AA_GROUP={A:"hidro",V:"hidro",L:"hidro",I:"hidro",M:"hidro",F:"hidro",W:"hidro",P:"hidro",G:"hidro",
+  S:"polar",T:"polar",C:"polar",Y:"polar",N:"polar",Q:"polar",K:"pos",R:"pos",H:"pos",D:"neg",E:"neg","*":"stop"};
+const AA_COLOR={hidro:"#8ecbff",polar:"#37d39b",pos:"#b58cff",neg:"#ff8c8c",stop:"#93a0bd",otro:"#cbd3e6"};
+const AA_LABEL={hidro:"hidrofóbico",polar:"polar",pos:"carga +",neg:"carga −",stop:"fin"};
+const AA_NAME={A:"Alanina",R:"Arginina",N:"Asparagina",D:"Ácido aspártico",C:"Cisteína",E:"Ácido glutámico",
+  Q:"Glutamina",G:"Glicina",H:"Histidina",I:"Isoleucina",L:"Leucina",K:"Lisina",M:"Metionina",F:"Fenilalanina",
+  P:"Prolina",S:"Serina",T:"Treonina",W:"Triptófano",Y:"Tirosina",V:"Valina","*":"fin (stop)"};
+function aaColor(a){ return AA_COLOR[AA_GROUP[a]||"otro"]; }
+function colorProtein(p){ return [...p].map(a=>`<span title="${a} · ${esc(AA_NAME[a]||a)}" style="color:${aaColor(a)}">${a}</span>`).join(""); }
+function aaLegend(){ return Object.entries(AA_LABEL).map(([g,lab])=>`<span class="tag" style="color:${AA_COLOR[g]};border-color:${AA_COLOR[g]}">${lab}</span>`).join(" "); }
+function codonCell(c){ return `<div class="codon"><div class="mono cbase">${esc(c.codon)}</div><div class="carr">↓</div><div class="caa" style="color:${aaColor(c.aa)}" title="${esc(AA_NAME[c.aa]||c.aa)}">${esc(c.aa)}</div></div>`; }
 
 async function renderAlinear(c){
   if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">🧬</div><div>Carga un archivo con al menos 2 secuencias.</div></div>`)); return; }
