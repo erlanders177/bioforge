@@ -68,6 +68,8 @@
   .aln .gap{color:var(--warn)}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
   .hint{color:var(--dim);font-size:13px}
+  .chart{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  h3{margin:0 0 2px;font-size:15px}
   .err{color:var(--bad);background:#2a1520;border:1px solid #52212e;padding:10px 14px;
        border-radius:8px;margin:10px 0}
   .soon{color:var(--dim);border:1px dashed var(--line);border-radius:var(--radius);
@@ -102,6 +104,7 @@
     <div class="nav" id="nav">
       <a data-view="inicio" class="active">Inicio</a>
       <a data-view="secuencias">Secuencias</a>
+      <a data-view="calidad">Calidad</a>
       <a data-view="alinear">Alinear</a>
       <a data-view="nanoporo">Nanoporo</a>
       <a data-view="evolucion">Evolución</a>
@@ -172,6 +175,7 @@ function render(){
   const c=$("#content");
   if(VIEW==="inicio")      return c.replaceChildren(viewInicio());
   if(VIEW==="secuencias")  return renderSecuencias(c);
+  if(VIEW==="calidad")     return renderCalidad(c);
   if(VIEW==="alinear")     return renderAlinear(c);
   if(VIEW==="nanoporo")    return c.replaceChildren(soon("Nanoporo","Cargar una señal POD5/FAST5 y convertirla en bases con nuestro basecaller clásico (74,5% en R9.4 real)."));
   if(VIEW==="evolucion")   return c.replaceChildren(soon("Evolución","Rankear mutaciones, juzgar predictores (evalkit) y filtrar por realidad (RealityCheck)."));
@@ -283,6 +287,58 @@ function colorAln(a,b){
     else{A+=ca;B+=cb;}
   }
   return `A  ${A}\nB  ${B}`;
+}
+
+// ── Calidad (QC estilo FastQC) ───────────────────────────────────────────────
+async function renderCalidad(c){
+  if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">📊</div><div>Carga un FASTQ para ver su informe de calidad.</div></div>`)); return; }
+  c.replaceChildren(el(`<h2>Informe de calidad</h2>`),el(`<p class="sub">Calculando…</p>`));
+  const q=await API.qc_report();
+  if(q.error){ c.replaceChildren(el(`<h2>Informe de calidad</h2>`),el(`<div class="err">${esc(q.error)}</div>`)); return; }
+  const cards=el(`<div class="cards"></div>`);
+  const card=(k,v)=>cards.append(el(`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`));
+  card("Lecturas",q.n_reads.toLocaleString());
+  card("Long. media",q.mean_len);
+  card("Calidad media","Q"+q.mean_q);
+  card("GC",q.gc_overall+"%");
+  card("≥Q20",q.pct_q20+"%");
+  card("≥Q30",q.pct_q30+"%");
+  const body=el(`<div></div>`);
+  body.append(el(`<h2>Informe de calidad</h2>`),
+              el(`<p class="sub">${esc(q.filename)} · ${q.n_reads.toLocaleString()} lecturas · ${q.min_len}–${q.max_len} nt</p>`),
+              cards,
+              chartCard("Calidad por posición","La calidad suele caer hacia el final de la lectura. Verde ≥28, amarillo 20–28, rojo <20.",svgQualityLine(q.pos_q_mean)),
+              chartCard("Calidad media por lectura","",svgBars(q.meanq_hist,{from:0,to:45,color:"#4f8cff",unit:"Q"})),
+              chartCard("Contenido GC por lectura","",svgBars(q.gc_hist,{from:0,to:100,color:"#37d39b",unit:"%"})));
+  c.replaceChildren(body);
+}
+function chartCard(title,desc,svg){
+  return el(`<div style="margin-top:16px"><h3>${esc(title)}</h3>${desc?`<p class="hint" style="margin:0 0 8px">${esc(desc)}</p>`:`<div style="height:8px"></div>`}<div class="chart">${svg}</div></div>`);
+}
+function svgQualityLine(vals){
+  const w=720,h=230,L=42,B=30,T=12,R=14,ymax=42,n=vals.length;
+  if(!n) return `<p class="hint">sin datos</p>`;
+  const X=i=>L+i*(w-L-R)/Math.max(n-1,1), Y=v=>T+(ymax-v)*(h-T-B)/ymax;
+  const band=(a,b,col)=>`<rect x="${L}" y="${Y(b).toFixed(1)}" width="${w-L-R}" height="${(Y(a)-Y(b)).toFixed(1)}" fill="${col}" opacity="0.10"/>`;
+  const yt=[0,10,20,30,40].map(v=>`<line x1="${L}" y1="${Y(v).toFixed(1)}" x2="${w-R}" y2="${Y(v).toFixed(1)}" stroke="#26314c"/><text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" fill="#93a0bd" font-size="11" text-anchor="end">${v}</text>`).join("");
+  const pts=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
+    ${band(0,20,"#ff6b6b")}${band(20,28,"#ffb454")}${band(28,42,"#37d39b")}${yt}
+    <polyline points="${pts}" fill="none" stroke="#7fb0ff" stroke-width="2"/>
+    <text x="${w/2}" y="${h-4}" fill="#93a0bd" font-size="11" text-anchor="middle">posición en la lectura</text>
+  </svg>`;
+}
+function svgBars(hist,opts){
+  const from=opts.from||0, to=Math.min(opts.to??hist.length-1,hist.length-1);
+  let vals=hist.slice(from,to+1);
+  let lo=0; while(lo<vals.length-1&&vals[lo]===0) lo++;
+  let hi=vals.length-1; while(hi>lo&&vals[hi]===0) hi--;
+  const off=from+lo; vals=vals.slice(lo,hi+1);
+  const n=vals.length||1, w=720,h=170,L=42,B=26,T=10,R=14, max=Math.max(...vals,1), bw=(w-L-R)/n;
+  const bars=vals.map((v,i)=>{const bh=(v/max)*(h-T-B);return `<rect x="${(L+i*bw+1).toFixed(1)}" y="${(h-B-bh).toFixed(1)}" width="${Math.max(bw-2,1).toFixed(1)}" height="${bh.toFixed(1)}" fill="${opts.color||"#4f8cff"}" opacity="0.85"/>`;}).join("");
+  const lab=i=>`<text x="${(L+i*bw+bw/2).toFixed(1)}" y="${h-8}" fill="#93a0bd" font-size="11" text-anchor="middle">${off+i}${opts.unit||""}</text>`;
+  const xl=[...new Set([0,Math.floor(n/2),n-1])].map(lab).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">${bars}${xl}</svg>`;
 }
 
 function soon(title,desc){

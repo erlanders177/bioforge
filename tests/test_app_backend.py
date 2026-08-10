@@ -120,5 +120,24 @@ def test_open_fastq(tmp_path):
     assert api.records_page(0, 5)["items"][0]["length"] == 10
 
 
+def test_qc_report_fastq(tmp_path):
+    """El informe de calidad devuelve métricas y series para los gráficos."""
+    p = tmp_path / "reads.fastq"
+    p.write_text("".join(
+        f"@r{i}\nACGTACGTAC\n+\nIIIIFFFF,,\n" for i in range(20)), encoding="utf-8")
+    api = Api(); api.open_file(str(p))
+    q = api.qc_report()
+    assert q["n_reads"] == 20
+    assert 0 <= q["mean_q"] <= 60
+    assert len(q["pos_q_mean"]) == 10                # una calidad por posición
+    assert len(q["meanq_hist"]) >= 40 and len(q["gc_hist"]) == 101
+    assert len(q["base_frac"]) == 5                  # A/C/G/T/N por posición
+
+
+def test_qc_report_fasta_da_error_amable(fasta):
+    api = Api(); api.open_file(fasta)                # FASTA no tiene calidades
+    assert "error" in api.qc_report()
+
+
 def test_ping():
     assert Api().ping()["ok"] is True

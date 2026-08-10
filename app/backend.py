@@ -28,6 +28,7 @@ from bioforge import (
     SmartTranslator,
     compute_stats,
 )
+from bioforge.qcreport import run as _qc_run
 
 
 def _guard(fn: Callable) -> Callable:
@@ -71,7 +72,7 @@ class Api:
             qualities = []
         if not records:
             return {"error": "el archivo no contiene secuencias legibles"}
-        self.datasets.append({"filename": os.path.basename(path),
+        self.datasets.append({"filename": os.path.basename(path), "path": path,
                               "records": records, "qualities": qualities})
         self.active = len(self.datasets) - 1
         return self.workspace()
@@ -203,6 +204,35 @@ class Api:
             "aligned_b": res.aligned_b,
             "mutations": muts,
             "n_mutations": len(muts),
+        }
+
+    # ── informe de calidad (FASTQ) ───────────────────────────────────────────
+    @_guard
+    def qc_report(self) -> dict[str, Any]:
+        """Informe de calidad estilo FastQC del FASTQ activo (una pasada columnar)."""
+        if self.active < 0 or not self.datasets:
+            return {"error": "no hay ningún archivo activo"}
+        ds = self.datasets[self.active]
+        if not ds["qualities"]:
+            return {"error": "el informe de calidad es para FASTQ (con calidades); "
+                             "este archivo no las tiene."}
+        r = _qc_run(ds["path"])
+        return {
+            "filename": ds["filename"],
+            "n_reads": int(r.n_reads),
+            "total_bases": int(r.total_bases),
+            "min_len": int(r.min_len),
+            "max_len": int(r.max_len),
+            "mean_len": round(r.mean_len, 1),
+            "gc_overall": round(r.gc_overall * 100, 1),
+            "mean_q": round(r.mean_q_overall, 1),
+            "pct_q20": round(r.pct_q20, 1),
+            "pct_q30": round(r.pct_q30, 1),
+            "pos_q_mean": [round(float(x), 2) for x in r.pos_q_mean],   # calidad/posición
+            "meanq_hist": [int(x) for x in r.meanq_hist],               # hist. calidad media
+            "gc_hist": [int(x) for x in r.gc_hist],                     # hist. %GC
+            "base_frac": [[round(float(x), 4) for x in row]             # composición/posición
+                          for row in r.base_frac.tolist()],
         }
 
     # ── util ─────────────────────────────────────────────────────────────────
