@@ -50,6 +50,11 @@
   th{color:var(--dim);font-weight:600;position:sticky;top:0;background:var(--bg)}
   tr.pick{cursor:pointer}
   tr.pick:hover td{background:var(--panel)}
+  table.seqtable{table-layout:fixed}
+  .seqtable th:nth-child(1),.seqtable td:nth-child(1){width:46px}
+  .seqtable th:nth-child(3),.seqtable td:nth-child(3){width:96px}
+  .seqtable th:nth-child(4),.seqtable td:nth-child(4){width:74px}
+  .seqtable td:nth-child(2),.seqtable td.prev{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
   .tag.dna{color:#8ecbff;border-color:#2b4a70}
   .tag.prot{color:#c8a8ff;border-color:#4a3a70}
@@ -161,18 +166,21 @@ function summaryCards(s){
 
 async function renderSecuencias(c){
   if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">📄</div><div>Aún no hay archivo. Pulsa "Abrir archivo…".</div></div>`)); return; }
-  c.replaceChildren(el(`<h2>Secuencias</h2>`),el(`<p class="sub">${STATE.summary.count} en <b>${esc(STATE.summary.filename)}</b></p>`),summaryCards(STATE.summary));
-  const page=await API.records_page(0,200);
-  const t=el(`<table><thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Largo</th><th>Vista previa</th></tr></thead><tbody></tbody></table>`);
-  const tb=$("tbody",t);
-  page.items.forEach(it=>{
+  const page=await API.records_page(0,500);
+  // se construye la TABLA ENTERA como un solo string: un <tr> suelto lo descarta el
+  // navegador (solo vale dentro de <table>), por eso antes se amontonaban las filas.
+  const rows=page.items.map(it=>{
     const tag=it.type==="ADN"?`<span class="tag dna">ADN</span>`:`<span class="tag prot">proteína</span>`;
-    const tr=el(`<tr class="pick"><td>${it.index}</td><td>${esc(it.header)}</td><td>${tag}</td><td>${it.length}</td><td class="mono">${esc(it.preview)}…</td></tr>`);
-    tr.addEventListener("click",()=>showDetail(it.index));
-    tb.append(tr);
-  });
-  c.append(t);
-  c.append(el(`<div id="detail"></div>`));
+    return `<tr class="pick" data-index="${it.index}"><td>${it.index}</td><td>${esc(it.header)}</td>`
+         + `<td>${tag}</td><td>${it.length}</td><td class="mono prev">${esc(it.preview)}…</td></tr>`;
+  }).join("");
+  const table=el(`<table class="seqtable"><thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Largo</th><th>Vista previa</th></tr></thead><tbody>${rows}</tbody></table>`);
+  c.replaceChildren(
+    el(`<h2>Secuencias</h2>`),
+    el(`<p class="sub">${STATE.summary.count} en <b>${esc(STATE.summary.filename)}</b></p>`),
+    summaryCards(STATE.summary), table, el(`<div id="detail"></div>`));
+  table.querySelectorAll("tbody tr").forEach(tr=>
+    tr.addEventListener("click",()=>showDetail(+tr.dataset.index)));
 }
 
 async function showDetail(index){
