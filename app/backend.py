@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 from typing import Any, Callable
 
+import numpy as np
+
 from bioforge import (
     BioForgeError,
     SeqType,
@@ -28,7 +30,33 @@ from bioforge import (
     SmartTranslator,
     compute_stats,
 )
+from bioforge.nanopore import basecall as _basecall
+from bioforge.nanopore import read_fast5 as _read_fast5
+from bioforge.nanopore import read_pod5 as _read_pod5
 from bioforge.qcreport import run as _qc_run
+
+# pore model R9.4 6-mer de ONT, empaquetado con la app (ver app/data/README.md).
+_MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", "r9.4_6mer.model")
+_PORE_MODEL = None
+
+
+def _pore_model():
+    """Carga (una vez) la tabla k-mero→corriente para el basecaller."""
+    global _PORE_MODEL
+    if _PORE_MODEL is None:
+        code = {"A": 0, "C": 1, "G": 2, "T": 3}
+        mean = np.zeros(4096)
+        with open(_MODEL_PATH) as f:
+            for ln in f:
+                if ln.startswith("kmer"):
+                    continue
+                parts = ln.split()
+                idx = 0
+                for ch in parts[0]:
+                    idx = idx * 4 + code[ch]
+                mean[idx] = float(parts[1])
+        _PORE_MODEL = mean
+    return _PORE_MODEL
 
 
 def _guard(fn: Callable) -> Callable:
@@ -55,6 +83,8 @@ class Api:
     def __init__(self) -> None:
         self.datasets: list[dict] = []   # cada uno: {filename, records, qualities}
         self.active: int = -1            # índice del archivo activo (-1 = ninguno)
+        self.signals: list = []          # SignalRead de nanoporo cargadas
+        self.signal_filename: str = ""
 
     # ── carga y gestión de MÚLTIPLES archivos ────────────────────────────────
     @_guard
@@ -233,6 +263,56 @@ class Api:
             "gc_hist": [int(x) for x in r.gc_hist],                     # hist. %GC
             "base_frac": [[round(float(x), 4) for x in row]             # composición/posición
                           for row in r.base_frac.tolist()],
+        }
+
+    # ── nanoporo: señal cruda → bases ─────────────────────────────────────────
+    @_guard
+    def open_signal(self, path: str) -> dict[str, Any]:
+        """Carga un archivo de señal de nanoporo (POD5/FAST5) y lista sus lecturas."""
+        if not path or not os.path.exists(path):
+            return {"error": "no existe el archivo"}
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pod5":
+            sigs = list(_read_pod5(path))
+        elif ext in (".fast5", ".h5"):
+            sigs = list(_read_fast5(path))
+        else:
+            return {"error": "formato de señal no reconocido (usa .pod5 o .fast5)"}
+        if not sigs:
+            return {"error": "el archivo no contiene lecturas de señal"}
+        self.signals = sigs
+        self.signal_filename = os.path.basename(path)
+        return {
+            "filename": self.signal_filename,
+            "n": len(sigs),
+            "reads": [{"index": i, "read_id": s.read_id,
+                       "samples": int(s.n_samples),
+                       "sample_rate": float(s.sample_rate)}
+                      for i, s in enumerate(sigs[:300])],
+        }
+
+    @_guard
+    def basecall_read(self, index: int) -> dict[str, Any]:
+        """Convierte la señal de una lectura en bases con el basecaller clásico."""
+        idx = int(index)
+        if not 0 <= idx < len(self.signals):
+            return {"error": "lectura no válida"}
+        s = self.signals[idx]
+        pa = s.to_picoamperes()
+        # se acota a un tramo para que responda en segundos (~1000 bases); se recorta
+        # el líder/adaptador del inicio, como en el basecaller.
+        chunk = pa[1000:11000] if pa.size > 12000 else pa
+        bases = _basecall(chunk, _pore_model(), 6)
+        # squiggle submuestreado para el gráfico (los primeros ~4000 muestras)
+        head = pa[:4000]
+        step = max(1, head.size // 600)
+        return {
+            "index": idx,
+            "read_id": s.read_id,
+            "n_samples": int(s.n_samples),
+            "bases": bases,
+            "n_bases": len(bases),
+            "signal": [round(float(x), 1) for x in head[::step]],
         }
 
     # ── util ─────────────────────────────────────────────────────────────────

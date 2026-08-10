@@ -6,6 +6,7 @@ interfaz invoca sí: son métodos que reciben tipos simples y devuelven dicciona
 Aquí se prueban enteros, sin abrir ninguna ventana — que es justo el diseño.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -137,6 +138,43 @@ def test_qc_report_fastq(tmp_path):
 def test_qc_report_fasta_da_error_amable(fasta):
     api = Api(); api.open_file(fasta)                # FASTA no tiene calidades
     assert "error" in api.qc_report()
+
+
+def test_nanoporo_open_signal_y_basecall(tmp_path):
+    """Cargar una señal FAST5 y basecallearla dentro de la app (extremo a extremo)."""
+    h5py = pytest.importorskip("h5py")
+    import numpy as np
+    sig = (np.sin(np.arange(9000) / 12) * 90 + 300).astype(np.int16)
+    p = tmp_path / "s.fast5"
+    with h5py.File(str(p), "w") as f:
+        ch = f.create_group("UniqueGlobalKey/channel_id")
+        ch.attrs["digitisation"] = 8192.0
+        ch.attrs["offset"] = 26.0
+        ch.attrs["range"] = 1444.86
+        ch.attrs["sampling_rate"] = 4000.0
+        rd = f.create_group("Raw/Reads/Read_1")
+        rd.attrs["read_id"] = b"read-nano-0001"
+        rd.create_dataset("Signal", data=sig)
+
+    api = Api()
+    r = api.open_signal(str(p))
+    assert r["n"] == 1 and r["reads"][0]["samples"] == 9000
+    bc = api.basecall_read(0)
+    assert bc["n_bases"] > 0 and isinstance(bc["bases"], str)
+    assert len(bc["signal"]) > 0                     # puntos para el gráfico
+
+
+def test_nanoporo_formato_no_valido():
+    api = Api()
+    # extensión no reconocida → error amable (creamos un archivo cualquiera)
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as t:
+        t.write(b"no soy senal")
+        name = t.name
+    try:
+        assert "error" in api.open_signal(name)
+    finally:
+        os.unlink(name)
 
 
 def test_ping():

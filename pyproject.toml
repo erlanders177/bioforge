@@ -62,6 +62,7 @@ app = [
     # App de escritorio (v10.0): ventana nativa LOCAL con interfaz web (sin servidor).
     # OPCIONAL — el motor y la CLI funcionan sin esto.
     "pywebview>=5.0",
+    "h5py>=3.0",      # leer señal FAST5 en la pestaña Nanoporo (POD5 → añade 'pod5')
 ]
 
 [project.urls]

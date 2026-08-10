@@ -43,6 +43,18 @@ class DesktopApi(Api):
             return {"cancelled": True}
         return self.open_file(paths[0])
 
+    def pick_and_open_signal(self) -> dict:
+        """Diálogo de archivos para señal de nanoporo (POD5/FAST5)."""
+        try:
+            paths = self.window.create_file_dialog(
+                webview.FileDialog.OPEN, allow_multiple=False,
+                file_types=("Señal nanoporo (*.pod5;*.fast5)", "Todos los archivos (*.*)"))
+        except Exception as e:                       # noqa: BLE001
+            return {"error": f"no se pudo abrir el diálogo: {e}"}
+        if not paths:
+            return {"cancelled": True}
+        return self.open_signal(paths[0])
+
 
 def main() -> None:
     api = DesktopApi()

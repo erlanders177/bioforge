@@ -177,7 +177,7 @@ function render(){
   if(VIEW==="secuencias")  return renderSecuencias(c);
   if(VIEW==="calidad")     return renderCalidad(c);
   if(VIEW==="alinear")     return renderAlinear(c);
-  if(VIEW==="nanoporo")    return c.replaceChildren(soon("Nanoporo","Cargar una señal POD5/FAST5 y convertirla en bases con nuestro basecaller clásico (74,5% en R9.4 real)."));
+  if(VIEW==="nanoporo")    return renderNanoporo(c);
   if(VIEW==="evolucion")   return c.replaceChildren(soon("Evolución","Rankear mutaciones, juzgar predictores (evalkit) y filtrar por realidad (RealityCheck)."));
 }
 
@@ -339,6 +339,57 @@ function svgBars(hist,opts){
   const lab=i=>`<text x="${(L+i*bw+bw/2).toFixed(1)}" y="${h-8}" fill="#93a0bd" font-size="11" text-anchor="middle">${off+i}${opts.unit||""}</text>`;
   const xl=[...new Set([0,Math.floor(n/2),n-1])].map(lab).join("");
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">${bars}${xl}</svg>`;
+}
+
+// ── Nanoporo (señal → bases) ─────────────────────────────────────────────────
+let SIGNALS=null;   // señal de nanoporo cargada
+async function renderNanoporo(c){
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Nanoporo · señal → bases</h2>`),
+    el(`<p class="sub">Carga la señal eléctrica cruda (POD5/FAST5) y conviértela en bases con nuestro basecaller clásico — NumPy puro, sin IA.</p>`));
+  const bar=el(`<div class="row"><button class="primary" id="openSig">Abrir señal…</button>
+    ${SIGNALS?`<span class="hint">${esc(SIGNALS.filename)} · ${SIGNALS.n} lectura(s)</span>`:``}</div>`);
+  box.append(bar);
+  c.replaceChildren(box);
+  $("#openSig").addEventListener("click",async()=>{
+    const r=await API.pick_and_open_signal();
+    if(r.cancelled) return;
+    if(r.error){ box.append(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+    SIGNALS=r; renderNanoporo(c);
+  });
+  if(!SIGNALS){
+    box.append(el(`<div class="soon">Sin señal cargada. Prueba con <b>ejemplos/senal_nanoporo_1.fast5</b>.<br>La primera vez puede pedir instalar el lector de señal (pod5/h5py).</div>`));
+    return;
+  }
+  const rows=SIGNALS.reads.map(rd=>`<tr class="pick" data-i="${rd.index}"><td>${rd.index}</td><td class="mono">${esc(rd.read_id.slice(0,26))}…</td><td>${rd.samples.toLocaleString()}</td></tr>`).join("");
+  const table=el(`<table class="seqtable"><thead><tr><th>#</th><th>ID de lectura</th><th>Muestras</th></tr></thead><tbody>${rows}</tbody></table>`);
+  box.append(el(`<p class="hint" style="margin-top:14px">Haz clic en una lectura para basecallearla (tarda unos segundos: es cálculo real):</p>`),table,el(`<div id="bcOut"></div>`));
+  table.querySelectorAll("tbody tr").forEach(tr=>tr.addEventListener("click",()=>doBasecall(+tr.dataset.i)));
+}
+async function doBasecall(index){
+  const out=$("#bcOut"); if(!out)return;
+  out.replaceChildren(el(`<p class="hint">Basecalling… (unos segundos)</p>`));
+  const r=await API.basecall_read(index);
+  if(r.error){ out.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+  out.replaceChildren(el(`
+    <div style="margin-top:10px">
+      <div class="cards">
+        <div class="card"><div class="k">Bases obtenidas</div><div class="v">${r.n_bases}</div></div>
+        <div class="card"><div class="k">Muestras</div><div class="v">${r.n_samples.toLocaleString()}</div></div>
+      </div>
+      <h3>Señal medida (squiggle)</h3><div class="chart">${svgSignal(r.signal)}</div>
+      <h3 style="margin-top:14px">Bases</h3><div class="seqbox mono">${esc(r.bases)}</div>
+      <p class="hint">Basecaller clásico (Viterbi, NumPy puro, sin IA). ~74% de acierto en R9.4 real; llegar al 99% de Dorado exige una red neuronal.</p>
+    </div>`));
+}
+function svgSignal(vals){
+  const w=720,h=170,L=42,B=22,T=10,R=14,n=vals.length; if(!n) return "";
+  const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1;
+  const X=i=>L+i*(w-L-R)/Math.max(n-1,1), Y=v=>T+(mx-v)*(h-T-B)/rng;
+  const pts=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
+    <polyline points="${pts}" fill="none" stroke="#37d39b" stroke-width="1.3"/>
+    <text x="${w/2}" y="${h-4}" fill="#93a0bd" font-size="11" text-anchor="middle">corriente (pA) a lo largo de las primeras muestras</text></svg>`;
 }
 
 function soon(title,desc){

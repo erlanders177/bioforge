@@ -28,11 +28,11 @@ if not defined PY (
   exit /b 1
 )
 
-REM --- asegurar pywebview la primera vez ---
-%PY% -c "import webview" 2>nul
+REM --- asegurar dependencias la primera vez (pywebview + h5py para nanoporo) ---
+%PY% -c "import webview, h5py" 2>nul
 if errorlevel 1 (
-  echo   Instalando pywebview la primera vez, espera un momento...
-  %PY% -m pip install pywebview
+  echo   Instalando dependencias la primera vez ^(pywebview, h5py^), espera...
+  %PY% -m pip install pywebview h5py
   echo(
 )
 
