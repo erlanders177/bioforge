@@ -126,9 +126,19 @@ const $ = (s,el=document)=>el.querySelector(s);
 const el = (h)=>{const d=document.createElement("div");d.innerHTML=h.trim();return d.firstChild;};
 const esc = (s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
+// Conecta con Python de forma PACIENTE: el motor de render de Windows (WebView2)
+// puede tardar varios segundos en exponer el puente, y a veces el evento se pierde.
+// Por eso se sondea window.pywebview.api hasta 15 s, además de escuchar el evento.
 function ready(fn){
-  if(window.pywebview && window.pywebview.api){API=window.pywebview.api;fn();}
-  else window.addEventListener("pywebviewready",()=>{API=window.pywebview.api;fn();});
+  let done=false;
+  const go=()=>{ if(done||!(window.pywebview&&window.pywebview.api))return; done=true; API=window.pywebview.api; fn(); };
+  if(window.pywebview && window.pywebview.api){ go(); return; }
+  window.addEventListener("pywebviewready",go);
+  let n=0; const iv=setInterval(()=>{
+    if(done){ clearInterval(iv); return; }
+    if(window.pywebview && window.pywebview.api){ clearInterval(iv); go(); }
+    else if(++n>75){ clearInterval(iv); toast("No se pudo conectar con Python tras 15 s. Cierra la app y vuelve a abrir BioForge.bat; si sigue igual, dímelo."); }
+  },200);
 }
 
 // ── navegación ────────────────────────────────────────────────────────────
@@ -439,10 +449,8 @@ function soon(title,desc){
 
 // arranque
 $("#openBtn").disabled=false;                  // siempre clicable; el handler avisa si el puente no está
-ready(()=>{ renderTabs(); render(); });
-setTimeout(()=>{ if(!API) render(); }, 300);   // muestra algo aunque el puente tarde
-setTimeout(()=>{ if(!API) toast("Aviso: el puente con Python no se conectó (window.pywebview.api no está disponible). Dímelo para arreglarlo."); }, 2500);
-render();
+render();                                       // pinta la interfaz ya
+ready(()=>{ renderTabs(); render(); });         // conecta con Python (paciente, reintenta 15 s)
 </script>
 </body>
 </html>

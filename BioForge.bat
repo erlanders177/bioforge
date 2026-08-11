@@ -39,8 +39,8 @@ if errorlevel 1 (
 REM --- lector de nanoporo (h5py) en SEGUNDO PLANO: no bloquea la app ---
 %PY% -c "import h5py" 2>nul
 if errorlevel 1 (
-  echo   ^(instalando el lector de nanoporo en segundo plano; estara listo en 1-2 min^)
-  start "" /b %PY% -m pip install h5py >nul 2>&1
+  echo   ^(el lector de nanoporo se instalara solo en segundo plano tras abrir la app^)
+  start "" /b cmd /c "timeout /t 10 /nobreak >nul & %PY% -m pip install h5py >nul 2>&1"
 )
 
 REM --- abrir la app (se abre ya; el nanoporo estara listo en cuanto acabe la de arriba) ---
