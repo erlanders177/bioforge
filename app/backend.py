@@ -18,9 +18,18 @@ Así el backend se prueba entero SIN necesidad de abrir ninguna ventana.
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any, Callable
 
 import numpy as np
+
+
+def app_dir() -> str:
+    """Carpeta base de recursos — funciona desde el código Y desde el .exe empaquetado.
+
+    PyInstaller extrae los datos a ``sys._MEIPASS``; desde código es la carpeta ``app``.
+    """
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 from bioforge import (
     BioForgeError,
@@ -38,7 +47,7 @@ from bioforge.nanopore import read_pod5 as _read_pod5
 from bioforge.qcreport import run as _qc_run
 
 # pore model R9.4 6-mer de ONT, empaquetado con la app (ver app/data/README.md).
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "data", "r9.4_6mer.model")
+_MODEL_PATH = os.path.join(app_dir(), "data", "r9.4_6mer.model")
 _PORE_MODEL = None
 
 

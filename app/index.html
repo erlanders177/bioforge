@@ -297,7 +297,8 @@ async function renderAlinear(c){
   if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">🧬</div><div>Carga un archivo con al menos 2 secuencias.</div></div>`)); return; }
   const page=await API.records_page(0,500);
   const opts=page.items.map(it=>`<option value="${it.index}">#${it.index} · ${esc(it.header)} (${it.length})</option>`).join("");
-  c.replaceChildren(el(`<h2>Alinear dos secuencias</h2>`),el(`<p class="sub">Compara dos y ve sus diferencias (mutaciones).</p>`));
+  c.replaceChildren(el(`<h2>Alinear dos secuencias</h2>`),
+    el(`<p class="sub"><b>Alinear</b> es poner dos secuencias una encima de otra para ver en qué se parecen y en qué se diferencian. La <b>identidad</b> es el % de posiciones iguales; las <b>mutaciones</b> son los cambios: <span style="color:#ff6b6b">sustitución</span> (una letra por otra), o un hueco (<span style="color:#ffb454">inserción/deleción</span>: a una le sobra o le falta una letra).</p>`));
   const bar=el(`<div class="selbar">
      <span>A</span><select id="selA">${opts}</select>
      <span>B</span><select id="selB">${opts}</select>
@@ -316,6 +317,7 @@ async function renderAlinear(c){
         <div class="card"><div class="k">Mutaciones</div><div class="v">${r.n_mutations}</div></div>
         <div class="card"><div class="k">Longitud</div><div class="v">${r.length}</div></div>
       </div>
+      <p class="hint" style="margin:2px 0 6px">Fila A arriba, fila B abajo. En <span style="color:#ff6b6b">rojo</span> las letras que difieren; en <span style="color:#ffb454">naranja</span> los huecos (falta/sobra una letra). Todo lo demás coincide.</p>
       <div class="aln mono">${colorAln(r.aligned_a,r.aligned_b)}</div>`));
   });
 }
