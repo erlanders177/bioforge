@@ -68,6 +68,12 @@
   .aln .gap{color:var(--warn)}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
   .hint{color:var(--dim);font-size:13px}
+  .explain{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+           border-radius:10px;padding:12px 16px;margin:0 0 18px;color:#b9c4db;font-size:13.5px;line-height:1.65}
+  .explain b{color:var(--text)}
+  .explain .t{display:block;color:var(--text);font-weight:600;margin-bottom:4px;font-size:14px}
+  .explain ul{margin:6px 0 0;padding-left:18px}
+  .explain li{margin:2px 0}
   .chart{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
   h3{margin:0 0 2px;font-size:15px}
   .codons{display:flex;gap:8px;flex-wrap:wrap}
@@ -125,6 +131,7 @@ let VIEW = "inicio";
 const $ = (s,el=document)=>el.querySelector(s);
 const el = (h)=>{const d=document.createElement("div");d.innerHTML=h.trim();return d.firstChild;};
 const esc = (s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const explain = (html)=>el(`<div class="explain">${html}</div>`);
 
 // Conecta con Python de forma PACIENTE: el motor de render de Windows (WebView2)
 // puede tardar varios segundos en exponer el puente, y a veces el evento se pierde.
@@ -206,6 +213,15 @@ function viewInicio(){
   const box=el(`<div></div>`);
   box.append(el(`<h2>Bienvenido a BioForge</h2>`));
   box.append(el(`<p class="sub">Un motor bioinformático que corre entero en tu ordenador. Tus datos no salen de aquí.</p>`));
+  box.append(explain(`<span class="t">¿Qué es esto?</span>
+    El <b>ADN</b> es el manual de instrucciones de todo ser vivo, escrito con solo 4 letras (A, C, G, T). Este programa lee esos archivos de letras y te deja <b>explorarlos y analizarlos con clics</b>, sin escribir código. Cada pestaña de la izquierda hace una cosa:
+    <ul>
+      <li><b>Secuencias</b> — mira las secuencias que cargaste (su tipo y tamaño).</li>
+      <li><b>Calidad</b> — si vienen de una máquina de secuenciación, mide cómo de fiables son las letras.</li>
+      <li><b>Alinear</b> — compara dos secuencias y ve en qué se diferencian (mutaciones).</li>
+      <li><b>Nanoporo</b> — convierte la señal eléctrica cruda de un secuenciador en letras de ADN.</li>
+      <li><b>Evolución</b> — predice qué mutaciones de una proteína podrían extenderse con el tiempo.</li>
+    </ul>`));
   if(!s){
     box.append(el(`<div class="empty"><div class="big">🧬</div>
       <div>Abre un archivo FASTA/FASTQ para empezar</div>
@@ -242,6 +258,13 @@ async function renderSecuencias(c){
   c.replaceChildren(
     el(`<h2>Secuencias</h2>`),
     el(`<p class="sub">${STATE.summary.count} en <b>${esc(STATE.summary.filename)}</b></p>`),
+    explain(`<span class="t">¿Qué es una secuencia?</span>
+      Una <b>secuencia</b> es una tira de letras que representa una molécula biológica:
+      <ul>
+        <li><b>ADN</b> — las 4 letras A, C, G, T. Es el manual de instrucciones de la célula.</li>
+        <li><b>Proteína</b> — 20 letras (una por aminoácido). Es lo que el ADN "fabrica" y hace el trabajo en el cuerpo.</li>
+      </ul>
+      La tabla lista cada secuencia del archivo con su <b>tipo</b>, su <b>tamaño</b> (nº de letras) y una vista previa. <b>Haz clic en una fila</b> para ver su composición y, si es ADN, traducirla a proteína.`),
     summaryCards(STATE.summary), table, el(`<div id="detail"></div>`));
   table.querySelectorAll("tbody tr").forEach(tr=>
     tr.addEventListener("click",()=>showDetail(+tr.dataset.index)));
@@ -298,7 +321,14 @@ async function renderAlinear(c){
   const page=await API.records_page(0,500);
   const opts=page.items.map(it=>`<option value="${it.index}">#${it.index} · ${esc(it.header)} (${it.length})</option>`).join("");
   c.replaceChildren(el(`<h2>Alinear dos secuencias</h2>`),
-    el(`<p class="sub"><b>Alinear</b> es poner dos secuencias una encima de otra para ver en qué se parecen y en qué se diferencian. La <b>identidad</b> es el % de posiciones iguales; las <b>mutaciones</b> son los cambios: <span style="color:#ff6b6b">sustitución</span> (una letra por otra), o un hueco (<span style="color:#ffb454">inserción/deleción</span>: a una le sobra o le falta una letra).</p>`));
+    explain(`<span class="t">¿Qué es alinear?</span>
+      Es poner dos secuencias <b>una encima de otra</b> para ver en qué se parecen y en qué se diferencian — como comparar dos textos casi iguales.
+      <ul>
+        <li><b>Identidad</b> — el % de posiciones que coinciden (100% = idénticas).</li>
+        <li><b>Sustitución</b> — una letra cambiada por otra (<span style="color:#ff6b6b">en rojo</span>).</li>
+        <li><b>Inserción / deleción</b> — a una secuencia le sobra o le falta una letra: un hueco (<span style="color:#ffb454">en naranja</span>).</li>
+      </ul>
+      Esas diferencias son las <b>mutaciones</b>. Elige dos secuencias abajo y pulsa Alinear.`));
   const bar=el(`<div class="selbar">
      <span>A</span><select id="selA">${opts}</select>
      <span>B</span><select id="selB">${opts}</select>
@@ -350,10 +380,17 @@ async function renderCalidad(c){
   const body=el(`<div></div>`);
   body.append(el(`<h2>Informe de calidad</h2>`),
               el(`<p class="sub">${esc(q.filename)} · ${q.n_reads.toLocaleString()} lecturas · ${q.min_len}–${q.max_len} nt</p>`),
+              explain(`<span class="t">¿Qué es la "calidad"?</span>
+                Las máquinas de secuenciación no leen el ADN perfecto: por cada letra apuntan <b>cómo de seguras están</b> de haber acertado. Ese número es la <b>calidad Phred</b> (Q): <b>Q20</b> = 1 error de cada 100; <b>Q30</b> = 1 de cada 1000. Cuanto más alto, mejor. Este informe (estilo FastQC) resume esa fiabilidad:
+                <ul>
+                  <li><b>Calidad por posición</b> — la calidad media en cada punto de la lectura. Es normal que <b>baje hacia el final</b>.</li>
+                  <li><b>Calidad media por lectura</b> — cuántas lecturas hay de cada nivel de calidad.</li>
+                  <li><b>Contenido GC</b> — qué porcentaje de las letras son G o C (una huella típica de cada organismo).</li>
+                </ul>`),
               cards,
               chartCard("Calidad por posición","La calidad suele caer hacia el final de la lectura. Verde ≥28, amarillo 20–28, rojo <20.",svgQualityLine(q.pos_q_mean)),
-              chartCard("Calidad media por lectura","",svgBars(q.meanq_hist,{from:0,to:45,color:"#4f8cff",unit:"Q"})),
-              chartCard("Contenido GC por lectura","",svgBars(q.gc_hist,{from:0,to:100,color:"#37d39b",unit:"%"})));
+              chartCard("Calidad media por lectura","Cada barra: cuántas lecturas tienen esa calidad media.",svgBars(q.meanq_hist,{from:0,to:45,color:"#4f8cff",unit:"Q"})),
+              chartCard("Contenido GC por lectura","Cada barra: cuántas lecturas tienen ese % de G+C.",svgBars(q.gc_hist,{from:0,to:100,color:"#37d39b",unit:"%"})));
   c.replaceChildren(body);
 }
 function chartCard(title,desc,svg){
@@ -390,7 +427,14 @@ let SIGNALS=null;   // señal de nanoporo cargada
 async function renderNanoporo(c){
   const box=el(`<div></div>`);
   box.append(el(`<h2>Nanoporo · señal → bases</h2>`),
-    el(`<p class="sub">Carga la señal eléctrica cruda (POD5/FAST5) y conviértela en bases con nuestro basecaller clásico — NumPy puro, sin IA.</p>`));
+    el(`<p class="sub">Carga la señal eléctrica cruda (POD5/FAST5) y conviértela en bases con nuestro basecaller propio.</p>`),
+    explain(`<span class="t">¿Qué es esto?</span>
+      Un secuenciador de <b>nanoporo</b> (como los MinION de Oxford Nanopore) hace pasar la hebra de ADN por un poro diminuto y mide la <b>corriente eléctrica</b>: cada grupo de letras que pasa la altera de una forma distinta. El resultado es una señal ondulada (el <b>squiggle</b>).
+      <ul>
+        <li>Convertir esa señal en letras se llama <b>basecalling</b>.</li>
+        <li>Nuestro basecaller lo hace con <b>matemáticas puras (Viterbi), sin IA ni GPU</b> — acierta ~74% en datos reales R9.4. Los profesionales (Dorado) llegan al ~99% con redes neuronales; esa diferencia la contamos con honestidad.</li>
+        <li>Al final puedes pulsar <b>"Usar en las otras pestañas"</b> para analizar esas bases como cualquier secuencia.</li>
+      </ul>`));
   const bar=el(`<div class="row"><button class="primary" id="openSig">Abrir señal…</button>
     ${SIGNALS?`<span class="hint">${esc(SIGNALS.filename)} · ${SIGNALS.n} lectura(s)</span>`:``}</div>`);
   box.append(bar);
@@ -451,7 +495,15 @@ async function renderEvolucion(c){
   const r=await API.predict_mutations(15);
   const box=el(`<div></div>`);
   box.append(el(`<h2>Evolución · ¿qué mutaciones subirán?</h2>`),
-    el(`<p class="sub">A partir de muchas secuencias de la MISMA proteína a lo largo del tiempo, ordena qué cambios tienen más probabilidad de aumentar. Predecir evolución es <b>muy difícil</b>: lo mostramos con honestidad, no como una bola de cristal.</p>`));
+    el(`<p class="sub">A partir de muchas secuencias de la MISMA proteína a lo largo del tiempo.</p>`),
+    explain(`<span class="t">¿Qué hace esto?</span>
+      Los virus y organismos <b>mutan</b> con el tiempo: cambian letras de sus proteínas. Algunas de esas mutaciones se extienden por la población y otras desaparecen. Aquí intentamos <b>ordenar qué mutaciones tienen más probabilidad de aumentar</b>.
+      <ul>
+        <li><b>Score</b> — prioridad relativa que le da el modelo (más alto = más "sospechosa" de subir).</li>
+        <li><b>Nueva</b> — mutación que aún no se había visto en el histórico.</li>
+        <li><b>¿Sobreviviría X?</b> — abajo puedes preguntar por una mutación concreta y ver si tiene tracción real (<b>OBSERVADO</b> = ya circuló, es evidencia; <b>ESTIMADO</b> = solo una conjetura del modelo).</li>
+      </ul>
+      Aviso honesto: predecir evolución es <b>de lo más difícil que hay</b>. Nuestro modelo apenas supera al azar en lo verdaderamente nuevo — lo mostramos tal cual, sin vender una bola de cristal.`));
   if(r.error){ box.append(el(`<div class="err">${esc(r.error)}</div>`)); c.replaceChildren(box); return; }
   box.append(el(`<p class="hint" style="margin:0 0 10px">Sobre ${r.n_sequences} secuencias. "Score" = prioridad relativa; "nueva" = aún no vista en el histórico.</p>`));
   const rows=r.mutations.map((m,i)=>`<tr><td>${i+1}</td><td class="mono" style="font-size:15px">sitio ${m.site} → <b style="color:${aaColor(m.allele)}">${esc(m.allele)}</b></td><td>${m.score.toFixed(2)}</td><td>${m.novel?'<span class="tag" style="color:#ffb454;border-color:#5a4522">nueva</span>':''}</td></tr>`).join("");

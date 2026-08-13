@@ -44,7 +44,7 @@ exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="BioForge",
-    console=True,            # 1ª build: consola visible para ver errores (luego → False)
+    console=False,           # app de ventana: sin consola negra (build final)
     disable_windowed_traceback=False,
 )
 coll = COLLECT(
