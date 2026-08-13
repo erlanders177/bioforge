@@ -24,11 +24,13 @@ import numpy as np
 
 from bioforge import (
     BioForgeError,
+    RealityCheck,
     SeqType,
     SequenceAligner,
     SmartImporter,
     SmartTranslator,
     compute_stats,
+    rank_mutations,
 )
 from bioforge.nanopore import basecall as _basecall
 from bioforge.nanopore import read_fast5 as _read_fast5
@@ -299,6 +301,52 @@ class Api:
                               "records": [rec], "qualities": []})
         self.active = len(self.datasets) - 1
         return self.workspace()
+
+    # ── evolución: predecir qué mutaciones subirán ────────────────────────────
+    def _protein_series(self):
+        """Comprueba que el archivo activo sirve para evolución (proteínas fechadas)."""
+        records = self._records()
+        if records and records[0].seq_type != SeqType.PROTEIN:
+            return None, ("la predicción de evolución trabaja sobre PROTEÍNAS a lo "
+                          "largo del tiempo. Traduce tus genes o carga "
+                          "ejemplos/evolucion_proteina.fasta.")
+        return records, None
+
+    @_guard
+    def predict_mutations(self, top: int = 15) -> dict[str, Any]:
+        """Ordena qué mutaciones tienen más probabilidad de SUBIR (rank_mutations)."""
+        records, err = self._protein_series()
+        if err:
+            return {"error": err}
+        if len(records) < 10:
+            return {"error": "hacen falta muchas secuencias de la misma proteína a lo "
+                             "largo del tiempo (mínimo ~10)."}
+        seqs = [r.to_string() for r in records]
+        res = rank_mutations(seqs, list(range(len(seqs))), method="model")
+        muts = [{"site": int(s) + 1, "allele": a, "score": round(float(sc), 3),
+                 "novel": bool(res.novel.get((s, a), False))}
+                for s, a, sc in res.ranked[:int(top)]]
+        return {"n_sequences": len(seqs), "mutations": muts}
+
+    @_guard
+    def check_mutation(self, mutation: str) -> dict[str, Any]:
+        """Filtro de realidad: ¿esta mutación tiene tracción real? (RealityCheck)."""
+        records, err = self._protein_series()
+        if err:
+            return {"error": err}
+        if len(records) < 20:
+            return {"error": "el filtro de realidad necesita un histórico amplio "
+                             "(≥20 secuencias fechadas de la misma proteína)."}
+        seqs = [r.to_string() for r in records]
+        rc = RealityCheck(seqs, list(range(len(seqs))))
+        v = rc.check(mutation)
+        num = lambda x: round(float(x), 3) if x == x else None   # None si es NaN
+        return {
+            "mutation": v.mutation, "tier": v.tier, "label": v.label,
+            "probability": num(v.probability),
+            "freq_now": num(v.freq_now), "freq_peak": num(v.freq_peak),
+            "reliability": num(v.reliability), "note": v.note,
+        }
 
     # ── nanoporo: señal cruda → bases ─────────────────────────────────────────
     @_guard

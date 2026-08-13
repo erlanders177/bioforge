@@ -198,7 +198,7 @@ function render(){
   if(VIEW==="calidad")     return renderCalidad(c);
   if(VIEW==="alinear")     return renderAlinear(c);
   if(VIEW==="nanoporo")    return renderNanoporo(c);
-  if(VIEW==="evolucion")   return c.replaceChildren(soon("Evolución","Rankear mutaciones, juzgar predictores (evalkit) y filtrar por realidad (RealityCheck)."));
+  if(VIEW==="evolucion")   return renderEvolucion(c);
 }
 
 function viewInicio(){
@@ -440,6 +440,41 @@ function svgSignal(vals){
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     <polyline points="${pts}" fill="none" stroke="#37d39b" stroke-width="1.3"/>
     <text x="${w/2}" y="${h-4}" fill="#93a0bd" font-size="11" text-anchor="middle">corriente (pA) a lo largo de las primeras muestras</text></svg>`;
+}
+
+// ── Evolución (predecir mutaciones + filtro de realidad) ─────────────────────
+async function renderEvolucion(c){
+  if(!STATE.summary){ c.replaceChildren(el(`<div class="empty"><div class="big">🧬</div><div>Carga una proteína a lo largo del tiempo (prueba <b>ejemplos/evolucion_proteina.fasta</b>).</div></div>`)); return; }
+  c.replaceChildren(el(`<h2>Evolución</h2>`),el(`<p class="sub">Calculando…</p>`));
+  const r=await API.predict_mutations(15);
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Evolución · ¿qué mutaciones subirán?</h2>`),
+    el(`<p class="sub">A partir de muchas secuencias de la MISMA proteína a lo largo del tiempo, ordena qué cambios tienen más probabilidad de aumentar. Predecir evolución es <b>muy difícil</b>: lo mostramos con honestidad, no como una bola de cristal.</p>`));
+  if(r.error){ box.append(el(`<div class="err">${esc(r.error)}</div>`)); c.replaceChildren(box); return; }
+  box.append(el(`<p class="hint" style="margin:0 0 10px">Sobre ${r.n_sequences} secuencias. "Score" = prioridad relativa; "nueva" = aún no vista en el histórico.</p>`));
+  const rows=r.mutations.map((m,i)=>`<tr><td>${i+1}</td><td class="mono" style="font-size:15px">sitio ${m.site} → <b style="color:${aaColor(m.allele)}">${esc(m.allele)}</b></td><td>${m.score.toFixed(2)}</td><td>${m.novel?'<span class="tag" style="color:#ffb454;border-color:#5a4522">nueva</span>':''}</td></tr>`).join("");
+  box.append(el(`<table class="seqtable"><thead><tr><th>#</th><th>Mutación (sitio → aminoácido)</th><th>Score</th><th></th></tr></thead><tbody>${rows}</tbody></table>`));
+  // ── filtro de realidad ──
+  box.append(el(`<h3 style="margin-top:22px">¿Sobreviviría una mutación concreta?</h3>`),
+    el(`<p class="hint" style="margin:0 0 8px">Escribe una mutación (p. ej. <b>K21E</b>: la K de la posición 21 pasa a E) y mira si tiene tracción real en el histórico.</p>`));
+  const cbar=el(`<div class="selbar"><input id="mutIn" placeholder="ej. K21E" style="background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font-family:monospace;width:120px"><button class="primary" id="mutBtn">Comprobar</button></div>`);
+  box.append(cbar,el(`<div id="mutOut"></div>`));
+  c.replaceChildren(box);
+  const run=async()=>{
+    const m=$("#mutIn").value.trim(); if(!m)return;
+    const o=$("#mutOut"); o.replaceChildren(el(`<p class="hint">Comprobando…</p>`));
+    const v=await API.check_mutation(m);
+    if(v.error){ o.replaceChildren(el(`<div class="err">${esc(v.error)}</div>`)); return; }
+    const prob=v.probability==null?"—":Math.round(v.probability*100)+"%";
+    const tiercol=v.tier==="OBSERVADO"?"#37d39b":"#ffb454";
+    o.replaceChildren(el(`<div class="chart" style="margin-top:4px">
+      <div style="font-size:17px"><b>${esc(v.mutation)}</b> · <span style="color:${tiercol}">${esc(v.tier)}</span></div>
+      <div style="margin:6px 0"><b>Probabilidad de arraigar: ${prob}</b></div>
+      <div>${esc(v.label)}</div>
+      <p class="hint" style="margin-top:8px">OBSERVADO = ya circuló (evidencia real) · ESTIMADO = conjetura del modelo. ${v.note?esc(v.note):''}</p></div>`));
+  };
+  $("#mutBtn",cbar).addEventListener("click",run);
+  $("#mutIn",cbar).addEventListener("keydown",e=>{ if(e.key==="Enter")run(); });
 }
 
 function soon(title,desc){

@@ -190,5 +190,43 @@ def test_add_sequence_usable_en_otras_partes(fasta):
     assert api.align(0, 0)["identity"] == 100.0
 
 
+def _protein_series_fasta(tmp_path, n_time=24):
+    """Serie temporal de una proteína con un aminoácido que sube en un sitio."""
+    import numpy as np
+    rng = np.random.default_rng(5)
+    aa = "ACDEFGHIKLMNPQRSTVWY"
+    base = list("".join(rng.choice(list(aa), size=40)))
+    lines = []
+    for t in range(n_time):
+        for rep in range(3):
+            s = base.copy()
+            if rng.random() < t / (n_time - 1):
+                s[15] = "K"                          # el alelo nuevo sube con el tiempo
+            lines.append(f">p_t{t:02d}_{rep}\n{''.join(s)}")
+    p = tmp_path / "evo.fasta"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(p)
+
+
+def test_evolucion_predict_mutations(tmp_path):
+    api = Api(); api.open_file(_protein_series_fasta(tmp_path))
+    r = api.predict_mutations(10)
+    assert r["n_sequences"] == 72
+    assert len(r["mutations"]) == 10
+    assert all("site" in m and "score" in m for m in r["mutations"])
+
+
+def test_evolucion_check_mutation(tmp_path):
+    api = Api(); api.open_file(_protein_series_fasta(tmp_path))
+    v = api.check_mutation("K16E")                   # sitio 16 (1-based), a E
+    assert v["tier"] in ("OBSERVADO", "ESTIMADO")
+    assert "label" in v
+
+
+def test_evolucion_exige_proteina(fasta):
+    api = Api(); api.open_file(fasta)                # FASTA de ADN
+    assert "error" in api.predict_mutations()        # evolución es sobre proteína
+
+
 def test_ping():
     assert Api().ping()["ok"] is True
