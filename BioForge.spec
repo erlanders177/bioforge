@@ -24,6 +24,7 @@ for _pkg in ("webview",):
 # recursos propios (rutas relativas a la raíz del repo, donde está este .spec)
 datas += [
     ("app/index.html", "."),                              # la interfaz web local
+    ("app/data/icon.ico", "data"),                        # icono de la app
     ("app/data/r9.4_6mer.model", "data"),                 # pore model (nanoporo)
     ("bioforge/engine/engine.dll", "bioforge/engine"),    # motor C
     ("bioforge/data/ranker_weights.npz", "bioforge/data"),  # ranker entrenado
@@ -46,6 +47,7 @@ exe = EXE(
     name="BioForge",
     console=False,           # app de ventana: sin consola negra (build final)
     disable_windowed_traceback=False,
+    icon="app/data/icon.ico",  # icono propio (doble hélice) en el .exe y la ventana
 )
 coll = COLLECT(
     exe, a.binaries, a.datas,

@@ -311,6 +311,34 @@ class Api:
         self.active = len(self.datasets) - 1
         return self.workspace()
 
+    @_guard
+    def open_example(self) -> dict[str, Any]:
+        """Carga un FASTA de EJEMPLO (en memoria) para probar la app sin buscar archivos.
+
+        Tres genes cortos de ADN: dos casi idénticos —para que **Alinear** muestre una
+        mutación— y un tercero distinto. Todos traducibles a proteína. Al no depender de
+        ningún archivo en disco, funciona igual desde el código y desde el .exe.
+        """
+        a = ("ATGGCACGTAAAGGCTTTGATGAACTGCATAGCTGGATTCGCGGTCTGGCAGATGAACTGAAAGGCTTTCCG"
+             "GATTGGCATAGCGATGAACTGCATAGCTGGATTCGTAAAGGCCTGGCAGATGAAATTAAAGGCTTTGAACTG"
+             "CATAGCTGGAAATAA")
+        a_var = ("ATGGCACGTAAAGGCTTTGATGAACTGCATAGCTGGATTAGCGGTCTGGCAGATGAACTGAAAGGCTTTCCG"
+                 "GATTGGCATAGCGATGAACTGCATAGCTGGATTCGTAAAGGCCTGGCAGATGAAATTAAAGGCTTTGAACTG"
+                 "CATAGCTGGAAATAA")
+        b = ("ATGAAACCGGGTTTTGATCTGCATTGGGCAAGCCTGAAAGATTTTCGCGGCCTGGCAGAAGGCCATTGGCTG"
+             "GATGAACTGAAAGCAGGCTTTCCGTGGCATAGCGAAATTCGCAAAGGCCTGGATGAACTGCATAGCTGGAAA"
+             "GGCTTTGATTAA")
+        fasta = (f">gen_ejemplo_A demostracion\n{a}\n"
+                 f">gen_ejemplo_A_variante una mutacion\n{a_var}\n"
+                 f">gen_ejemplo_B otro gen\n{b}\n")
+        records = SmartImporter.from_string(fasta)
+        if not records:
+            return {"error": "no se pudo construir el ejemplo"}
+        self.datasets.append({"filename": "ejemplo_adn.fasta", "path": "",
+                              "records": records, "qualities": []})
+        self.active = len(self.datasets) - 1
+        return self.workspace()
+
     # ── evolución: predecir qué mutaciones subirán ────────────────────────────
     def _protein_series(self):
         """Comprueba que el archivo activo sirve para evolución (proteínas fechadas)."""

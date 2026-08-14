@@ -228,5 +228,19 @@ def test_evolucion_exige_proteina(fasta):
     assert "error" in api.predict_mutations()        # evolución es sobre proteína
 
 
+def test_open_example_carga_y_es_usable():
+    """El botón 'Probar con un ejemplo' carga un FASTA en memoria, listo para todo."""
+    api = Api()
+    ws = api.open_example()
+    assert ws["n_files"] == 1 and ws["active"] == 0
+    s = api.summary()
+    assert s["loaded"] and s["count"] == 3 and s["nucleotide"] == 3
+    assert s["filename"] == "ejemplo_adn.fasta"
+    # el ejemplo está pensado para lucir la app: se traduce y se alinea con una mutación
+    assert api.translate(0)["protein"].startswith("MARK")
+    al = api.align(0, 1)                              # gen A vs su variante
+    assert al["n_mutations"] == 1 and al["identity"] > 98.0
+
+
 def test_ping():
     assert Api().ping()["ok"] is True

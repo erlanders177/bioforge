@@ -17,6 +17,8 @@
          background:var(--panel);border-bottom:1px solid var(--line)}
   .logo{font-weight:700;font-size:18px;letter-spacing:.3px}
   .logo b{color:var(--accent)}
+  .ver{font-size:12px;color:var(--dim);border:1px solid var(--line);
+       border-radius:20px;padding:2px 9px;font-weight:600;letter-spacing:.2px}
   .badge{font-size:12px;color:var(--accent2);border:1px solid var(--accent2);
          border-radius:20px;padding:3px 10px;opacity:.9}
   .grow{flex:1}
@@ -30,8 +32,9 @@
   .side{width:300px;border-right:1px solid var(--line);background:var(--panel);
         display:flex;flex-direction:column;min-height:0}
   .side .nav{padding:10px}
-  .nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--dim);
-         text-decoration:none;cursor:pointer;margin-bottom:4px}
+  .nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
+         color:var(--dim);text-decoration:none;cursor:pointer;margin-bottom:4px}
+  .nav a .ic{width:20px;text-align:center;font-size:15px;flex:none}
   .nav a.active{background:var(--panel2);color:var(--text)}
   .nav a:hover{color:var(--text)}
   .content{flex:1;overflow:auto;padding:22px 26px;min-width:0}
@@ -103,6 +106,7 @@
 <body>
 <header>
   <div class="logo"><b>Bio</b>Forge</div>
+  <span class="ver">v10.0</span>
   <span class="badge">● local · sin conexión · privado</span>
   <div class="grow"></div>
   <button class="primary" id="openBtn" disabled>Abrir archivo…</button>
@@ -113,12 +117,12 @@
 <main>
   <nav class="side">
     <div class="nav" id="nav">
-      <a data-view="inicio" class="active">Inicio</a>
-      <a data-view="secuencias">Secuencias</a>
-      <a data-view="calidad">Calidad</a>
-      <a data-view="alinear">Alinear</a>
-      <a data-view="nanoporo">Nanoporo</a>
-      <a data-view="evolucion">Evolución</a>
+      <a data-view="inicio" class="active"><span class="ic">🏠</span>Inicio</a>
+      <a data-view="secuencias"><span class="ic">🧬</span>Secuencias</a>
+      <a data-view="calidad"><span class="ic">📊</span>Calidad</a>
+      <a data-view="alinear"><span class="ic">⚗️</span>Alinear</a>
+      <a data-view="nanoporo"><span class="ic">〜</span>Nanoporo</a>
+      <a data-view="evolucion"><span class="ic">🔮</span>Evolución</a>
     </div>
   </nav>
   <section class="content" id="content"></section>
@@ -170,6 +174,20 @@ $("#openBtn").addEventListener("click",async()=>{
     renderTabs(); render();
   }catch(e){ toast("Error al abrir: "+(e&&e.message?e.message:String(e))); }
 });
+
+// carga un pequeño FASTA de ejemplo (generado por el backend) para probar sin buscar archivos
+async function openExample(){
+  try{
+    if(!API){ toast("El puente con Python aún no está listo. Espera un segundo y reinténtalo."); return; }
+    if(typeof API.open_example!=="function"){ toast("El puente no expone 'open_example' (revisar backend)."); return; }
+    const ws=await API.open_example();
+    if(!ws||ws.error){ toast(ws&&ws.error?ws.error:"no se pudo cargar el ejemplo"); return; }
+    STATE.workspace=ws;
+    STATE.summary=await API.summary();
+    VIEW="secuencias"; setActiveNav("secuencias");
+    renderTabs(); render();
+  }catch(e){ toast("Error al cargar el ejemplo: "+(e&&e.message?e.message:String(e))); }
+}
 
 // barra de pestañas: los archivos abiertos, el activo resaltado, × para cerrar
 async function renderTabs(){
@@ -225,7 +243,11 @@ function viewInicio(){
   if(!s){
     box.append(el(`<div class="empty"><div class="big">🧬</div>
       <div>Abre un archivo FASTA/FASTQ para empezar</div>
-      <button class="primary" onclick="document.getElementById('openBtn').click()">Abrir archivo…</button></div>`));
+      <div class="row" style="justify-content:center;margin:4px 0 0">
+        <button class="primary" onclick="document.getElementById('openBtn').click()">Abrir archivo…</button>
+        <button onclick="openExample()">Probar con un ejemplo</button>
+      </div>
+      <p class="hint" style="margin:0;max-width:430px">¿Nunca has usado esto? Pulsa <b>"Probar con un ejemplo"</b> y cargarás unas secuencias de ADN de muestra que puedes explorar, traducir y comparar al instante.</p></div>`));
   }else{
     box.append(summaryCards(s));
     box.append(el(`<p class="hint">Archivo cargado: <b>${esc(s.filename)}</b>. Ve a <b>Secuencias</b> para explorarlo.</p>`));
