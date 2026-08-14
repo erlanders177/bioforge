@@ -37,6 +37,7 @@ section (with examples) further down.
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 | **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
+| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 5 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -155,6 +156,35 @@ For development and testing:
 ```bash
 pip install hypothesis pytest pytest-benchmark
 ```
+
+---
+
+## Desktop app — no coding required *(v10.0)*
+
+BioForge also has a **desktop app**: the same engine behind a friendly window, for
+people who don't write code. Everything runs **locally and offline** — your DNA never
+leaves your machine (*DNA Edge*). Five tabs, each with a plain-language explanation:
+
+- **🧬 Sequences** — browse your FASTA/FASTQ, see each sequence's type and size, and
+  translate DNA → protein (codon by codon, colour-coded by amino-acid type).
+- **📊 Quality** — a FastQC-style report for FASTQ (per-position quality, GC, Phred),
+  drawn as inline charts.
+- **⚗️ Align** — compare two sequences and see their differences (mutations) highlighted.
+- **〜 Nanopore** — turn raw electrical signal (POD5/FAST5) into DNA bases with our own
+  classical basecaller, then reuse those bases anywhere in the app.
+- **🔮 Evolution** — rank which protein mutations may rise, and reality-check a specific one.
+
+**Get it — two faces, same code at the same version:**
+
+- **Just double-click (no Python):** download `BioForge-<version>-windows.zip` from the
+  [latest release](https://github.com/erlanders177/bioforge/releases), unzip, and run
+  `BioForge.exe`. Self-contained — nothing to install. *(The `.exe` is built
+  automatically and attached to each release.)*
+- **From the package (for coders):**
+  ```bash
+  pip install "bioforge[app]"
+  bioforge-app
+  ```
 
 ---
 
@@ -615,6 +645,11 @@ bioforge/               Python package — all core modules
   evalkit.py            Level 6 — honest predictor judge (EvolutionBenchmark)
   realitycheck.py       Level 6 — mutation reality filter (RealityCheck)
   nanopore.py           Level 7 — from-scratch basecaller (signal → bases, pure NumPy)
+  app/                  Desktop app (v10.0) — local window over the engine (bioforge-app)
+    main.py             PyWebview launcher (window + native file dialogs)
+    backend.py          The bridge the UI calls (Api) — tested without a window
+    index.html          The whole interface (vanilla JS, offline, inline SVG charts)
+    data/               UI resources: pore model + app icon
   data/                 Trained mutation-ranker weights (.npz, in the wheel)
   analyze.py            Full pipeline: DNA + protein analysis, report generation
   qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
@@ -651,6 +686,7 @@ tests/
   test_realitycheck.py  L6: mutation reality filter (observed vs estimated)
   test_integrity.py     Anti-corruption net: property-based, both alphabets
   test_nanopore.py      L7: signal I/O, event detection, Viterbi basecaller
+  test_app_backend.py   Desktop app: the Api bridge, tested without opening a window
 
 docs/
   architecture.md       Design rules, levels, encoding details
@@ -702,7 +738,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (452 tests)
+# Full test suite (546 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -764,7 +800,7 @@ python check.py
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
-- [ ] **Phase 2 — desktop application** (local, no servers, privacy-first: your DNA never leaves the machine)
+- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (5 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
 - [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 
 ---

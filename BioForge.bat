@@ -28,7 +28,13 @@ if not defined PY (
   exit /b 1
 )
 
-REM --- asegurar pywebview (imprescindible para abrir la ventana) ---
+REM --- asegurar dependencias del motor y de la ventana ---
+%PY% -c "import numpy" 2>nul
+if errorlevel 1 (
+  echo   Instalando numpy la primera vez, espera un momento...
+  %PY% -m pip install numpy
+  echo(
+)
 %PY% -c "import webview" 2>nul
 if errorlevel 1 (
   echo   Instalando pywebview la primera vez, espera un momento...
@@ -44,8 +50,9 @@ if errorlevel 1 (
 )
 
 REM --- abrir la app (se abre ya; el nanoporo estara listo en cuanto acabe la de arriba) ---
+REM  -m ejecuta el modulo del paquete con la raiz del repo en el path (importa bioforge)
 echo   Abriendo la ventana...
-%PY% "app\main.py"
+%PY% -m bioforge.app.main
 
 if errorlevel 1 (
   echo(

@@ -1,31 +1,36 @@
 """
-app/main.py — lanzador de la app de escritorio BioForge (PyWebview).
+bioforge/app/main.py — lanzador de la app de escritorio BioForge (PyWebview).
 
 Una ventana NATIVA y LOCAL que muestra ``index.html`` y le da acceso al motor a
-través de ``Api`` (app/backend.py). Sin servidor, sin red: el ADN del usuario nunca
-sale de su máquina.
+través de ``Api`` (bioforge.app.backend). Sin servidor, sin red: el ADN del usuario
+nunca sale de su máquina.
 
-Ejecutar:  python app/main.py     (requiere:  pip install pywebview)
-Empaquetar a .exe:  ver app/build.py (PyInstaller) — para que un no-programador
-solo tenga que hacer doble clic, sin instalar nada.
+Ejecutar desde el paquete:   bioforge-app        (requiere:  pip install "bioforge[app]")
+                    o bien:   python -m bioforge.app.main
+Empaquetar a .exe:  BioForge.spec en la raíz del repo (PyInstaller) — para que un
+no-programador solo tenga que hacer doble clic, sin instalar nada.
 """
 
-import sys
 from pathlib import Path
 
-if not getattr(sys, "frozen", False):      # desde código: añadir rutas del repo
-    _HERE = Path(__file__).resolve().parent
-    sys.path.insert(0, str(_HERE))         # para importar backend
-    sys.path.insert(0, str(_HERE.parent))  # para importar bioforge sin instalarlo
-
-import webview  # noqa: E402
-
-from backend import Api, app_dir  # noqa: E402
+from bioforge.app.backend import Api, app_dir
 
 HERE = Path(app_dir())                     # carpeta de recursos (código o .exe)
 
 _FILTER = ("Secuencias (*.fasta;*.fa;*.fna;*.fastq;*.fq;*.txt)",
            "Señal nanoporo (*.pod5;*.fast5)", "Todos los archivos (*.*)")
+
+
+def _require_webview():
+    """Importa pywebview, con un mensaje claro si falta el extra 'app'."""
+    try:
+        import webview
+        return webview
+    except ImportError:
+        raise SystemExit(
+            "La app de escritorio de BioForge necesita pywebview.\n"
+            'Instálalo con:  pip install "bioforge[app]"\n'
+            "(o usa el ejecutable .exe, que no necesita instalar nada).")
 
 
 class DesktopApi(Api):
@@ -37,6 +42,7 @@ class DesktopApi(Api):
 
     def pick_and_open(self) -> dict:
         """Abre el diálogo nativo de archivos y carga lo elegido."""
+        import webview
         try:
             paths = self.window.create_file_dialog(
                 webview.FileDialog.OPEN, allow_multiple=False, file_types=_FILTER)
@@ -48,6 +54,7 @@ class DesktopApi(Api):
 
     def pick_and_open_signal(self) -> dict:
         """Diálogo de archivos para señal de nanoporo (POD5/FAST5)."""
+        import webview
         try:
             paths = self.window.create_file_dialog(
                 webview.FileDialog.OPEN, allow_multiple=False,
@@ -60,6 +67,8 @@ class DesktopApi(Api):
 
 
 def main() -> None:
+    """Punto de entrada de la app (comando ``bioforge-app`` y ``python -m``)."""
+    webview = _require_webview()
     api = DesktopApi()
     window = webview.create_window(
         "BioForge — motor bioinformático local",

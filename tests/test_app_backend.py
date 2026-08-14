@@ -1,5 +1,5 @@
 """
-tests/test_app_backend.py — el PUENTE de la app (app/backend.py).
+tests/test_app_backend.py — el PUENTE de la app (bioforge/app/backend.py).
 
 La ventana gráfica no se puede probar sin pantalla, pero TODA la lógica que la
 interfaz invoca sí: son métodos que reciben tipos simples y devuelven diccionarios.
@@ -7,13 +7,10 @@ Aquí se prueban enteros, sin abrir ninguna ventana — que es justo el diseño.
 """
 
 import os
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
-from backend import Api  # noqa: E402
+from bioforge.app.backend import Api
 
 
 @pytest.fixture()

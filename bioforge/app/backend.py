@@ -1,8 +1,8 @@
 """
-app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
+bioforge/app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
 
 La app de escritorio es "la otra cara" del mismo motor: una capa FINA de interfaz
-sobre el paquete ``bioforge`` (que ya está probado, 525 tests). Aquí vive la lógica
+sobre el paquete ``bioforge`` (que ya está probado, 546 tests). Aquí vive la lógica
 que la interfaz (HTML/JS) invoca; la ventana en sí (PyWebview) es solo un lanzador.
 
 Todo es LOCAL y SIN SERVIDOR: los datos —el ADN del usuario— nunca salen de la
@@ -27,7 +27,8 @@ import numpy as np
 def app_dir() -> str:
     """Carpeta base de recursos — funciona desde el código Y desde el .exe empaquetado.
 
-    PyInstaller extrae los datos a ``sys._MEIPASS``; desde código es la carpeta ``app``.
+    PyInstaller extrae los datos a ``sys._MEIPASS``; desde el paquete instalado es la
+    carpeta ``bioforge/app`` (donde viven ``index.html`` y ``data/``).
     """
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 

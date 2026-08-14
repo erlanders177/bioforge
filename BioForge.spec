@@ -21,19 +21,21 @@ for _pkg in ("webview",):
     binaries += _b
     hiddenimports += _h
 
-# recursos propios (rutas relativas a la raíz del repo, donde está este .spec)
+# recursos propios (rutas relativas a la raíz del repo, donde está este .spec).
+# La app vive dentro del paquete (bioforge/app); al empaquetar se aplanan a la raíz
+# de _MEIPASS ("." y "data"), que es donde app_dir() los busca en el .exe.
 datas += [
-    ("app/index.html", "."),                              # la interfaz web local
-    ("app/data/icon.ico", "data"),                        # icono de la app
-    ("app/data/r9.4_6mer.model", "data"),                 # pore model (nanoporo)
+    ("bioforge/app/index.html", "."),                     # la interfaz web local
+    ("bioforge/app/data/icon.ico", "data"),               # icono de la app
+    ("bioforge/app/data/r9.4_6mer.model", "data"),        # pore model (nanoporo)
     ("bioforge/engine/engine.dll", "bioforge/engine"),    # motor C
     ("bioforge/data/ranker_weights.npz", "bioforge/data"),  # ranker entrenado
 ]
-hiddenimports += ["h5py", "bioforge", "backend"]
+hiddenimports += ["h5py", "bioforge", "bioforge.app", "bioforge.app.backend"]
 
 a = Analysis(
-    ["app/main.py"],
-    pathex=["app", "."],
+    ["bioforge/app/main.py"],
+    pathex=["."],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -47,7 +49,7 @@ exe = EXE(
     name="BioForge",
     console=False,           # app de ventana: sin consola negra (build final)
     disable_windowed_traceback=False,
-    icon="app/data/icon.ico",  # icono propio (doble hélice) en el .exe y la ventana
+    icon="bioforge/app/data/icon.ico",  # icono propio (doble hélice) en el .exe y la ventana
 )
 coll = COLLECT(
     exe, a.binaries, a.datas,

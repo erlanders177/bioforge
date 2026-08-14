@@ -1,0 +1,62 @@
+name: Build desktop app
+
+# Compila la app de escritorio (el .exe autocontenido) y la ADJUNTA sola a la Release.
+#
+# Flujo pensado para que el reparto se haga SOLO, sin tocar binarios a mano:
+#   1. Tú empujas el tag y creas la Release en GitHub (a mano, como siempre).
+#   2. Al PUBLICAR esa Release, este workflow se dispara, construye el .exe en un
+#      runner Windows con PyInstaller, comprime dist/BioForge y sube el .zip como
+#      asset de la Release. El usuario final descarga, descomprime y doble clic.
+#
+# (El paquete de PyPI lo publica wheels.yml al empujar el tag; son cosas distintas.)
+
+on:
+  release:
+    types: [published]        # se dispara cuando publicas la Release en GitHub
+  workflow_dispatch:          # botón "Run workflow" para ensayar el build sin Release
+
+permissions:
+  contents: write             # para adjuntar el .zip a la Release
+
+jobs:
+  windows-exe:
+    name: Windows · BioForge.exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias (runtime de la app + PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pywebview h5py pyinstaller
+
+      - name: Construir el .exe (PyInstaller)
+        run: pyinstaller BioForge.spec --noconfirm
+
+      - name: Comprimir dist/BioForge -> .zip
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.release.tag_name }}"
+          if (-not $ver) { $ver = "dev" }
+          $zip = "BioForge-$ver-windows.zip"
+          Compress-Archive -Path dist/BioForge -DestinationPath $zip -Force
+          echo "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "creado $zip"
+
+      # Guardar el .zip como artefacto siempre (para el ensayo manual y por si acaso)
+      - name: Subir artefacto del build
+        uses: actions/upload-artifact@v4
+        with:
+          name: BioForge-windows
+          path: ${{ env.ZIP }}
+
+      # Adjuntarlo a la Release SOLO cuando el disparo es una Release publicada
+      - name: Adjuntar el .zip a la Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ env.ZIP }}" --clobber

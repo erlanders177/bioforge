@@ -4,8 +4,11 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **9.1.0**,
-publicada en PyPI con wheels nativos Win/Linux/Mac).
+Es un paquete instalable: `from bioforge import ...` (versión actual **10.0.0**,
+publicada en PyPI con wheels nativos Win/Linux/Mac). Desde la v10.0 tiene además una
+**app de escritorio** (`bioforge.app`, "la otra cara del motor"): misma versión, dos
+rostros — un `.exe` autocontenido (doble clic, sin Python) y el comando `bioforge-app`
+(`pip install "bioforge[app]"`).
 
 Niveles implementados y validados:
 - **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
@@ -92,6 +95,24 @@ Niveles implementados y validados:
   qué el campo pasó al basecalling neuronal. Backend enchufable pendiente (usar Dorado
   si está). Benchmark REPRODUCIBLE en `tools/bench_basecaller.py` (baja modelo+datos
   públicos y mide de cero). El valor no es ganar a Dorado: es correr sin instalar nada.
+
+- **L8 (v10.0) — APP DE ESCRITORIO** `bioforge/app/`. "La otra cara del motor": una
+  ventana NATIVA y LOCAL (PyWebview) sobre el mismo `bioforge`, para no-programadores —
+  analizar ADN a clics, sin código y sin que los datos salgan de la máquina (ADN Edge,
+  sin servidor ni red). Cinco pestañas, cada una con explicación "para todos":
+  **Secuencias** (listar/traducir ADN→proteína codón a codón), **Calidad** (informe QC
+  estilo FastQC con gráficos SVG), **Alinear** (dos secuencias → mutaciones), **Nanoporo**
+  (señal cruda → bases con nuestro basecaller, y "usar en otras pestañas") y **Evolución**
+  (rank_mutations + RealityCheck). Piezas: `main.py` (lanzador PyWebview + diálogos de
+  archivo nativos), `backend.py` (`Api`, el PUENTE que la interfaz invoca — cada método
+  devuelve dicts, NUNCA lanza a la UI vía `@_guard`; se prueba SIN abrir ventana:
+  `tests/test_app_backend.py`), `index.html` (toda la interfaz: JS vanilla, offline,
+  gráficos SVG inline). **Dos rostros, mismo código y misma versión:** el paquete la trae
+  dentro (`pip install "bioforge[app]"` → comando `bioforge-app`) y se distribuye también
+  como `.exe` autocontenido (PyInstaller, `BioForge.spec`) que un workflow
+  (`build-app.yml`, al PUBLICAR la Release) compila y adjunta SOLO. `app_dir()` resuelve
+  recursos desde `sys._MEIPASS` (.exe) o `bioforge/app/` (paquete). Icono propio
+  (`data/icon.ico`, doble hélice). El motor y la CLI funcionan sin el extra `app`.
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
@@ -231,6 +252,11 @@ bioforge/                  paquete instalable (from bioforge import ...)
   analyze.py               pipeline CLI (dna/protein/both)
   qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
   bgzf.py                  conversor a BGZF (gzip por bloques, paralelo) — CLI bioforge-bgzip
+  app/                     L8 (v10.0) — app de escritorio (PyWebview, local, sin servidor)
+    main.py                lanzador: ventana + diálogos de archivo nativos (comando bioforge-app)
+    backend.py             Api: el PUENTE que la UI invoca (dicts, @_guard) — se prueba sin ventana
+    index.html             toda la interfaz (JS vanilla, offline, gráficos SVG inline)
+    data/                  recursos de la UI: pore model + icon.ico (doble hélice)
   engine/
     engine.c               motor C — pack/unpack, NW/SW, parser FASTA/FASTQ + batch + .gz
     engine.dll             binario compilado (versionado en git)
@@ -242,8 +268,12 @@ tools/
   stress_test.py           benchmark de 30M bases
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     test_biocore / _translator / _aligner / _analyze / _streaming
+                           / _app_backend (la app, sin ventana) …
 docs/                      architecture · api_reference · benchmarks · roadmap
-pyproject.toml             empaquetado (versión dinámica, incluye el DLL en el wheel)
+pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)
+BioForge.spec              PyInstaller: empaqueta la app en dist/BioForge/BioForge.exe
+BioForge.bat               lanzador dev (doble clic) — python -m bioforge.app.main
+.github/workflows/         tests · wheels (tag vX→PyPI) · build-app (Release→.exe adjunto)
 ```
 
 ---

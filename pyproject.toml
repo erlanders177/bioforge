@@ -60,7 +60,8 @@ nanopore = [
 ]
 app = [
     # App de escritorio (v10.0): ventana nativa LOCAL con interfaz web (sin servidor).
-    # OPCIONAL — el motor y la CLI funcionan sin esto.
+    # OPCIONAL — el motor y la CLI funcionan sin esto. Lánzala con el comando
+    # ``bioforge-app`` tras:  pip install "bioforge[app]"
     "pywebview>=5.0",
     "h5py>=3.0",      # leer señal FAST5 en la pestaña Nanoporo (POD5 → añade 'pod5')
 ]
@@ -75,6 +76,7 @@ bioforge-analyze   = "bioforge.analyze:main"
 bioforge-qc        = "bioforge.qcreport:main"
 bioforge-bgzip     = "bioforge.bgzf:main"
 bioforge-evolution = "bioforge.evocli:main"
+bioforge-app       = "bioforge.app.main:main"      # app de escritorio (requiere extra 'app')
 
 # La versión vive solo en bioforge/__init__.py (una única fuente de verdad).
 [tool.setuptools.dynamic]
@@ -84,10 +86,12 @@ version = {attr = "bioforge.__version__"}
 where   = ["."]
 include = ["bioforge*"]
 
-# Incluir el motor C compilado y su fuente + los pesos del ranker dentro del wheel.
+# Incluir el motor C compilado y su fuente + los pesos del ranker + los recursos de
+# la app de escritorio (interfaz web y pore model) dentro del wheel.
 [tool.setuptools.package-data]
 "bioforge.engine" = ["*.dll", "*.so", "*.dylib", "*.c"]
 "bioforge.data" = ["*.npz"]
+"bioforge.app" = ["index.html", "data/*"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # cibuildwheel — wheels nativos por plataforma (Windows / Linux / macOS).
