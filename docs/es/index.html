@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioForge — Analiza ADN en local, sin conexión (app + librería Python)</title>
+<meta name="description" content="BioForge es un motor bioinformático rápido y sin conexión para analizar ADN en tu propio ordenador. Una app de escritorio para cualquiera y una librería Python para quien programa: traducir secuencias, informes de calidad, alineamiento, basecalling de nanoporo y evolución. Gratis, código abierto y privado.">
+<meta name="keywords" content="análisis genético, analizar ADN, bioinformática, análisis de ADN, FASTA, FASTQ, traducir ADN a proteína, alineamiento de secuencias, basecaller nanoporo, sin conexión, local, privado, Python, NumPy, DNA analysis">
+<meta name="author" content="Aarón Aranda Torrijos">
+<link rel="canonical" href="https://erlanders177.github.io/bioforge/es/">
+<link rel="alternate" hreflang="en" href="https://erlanders177.github.io/bioforge/">
+<link rel="alternate" hreflang="es" href="https://erlanders177.github.io/bioforge/es/">
+<link rel="alternate" hreflang="x-default" href="https://erlanders177.github.io/bioforge/">
+<link rel="icon" type="image/png" href="../favicon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="stylesheet" href="../style.css">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BioForge">
+<meta property="og:title" content="BioForge — Analiza ADN en local, sin conexión">
+<meta property="og:description" content="Un motor bioinformático rápido y sin conexión. App de escritorio para cualquiera + librería Python para quien programa. Gratis, código abierto, privado.">
+<meta property="og:url" content="https://erlanders177.github.io/bioforge/es/">
+<meta property="og:image" content="https://erlanders177.github.io/bioforge/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="BioForge — Analiza ADN en local, sin conexión">
+<meta name="twitter:description" content="App de escritorio para cualquiera + librería Python para quien programa. Gratis, código abierto, privado.">
+<meta name="twitter:image" content="https://erlanders177.github.io/bioforge/og.png">
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"SoftwareApplication",
+  "name":"BioForge",
+  "description":"Motor bioinformático rápido y sin conexión para analizar ADN en tu propio ordenador: app de escritorio para cualquiera y librería Python para quien programa. Traducción de secuencias, informes de calidad, alineamiento, basecalling de nanoporo y evolución.",
+  "applicationCategory":"Bioinformatics software",
+  "operatingSystem":"Windows, Linux, macOS",
+  "softwareVersion":"10.0.0",
+  "url":"https://erlanders177.github.io/bioforge/es/",
+  "downloadUrl":"https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip",
+  "image":"https://erlanders177.github.io/bioforge/og.png",
+  "offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"},
+  "author":{"@type":"Person","name":"Aarón Aranda Torrijos"},
+  "license":"https://github.com/erlanders177/bioforge/blob/main/LICENSE",
+  "sameAs":["https://github.com/erlanders177/bioforge","https://pypi.org/project/bioforge/"]
+}
+</script>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="index.html"><img src="../favicon.png" alt="Logo de BioForge"><span><b>Bio</b>Forge</span></a>
+    <div class="grow"></div>
+    <a class="navlink hideable" href="#features">Funciones</a>
+    <a class="navlink hideable" href="#install">Instalar</a>
+    <a class="navlink" href="https://github.com/erlanders177/bioforge">GitHub</a>
+    <div class="lang"><a href="../index.html">EN</a><a class="on">ES</a></div>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <span class="badge">● Local · sin conexión · privado — tu ADN nunca sale de tu máquina</span>
+    <h1>Analiza ADN en tu <span class="g">propio ordenador</span></h1>
+    <p class="lead">BioForge es un motor bioinformático rápido y sin conexión — una <b>app de escritorio</b>
+      para cualquiera, y una <b>librería Python</b> para quien programa. Sin servidores, sin subir nada,
+      sin cuentas. Gratis y de código abierto.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip"><span class="em">⬇</span> Descargar la app (Windows)</a>
+      <a class="btn" href="#install"><span class="em">⌨</span> pip install bioforge</a>
+      <div class="sub">Windows · Linux · macOS · Python 3.10+ · una sola dependencia (NumPy)</div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2 class="sec">Un motor, dos caras</h2>
+    <p class="seclead">El mismo núcleo, sepas programar o no.</p>
+    <div class="faces">
+      <div class="face">
+        <div class="who">Sin saber programar</div>
+        <h3>🖥️ App de escritorio</h3>
+        <p>Doble clic y listo. Cinco pestañas — ver secuencias, traducir ADN→proteína, informes de calidad,
+          alinear, basecalling de nanoporo y evolución — cada una con una explicación para todos.</p>
+        <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip">⬇ Descargar para Windows</a>
+      </div>
+      <div class="face">
+        <div class="who">Para quien programa</div>
+        <h3>🐍 Librería Python</h3>
+        <p>Un motor de alto rendimiento: almacenamiento 5-bit, NumPy vectorizado, motor C opcional y
+          benchmarks honestos. Corre en hardware modesto / edge.</p>
+        <p><code>pip install bioforge</code> &nbsp;→&nbsp; <code>from bioforge import ...</code></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" id="features">
+    <h2 class="sec">Qué hace</h2>
+    <p class="seclead">Varias herramientas de bioinformática reunidas en un motor ligero.</p>
+    <div class="grid">
+      <div class="feat"><div class="ic">🧬</div><h3>Secuencias</h3><p>Explora FASTA/FASTQ y traduce ADN → proteína, codón a codón.</p></div>
+      <div class="feat"><div class="ic">📊</div><h3>Calidad</h3><p>Informe estilo FastQC: calidad por posición, contenido GC, Phred.</p></div>
+      <div class="feat"><div class="ic">⚗️</div><h3>Alinear</h3><p>Compara dos secuencias y ve sus mutaciones resaltadas.</p></div>
+      <div class="feat"><div class="ic">〜</div><h3>Nanoporo</h3><p>Señal eléctrica cruda (POD5/FAST5) → bases de ADN, desde cero, NumPy puro.</p></div>
+      <div class="feat"><div class="ic">🔮</div><h3>Evolución</h3><p>Ordena qué mutaciones de una proteína podrían subir, y comprueba una concreta.</p></div>
+    </div>
+  </section>
+
+  <section class="wrap" id="install">
+    <h2 class="sec">Consigue BioForge</h2>
+    <p class="seclead">Dos formas, misma versión. Las dos corren enteras en tu máquina.</p>
+    <div class="install">
+      <div class="card">
+        <h3>App de escritorio — sin Python</h3>
+        <p class="hint">Para cualquiera. Solo descargar y doble clic.</p>
+        <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip"><span class="em">⬇</span> Descargar (Windows .exe)</a>
+        <ol class="steps">
+          <li>Descarga el <code>BioForge-…-windows.zip</code> de la última Release.</li>
+          <li>Descomprímelo donde quieras.</li>
+          <li>Abre <code>BioForge.exe</code>. Nada que instalar.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Paquete de Python</h3>
+        <p class="hint">Para quien programa, en Windows/Linux/macOS.</p>
+        <div class="cmd"><span><span class="p">pip install</span> bioforge</span><button class="copy" data-copy="pip install bioforge">Copiar</button></div>
+        <p class="hint" style="margin:14px 0 4px">¿Quieres la app desde el paquete? Instala el extra y lanza el comando:</p>
+        <div class="cmd"><span><span class="p">pip install</span> "bioforge[app]"</span><button class="copy" data-copy="pip install &quot;bioforge[app]&quot;">Copiar</button></div>
+        <div class="cmd"><span>bioforge-app</span><button class="copy" data-copy="bioforge-app">Copiar</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="honest">
+      <h2>Hecho con honestidad</h2>
+      BioForge busca ser <b>competitivo</b> con las herramientas de un solo uso y <b>único al combinarlas</b> —
+      no vender humo. Cada número está medido y los límites se dicen claros: por ejemplo, el basecaller de
+      nanoporo hecho desde cero llega al <b>~74% en señal R9.4 real</b>, honestamente por debajo del ~99% de
+      las herramientas neuronales. Mira los <a href="https://github.com/erlanders177/bioforge#key-numbers">benchmarks</a>
+      y todo el código en <a href="https://github.com/erlanders177/bioforge">GitHub</a>.
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a href="https://github.com/erlanders177/bioforge">GitHub</a>
+    <a href="https://pypi.org/project/bioforge/">PyPI</a>
+    <a href="https://github.com/erlanders177/bioforge/blob/main/LICENSE">Licencia (PolyForm NC)</a>
+    <div class="grow"></div>
+    <span>BioForge v10.0.0 · hecho por Aarón Aranda Torrijos</span>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('.copy').forEach(b=>{
+  b.addEventListener('click',()=>{
+    navigator.clipboard.writeText(b.dataset.copy).then(()=>{
+      const t=b.textContent; b.textContent='✓ copiado'; b.classList.add('ok');
+      setTimeout(()=>{b.textContent=t; b.classList.remove('ok');},1500);
+    });
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://erlanders177.github.io/bioforge/sitemap.xml

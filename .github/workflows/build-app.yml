@@ -40,9 +40,10 @@ jobs:
       - name: Comprimir dist/BioForge -> .zip
         shell: pwsh
         run: |
-          $ver = "${{ github.event.release.tag_name }}"
-          if (-not $ver) { $ver = "dev" }
-          $zip = "BioForge-$ver-windows.zip"
+          # nombre FIJO (sin versión) para que el enlace de descarga directa
+          # https://github.com/.../releases/latest/download/BioForge-windows.zip
+          # siga funcionando en cada versión sin tocar la web.
+          $zip = "BioForge-windows.zip"
           Compress-Archive -Path dist/BioForge -DestinationPath $zip -Force
           echo "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "creado $zip"

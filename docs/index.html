@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioForge — Analyze DNA locally, offline (desktop app + Python library)</title>
+<meta name="description" content="BioForge is a fast, offline bioinformatics engine to analyze DNA on your own computer. A desktop app for anyone and a Python library for coders — sequence translation, quality reports, alignment, nanopore basecalling and evolution. Free, open source, private.">
+<meta name="keywords" content="DNA analysis, genetic analysis, bioinformatics, FASTA, FASTQ, DNA to protein translation, sequence alignment, nanopore basecaller, offline, local, edge computing, Python, NumPy, análisis genético, analizar ADN">
+<meta name="author" content="Aarón Aranda Torrijos">
+<link rel="canonical" href="https://erlanders177.github.io/bioforge/">
+<link rel="alternate" hreflang="en" href="https://erlanders177.github.io/bioforge/">
+<link rel="alternate" hreflang="es" href="https://erlanders177.github.io/bioforge/es/">
+<link rel="alternate" hreflang="x-default" href="https://erlanders177.github.io/bioforge/">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<!-- Open Graph / Twitter -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BioForge">
+<meta property="og:title" content="BioForge — Analyze DNA locally, offline">
+<meta property="og:description" content="A fast, offline bioinformatics engine. Desktop app for anyone + Python library for coders. Free, open source, private.">
+<meta property="og:url" content="https://erlanders177.github.io/bioforge/">
+<meta property="og:image" content="https://erlanders177.github.io/bioforge/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="BioForge — Analyze DNA locally, offline">
+<meta name="twitter:description" content="Desktop app for anyone + Python library for coders. Free, open source, private.">
+<meta name="twitter:image" content="https://erlanders177.github.io/bioforge/og.png">
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"SoftwareApplication",
+  "name":"BioForge",
+  "description":"A fast, offline bioinformatics engine to analyze DNA on your own computer: a desktop app for anyone and a Python library for developers. Sequence translation, quality reports, alignment, nanopore basecalling and evolution.",
+  "applicationCategory":"Bioinformatics software",
+  "operatingSystem":"Windows, Linux, macOS",
+  "softwareVersion":"10.0.0",
+  "url":"https://erlanders177.github.io/bioforge/",
+  "downloadUrl":"https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip",
+  "image":"https://erlanders177.github.io/bioforge/og.png",
+  "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+  "author":{"@type":"Person","name":"Aarón Aranda Torrijos"},
+  "license":"https://github.com/erlanders177/bioforge/blob/main/LICENSE",
+  "sameAs":["https://github.com/erlanders177/bioforge","https://pypi.org/project/bioforge/"]
+}
+</script>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="index.html"><img src="favicon.png" alt="BioForge logo"><span><b>Bio</b>Forge</span></a>
+    <div class="grow"></div>
+    <a class="navlink hideable" href="#features">Features</a>
+    <a class="navlink hideable" href="#install">Install</a>
+    <a class="navlink" href="https://github.com/erlanders177/bioforge">GitHub</a>
+    <div class="lang"><a class="on">EN</a><a href="es/index.html">ES</a></div>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <span class="badge">● Local · offline · private — your DNA never leaves your machine</span>
+    <h1>Analyze DNA on your <span class="g">own computer</span></h1>
+    <p class="lead">BioForge is a fast, offline bioinformatics engine — a <b>desktop app</b> for anyone,
+      and a <b>Python library</b> for coders. No servers, no uploads, no accounts. Free &amp; open source.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip"><span class="em">⬇</span> Download the app (Windows)</a>
+      <a class="btn" href="#install"><span class="em">⌨</span> pip install bioforge</a>
+      <div class="sub">Windows · Linux · macOS · Python 3.10+ · one dependency (NumPy)</div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2 class="sec">One engine, two faces</h2>
+    <p class="seclead">The same core, whether or not you write code.</p>
+    <div class="faces">
+      <div class="face">
+        <div class="who">No coding required</div>
+        <h3>🖥️ Desktop app</h3>
+        <p>Double-click and go. Five tabs — browse sequences, translate DNA→protein, quality reports,
+          align, nanopore basecalling and evolution — each with a plain-language explanation.</p>
+        <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip">⬇ Download for Windows</a>
+      </div>
+      <div class="face">
+        <div class="who">For developers</div>
+        <h3>🐍 Python library</h3>
+        <p>A high-performance engine: 5-bit storage, vectorised NumPy, an optional C backend, and honest
+          benchmarks. Runs on low-power / edge hardware.</p>
+        <p><code>pip install bioforge</code> &nbsp;→&nbsp; <code>from bioforge import ...</code></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap" id="features">
+    <h2 class="sec">What it does</h2>
+    <p class="seclead">Several bioinformatics tools bundled into one lightweight engine.</p>
+    <div class="grid">
+      <div class="feat"><div class="ic">🧬</div><h3>Sequences</h3><p>Browse FASTA/FASTQ and translate DNA → protein, codon by codon.</p></div>
+      <div class="feat"><div class="ic">📊</div><h3>Quality</h3><p>FastQC-style report: per-position quality, GC content, Phred scores.</p></div>
+      <div class="feat"><div class="ic">⚗️</div><h3>Align</h3><p>Compare two sequences and see their mutations highlighted.</p></div>
+      <div class="feat"><div class="ic">〜</div><h3>Nanopore</h3><p>Raw electrical signal (POD5/FAST5) → DNA bases, from scratch, pure NumPy.</p></div>
+      <div class="feat"><div class="ic">🔮</div><h3>Evolution</h3><p>Rank which protein mutations may rise, and reality-check a specific one.</p></div>
+    </div>
+  </section>
+
+  <section class="wrap" id="install">
+    <h2 class="sec">Get BioForge</h2>
+    <p class="seclead">Two ways, same version. Both run entirely on your machine.</p>
+    <div class="install">
+      <div class="card">
+        <h3>Desktop app — no Python</h3>
+        <p class="hint">For anyone. Just download and double-click.</p>
+        <a class="btn primary" href="https://github.com/erlanders177/bioforge/releases/latest/download/BioForge-windows.zip"><span class="em">⬇</span> Download (Windows .exe)</a>
+        <ol class="steps">
+          <li>Download the <code>BioForge-…-windows.zip</code> from the latest release.</li>
+          <li>Unzip it anywhere.</li>
+          <li>Run <code>BioForge.exe</code>. Nothing to install.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Python package</h3>
+        <p class="hint">For developers, on Windows/Linux/macOS.</p>
+        <div class="cmd"><span><span class="p">pip install</span> bioforge</span><button class="copy" data-copy="pip install bioforge">Copy</button></div>
+        <p class="hint" style="margin:14px 0 4px">Want the desktop app from the package? Install the extra and run the command:</p>
+        <div class="cmd"><span><span class="p">pip install</span> "bioforge[app]"</span><button class="copy" data-copy="pip install &quot;bioforge[app]&quot;">Copy</button></div>
+        <div class="cmd"><span>bioforge-app</span><button class="copy" data-copy="bioforge-app">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="honest">
+      <h2>Built honestly</h2>
+      BioForge aims to be <b>competitive</b> with single-purpose tools and <b>unique in combining them</b> —
+      not to oversell. Every number is measured, and the limits are stated plainly: for example, the
+      from-scratch nanopore basecaller reaches <b>~74% on real R9.4 signal</b>, honestly below the ~99% of
+      neural tools. See the <a href="https://github.com/erlanders177/bioforge#key-numbers">benchmarks</a>
+      and the full source on <a href="https://github.com/erlanders177/bioforge">GitHub</a>.
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a href="https://github.com/erlanders177/bioforge">GitHub</a>
+    <a href="https://pypi.org/project/bioforge/">PyPI</a>
+    <a href="https://github.com/erlanders177/bioforge/blob/main/LICENSE">License (PolyForm NC)</a>
+    <div class="grow"></div>
+    <span>BioForge v10.0.0 · made by Aarón Aranda Torrijos</span>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('.copy').forEach(b=>{
+  b.addEventListener('click',()=>{
+    navigator.clipboard.writeText(b.dataset.copy).then(()=>{
+      const t=b.textContent; b.textContent='✓ copied'; b.classList.add('ok');
+      setTimeout(()=>{b.textContent=t; b.classList.remove('ok');},1500);
+    });
+  });
+});
+</script>
+</body>
+</html>

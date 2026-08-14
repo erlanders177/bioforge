@@ -1,0 +1,108 @@
+/* BioForge — landing (GitHub Pages). Tema oscuro, misma identidad que la app. */
+:root{
+  --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#26314c;
+  --text:#e7ecf5; --dim:#93a0bd; --accent:#4f8cff; --accent2:#37d39b;
+  --warn:#ffb454; --radius:14px; --maxw:1080px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+     background:var(--bg);color:var(--text);line-height:1.65;
+     -webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+img{max-width:100%}
+
+/* header */
+header{position:sticky;top:0;z-index:10;background:rgba(15,20,32,.82);
+       backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;gap:16px;height:62px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px}
+.brand img{width:30px;height:30px;border-radius:8px}
+.brand b{color:var(--accent)}
+.nav .grow{flex:1}
+.nav a.navlink{color:var(--dim);font-size:14px;font-weight:600}
+.nav a.navlink:hover{color:var(--text);text-decoration:none}
+.lang{display:flex;gap:4px;border:1px solid var(--line);border-radius:20px;padding:2px;font-size:13px}
+.lang a{padding:3px 10px;border-radius:16px;color:var(--dim);font-weight:600}
+.lang a.on{background:var(--panel2);color:var(--text)}
+.lang a:hover{text-decoration:none;color:var(--text)}
+
+/* botones */
+.btn{display:inline-flex;align-items:center;gap:9px;font:inherit;font-weight:600;
+     border:1px solid var(--line);background:var(--panel2);color:var(--text);
+     padding:12px 20px;border-radius:10px;cursor:pointer;transition:.15s}
+.btn:hover{border-color:var(--accent);background:#223055;text-decoration:none}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#3f7cf0}
+.btn .em{font-size:17px}
+
+/* hero */
+.hero{text-align:center;padding:70px 0 40px}
+.badge{display:inline-block;font-size:13px;color:var(--accent2);
+       border:1px solid var(--accent2);border-radius:20px;padding:4px 14px;
+       margin-bottom:22px;opacity:.92}
+.hero h1{font-size:clamp(38px,7vw,68px);line-height:1.05;margin:0 0 14px;letter-spacing:-.5px}
+.hero h1 .g{background:linear-gradient(90deg,var(--accent),var(--accent2));
+            -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{font-size:clamp(17px,2.4vw,21px);color:var(--dim);max-width:640px;
+             margin:0 auto 30px}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.cta .sub{color:var(--dim);font-size:13px;margin-top:12px;flex-basis:100%}
+
+/* secciones */
+section{padding:46px 0}
+h2.sec{font-size:clamp(24px,4vw,32px);margin:0 0 8px;text-align:center}
+p.seclead{color:var(--dim);text-align:center;max-width:640px;margin:0 auto 30px}
+
+/* dos caras */
+.faces{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.face{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+.face h3{margin:0 0 6px;font-size:20px}
+.face .who{color:var(--accent2);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.face p{color:var(--dim);margin:8px 0 16px}
+.face code{background:#0b0f1a;border:1px solid var(--line);border-radius:6px;
+           padding:2px 7px;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:var(--text)}
+
+/* features */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.feat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
+.feat .ic{font-size:26px}
+.feat h3{margin:10px 0 6px;font-size:17px}
+.feat p{color:var(--dim);font-size:14px;margin:0}
+
+/* install */
+.install{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+.card h3{margin:0 0 4px;font-size:20px}
+.card .hint{color:var(--dim);font-size:14px;margin:0 0 16px}
+.cmd{display:flex;align-items:center;gap:10px;background:#0b0f1a;border:1px solid var(--line);
+     border-radius:10px;padding:11px 14px;margin:8px 0;font-family:"Cascadia Code",Consolas,monospace;
+     font-size:14px}
+.cmd span{flex:1;overflow-x:auto;white-space:nowrap;color:var(--text)}
+.cmd span .p{color:var(--accent2)}
+.copy{border:1px solid var(--line);background:var(--panel2);color:var(--dim);border-radius:7px;
+      padding:5px 10px;font-size:12px;cursor:pointer;font-family:inherit;flex:none}
+.copy:hover{color:var(--text);border-color:var(--accent)}
+.copy.ok{color:var(--accent2);border-color:var(--accent2)}
+.steps{color:var(--dim);font-size:14px;margin:14px 0 0;padding-left:18px}
+.steps li{margin:4px 0}
+
+/* honestidad */
+.honest{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent2);
+        border-radius:var(--radius);padding:22px 26px;color:#b9c4db;font-size:15px}
+.honest h2{margin:0 0 8px;font-size:20px;color:var(--text);text-align:left}
+.honest a{color:var(--accent2)}
+
+/* footer */
+footer{border-top:1px solid var(--line);margin-top:30px;padding:30px 0;color:var(--dim);font-size:14px}
+.foot{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+footer a{color:var(--dim);font-weight:600}
+footer a:hover{color:var(--text)}
+footer .grow{flex:1}
+
+@media (max-width:720px){
+  .faces,.install{grid-template-columns:1fr}
+  .nav a.navlink.hideable{display:none}
+}
