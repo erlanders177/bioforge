@@ -239,5 +239,50 @@ def test_open_example_carga_y_es_usable():
     assert al["n_mutations"] == 1 and al["identity"] > 98.0
 
 
+def test_ram_plana_con_muchos_archivos(tmp_path):
+    """Solo el archivo ACTIVO vive en RAM: abrir muchos no debe acumularlos.
+
+    Es la promesa Edge de la app (v10.1): con 500 archivos abiertos la memoria no
+    crece con ellos, porque de los inactivos se guarda solo su ficha y se releen
+    del disco al volver.
+    """
+    paths = []
+    for i in range(8):
+        p = tmp_path / f"g{i}.fasta"
+        p.write_text("".join(f">s{j}\n{'ACGT' * 60}\n" for j in range(20)),
+                     encoding="utf-8")
+        paths.append(str(p))
+
+    api = Api()
+    for p in paths:
+        api.open_file(p)
+
+    # exactamente UNO materializado, aunque haya 8 abiertos
+    vivos = sum(1 for ds in api.datasets if ds["records"] is not None)
+    assert vivos == 1 and len(api.datasets) == 8
+
+    # y las pestañas se listan sin necesidad de cargar los archivos
+    ws = api.workspace()
+    assert ws["n_files"] == 8 and all(f["count"] == 20 for f in ws["files"])
+    assert sum(1 for ds in api.datasets if ds["records"] is not None) == 1
+
+    # volver a uno soltado lo relee y sigue funcionando igual
+    s = api.select_file(2)
+    assert s["count"] == 20 and s["filename"] == "g2.fasta"
+    assert api.records_page(0, 3)["items"][0]["length"] == 240
+    assert sum(1 for ds in api.datasets if ds["records"] is not None) == 1
+
+
+def test_secuencia_en_memoria_no_se_suelta(fasta):
+    """Un basecall añadido NO tiene archivo en disco: no debe soltarse nunca."""
+    api = Api()
+    api.add_sequence("basecall_x", "ATGAAAGGGTTTCCCTAA")   # sin path
+    api.open_file(fasta)                                    # otro archivo pasa a activo
+    en_memoria = api.datasets[0]
+    assert en_memoria["path"] == ""
+    assert en_memoria["records"] is not None                # sigue vivo: no hay de dónde releerlo
+    assert api.select_file(0)["count"] == 1                 # y se puede volver a él
+
+
 def test_ping():
     assert Api().ping()["ok"] is True

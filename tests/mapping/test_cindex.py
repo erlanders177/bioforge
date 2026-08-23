@@ -12,8 +12,8 @@ import numpy as np
 import pytest
 
 from bioforge.engine import _loader as L
-from bioforge.minimizers import encode_bases
-from bioforge.refindex import ReferenceIndex
+from bioforge.mapping.minimizers import encode_bases
+from bioforge.mapping.refindex import ReferenceIndex
 
 pytestmark = pytest.mark.skipif(
     not L.C_INDEX_AVAILABLE, reason="motor C sin índice (bio_index_build)")

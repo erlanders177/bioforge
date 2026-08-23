@@ -22,7 +22,7 @@ import numpy as np
 sys.stdout.reconfigure(encoding="utf-8")            # consola Windows (cp1252)
 sys.path.insert(0, ".")
 
-from bioforge.biocore import (  # noqa: E402
+from bioforge.core.biocore import (  # noqa: E402
     AA_LUT,
     NUC_LUT,
     BitPacker,
@@ -30,8 +30,8 @@ from bioforge.biocore import (  # noqa: E402
     SequenceValueError,
     SmartImporter,
 )
-from bioforge.msa import _infer_type, align_multiple  # noqa: E402
-from bioforge.smart_translator import SmartTranslator  # noqa: E402
+from bioforge.align.msa import _infer_type, align_multiple  # noqa: E402
+from bioforge.sequence.translator import SmartTranslator  # noqa: E402
 
 _DNA = "ACGT"
 _PROT = "ACDEFGHIKLMNPQRSTVWY"

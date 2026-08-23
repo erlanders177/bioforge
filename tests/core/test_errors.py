@@ -16,9 +16,8 @@ from bioforge import (
     SequenceValueError,
     SmartImporter,
     TranslationError,
-    bgzf,
-    qcreport,
 )
+from bioforge.io import bgzf, qcreport
 
 
 def test_hierarchy():

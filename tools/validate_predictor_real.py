@@ -30,7 +30,7 @@ from bioforge.evolution import (  # noqa: E402
     _prepare,
     _project_dominant,
 )
-from bioforge.fetch import fetch_dated  # noqa: E402
+from bioforge.evolution.fetch import fetch_dated  # noqa: E402
 
 # Varios virus → prueba de GENERALIDAD (la promesa de la caja de herramientas).
 # Todos usan el nombre de cepa con /AÑO, así que fetch_dated los parsea igual.

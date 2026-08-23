@@ -9,8 +9,8 @@ lo fácil, y el que recuerda en vez de predecir.
 import numpy as np
 import pytest
 
-from bioforge.biocore import SequenceValueError
-from bioforge.evalkit import EvolutionBenchmark
+from bioforge.core.biocore import SequenceValueError
+from bioforge.evolution.evalkit import EvolutionBenchmark
 
 
 def _dated_protein(n_bins=14, per_bin=30, L=60, seed=0):

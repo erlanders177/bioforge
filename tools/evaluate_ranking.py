@@ -34,7 +34,7 @@ import numpy as np
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-from bioforge.biocore import (  # noqa: E402
+from bioforge.core.biocore import (  # noqa: E402
     SeqType,
     SequenceTypeError,
     SequenceValueError,
@@ -49,8 +49,8 @@ from bioforge.evolution import (  # noqa: E402
     _mutability_gate,
     _prepare,
 )
-from bioforge.fetch import fetch_dated_precise  # noqa: E402
-from bioforge.smart_translator import SmartTranslator  # noqa: E402
+from bioforge.evolution.fetch import fetch_dated_precise  # noqa: E402
+from bioforge.sequence.translator import SmartTranslator  # noqa: E402
 
 ORGANISMS = [
     ("H3N2 (gripe A)",
@@ -148,7 +148,7 @@ def _esm_matrix(freq_train, symbols):
     ESM no entiende huecos: se traduce el consenso a secuencia real, se pregunta una
     vez, y se devuelve el resultado a las columnas del MSA (las columnas de hueco se
     quedan a 0 = inviable, que es lo correcto)."""
-    from bioforge.ai.viability import viability_matrix
+    from bioforge.evolution.ai.viability import viability_matrix
 
     cons = "".join(chr(int(symbols[i])) for i in freq_train[-1].argmax(axis=0))
     cols = [j for j, c in enumerate(cons) if c != "-"]        # columna → posición real

@@ -25,13 +25,13 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from bioforge.biocore import (
+from bioforge.core.biocore import (
     SeqType,
     SequenceValueError,
     SmartImporter,
 )
-from bioforge.msa import _infer_type, align_multiple
-from bioforge.smart_translator import SmartTranslator
+from bioforge.align.msa import _infer_type, align_multiple
+from bioforge.sequence.translator import SmartTranslator
 
 # Alfabetos canónicos en mayúscula → to_string() devuelve exactamente lo que entró.
 _DNA = "ACGT"

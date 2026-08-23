@@ -46,7 +46,7 @@ from bioforge.evolution import (  # noqa: E402
     _mutability_gate,
     _prepare,
 )
-from bioforge.fetch import fetch_dated_precise  # noqa: E402
+from bioforge.evolution.fetch import fetch_dated_precise  # noqa: E402
 
 _CACHE = os.path.join(os.path.expanduser("~"), ".cache", "bioforge", "ranker")
 

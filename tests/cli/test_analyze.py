@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from bioforge import BioForgeError, SeqType, SequenceTypeError, SequenceValueError
-from bioforge.analyze import _change_type, build_report, main, run
+from bioforge.cli.analyze import _change_type, build_report, main, run
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §0  FIXTURES — archivos FASTA temporales

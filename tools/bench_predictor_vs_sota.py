@@ -15,7 +15,7 @@ tareas distintas. Así que nos medimos donde ellos se miden:
               Tranception, AIDO-16B…), con sus cifras oficiales.
 
 Nuestros ejes se aplican en CERO-SHOT: no se ha entrenado nada sobre este ensayo.
-La mutabilidad sale de secuencias de gripe REALES (caché de bioforge.fetch).
+La mutabilidad sale de secuencias de gripe REALES (caché de bioforge.evolution.fetch).
 """
 
 import csv
@@ -73,13 +73,13 @@ def load_dms():
 
 def real_flu_axes():
     """Mutabilidad por sitio y frecuencias, desde secuencias de gripe REALES."""
-    from bioforge.fetch import fetch_dated_precise
+    from bioforge.evolution.fetch import fetch_dated_precise
     term = ("Influenza A virus[Organism] AND H1N1 AND hemagglutinin[Title] "
             "AND 1650:1780[SLEN] AND {year}")
     data = fetch_dated_precise(term, range(2011, 2020), per_year=120)
     prot = []
-    from bioforge.biocore import SeqType, SmartImporter
-    from bioforge.smart_translator import SmartTranslator as T
+    from bioforge.core.biocore import SeqType, SmartImporter
+    from bioforge.sequence.translator import SmartTranslator as T
     packed = []
     for s, _ in data:
         try:

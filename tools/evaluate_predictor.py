@@ -36,7 +36,7 @@ from bioforge.evolution import (  # noqa: E402
     _prepare,
     _project_dominant,
 )
-from bioforge.fetch import fetch_dated, fetch_dated_precise  # noqa: E402
+from bioforge.evolution.fetch import fetch_dated, fetch_dated_precise  # noqa: E402
 
 ORGANISMS = [
     ("H3N2 (gripe A)",

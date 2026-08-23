@@ -10,7 +10,7 @@ las secuencias uniformes no reproducen. Aquí todo se mide sobre material real:
   · Genoma      : E. coli K-12 MG1655 (NCBI, 4.64 Mb)
   · Genes       : 4.325 CDS reales de ese genoma
   · Lecturas    : run Illumina real (ENA SRR2584863), con sus calidades auténticas
-  · Homólogos   : hemaglutininas de gripe reales (caché de bioforge.fetch)
+  · Homólogos   : hemaglutininas de gripe reales (caché de bioforge.evolution.fetch)
 
 Ambos lados reciben EXACTAMENTE el mismo fichero. Se ejecuta en WSL/Linux, donde
 viven los rivales (seqkit, minimap2, mafft, muscle, parasail).
@@ -83,7 +83,7 @@ def bench_parsing():
     make_subset()
     mb = os.path.getsize(SUB) / 1e6
     print(f"   fichero: {mb:.0f} MB reales (calidades auténticas)")
-    from bioforge.biocore import SmartImporter
+    from bioforge.core.biocore import SmartImporter
 
     def bf(nt):
         def run():
@@ -102,8 +102,8 @@ def bench_parsing():
 
 def bench_translate():
     print("\n── TRADUCCIÓN · 4.325 genes REALES de E. coli ──", flush=True)
-    from bioforge.biocore import SeqType, SmartImporter
-    from bioforge.smart_translator import SmartTranslator as T
+    from bioforge.core.biocore import SeqType, SmartImporter
+    from bioforge.sequence.translator import SmartTranslator as T
     seqs = read_fasta(CDS)
     packed = [SmartImporter.from_string(f">x\n{s}\n",
                                         force_type=SeqType.NUCLEOTIDE)[0] for s in seqs]
@@ -117,9 +117,9 @@ def bench_translate():
 def bench_align():
     print("\n── ALINEAMIENTO · hemaglutininas de gripe REALES ──", flush=True)
     import parasail
-    from bioforge.aligner import SequenceAligner as A
-    from bioforge.biocore import SeqType, SmartImporter
-    from bioforge.fetch import fetch_dated_precise
+    from bioforge.align.pairwise import SequenceAligner as A
+    from bioforge.core.biocore import SeqType, SmartImporter
+    from bioforge.evolution.fetch import fetch_dated_precise
     term = ("Influenza A virus[Organism] AND H3N2 AND hemagglutinin[Title] "
             "AND 1650:1780[SLEN] AND {year}")
     data = fetch_dated_precise(term, range(2015, 2020), per_year=60)
@@ -140,7 +140,7 @@ def bench_align():
 
 def bench_map():
     print("\n── MAPEO · lecturas reales → genoma real de E. coli ──", flush=True)
-    from bioforge.genomemap import GenomeAligner
+    from bioforge.mapping.genomemap import GenomeAligner
     ref = "".join(read_fasta(GENOME))
     reads = []
     with open(READS) as f:
@@ -169,8 +169,8 @@ def bench_map():
 
 def bench_msa():
     print("\n── MSA · cepas de gripe REALES ──", flush=True)
-    from bioforge.fetch import fetch_dated_precise
-    from bioforge.msa import align_multiple
+    from bioforge.evolution.fetch import fetch_dated_precise
+    from bioforge.align.msa import align_multiple
     term = ("Influenza A virus[Organism] AND H3N2 AND hemagglutinin[Title] "
             "AND 1650:1780[SLEN] AND {year}")
     data = fetch_dated_precise(term, range(2015, 2020), per_year=60)

@@ -12,7 +12,7 @@ import random
 import numpy as np
 import pytest
 
-from bioforge import qcreport
+from bioforge.io import qcreport
 
 QCHARS = "".join(chr(33 + q) for q in range(64))   # Phred 0..63
 BASES = "ACGT"

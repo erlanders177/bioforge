@@ -13,7 +13,8 @@ import random
 import numpy as np
 import pytest
 
-from bioforge import SmartImporter, bgzf
+from bioforge import SmartImporter
+from bioforge.io import bgzf
 from bioforge.engine._loader import (
     C_LIBDEFLATE_AVAILABLE,
     C_PARALLEL_AVAILABLE,

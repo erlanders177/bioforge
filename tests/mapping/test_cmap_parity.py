@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from bioforge.engine import _loader as L
-from bioforge.genomemap import GenomeAligner, _revcomp
+from bioforge.mapping.genomemap import GenomeAligner, _revcomp
 
 pytestmark = pytest.mark.skipif(
     not L.C_INDEX_AVAILABLE, reason="motor C sin mapeador (bio_map_read)")

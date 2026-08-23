@@ -13,7 +13,7 @@ Las propiedades que DEBE cumplir un predictor honesto y genoma-agnóstico:
 import numpy as np
 import pytest
 
-from bioforge.biocore import SequenceTypeError, SequenceValueError
+from bioforge.core.biocore import SequenceTypeError, SequenceValueError
 from bioforge.evolution import (
     BacktestResult,
     CladePrediction,

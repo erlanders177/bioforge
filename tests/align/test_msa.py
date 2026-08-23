@@ -13,8 +13,8 @@ Verifica las propiedades que DEBE cumplir cualquier MSA correcto:
 import numpy as np
 import pytest
 
-from bioforge.biocore import SeqType, SequenceTypeError, SequenceValueError
-from bioforge.msa import MSAResult, _infer_type, align_multiple
+from bioforge.core.biocore import SeqType, SequenceTypeError, SequenceValueError
+from bioforge.align.msa import MSAResult, _infer_type, align_multiple
 
 
 def _rng_seq(n, seed):

@@ -8,9 +8,9 @@ inválidas, densidad, y la propiedad canónica (invariancia ante hebra).
 import numpy as np
 import pytest
 
-from bioforge.biocore import SequenceValueError
+from bioforge.core.biocore import SequenceValueError
 from bioforge.engine._loader import C_MINIMIZERS_AVAILABLE
-from bioforge.minimizers import (
+from bioforge.mapping.minimizers import (
     MinimizerSketch,
     _minimizers_numpy,
     encode_bases,
@@ -108,7 +108,7 @@ def test_hash_canonico_es_el_menor():
     # w=1 para inspeccionar todas las posiciones sin el filtro de ventana.
     mk = minimizers(codes, k=15, w=1)
     # Recalcular a mano el hash directo e inverso de un par de posiciones.
-    from bioforge.minimizers import _hash64
+    from bioforge.mapping.minimizers import _hash64
     k = 15
     mask = np.uint64((1 << (2 * k)) - 1)
     for p in mk.positions[:20]:

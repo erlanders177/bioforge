@@ -27,7 +27,7 @@ from bioforge import (
     SmartTranslator,
     format_alignment,
 )
-from bioforge.analyze import _AA_NAMES, _NUC_NAMES, _change_type
+from bioforge.cli.analyze import _AA_NAMES, _NUC_NAMES, _change_type
 
 # ── Colores ANSI ───────────────────────────────────────────────────────────────
 _GREEN  = "\033[92m"

@@ -9,12 +9,12 @@ mutaciones, reads que no mapean, copias múltiples y formato PAF.
 import numpy as np
 import pytest
 
-from bioforge.biocore import (
+from bioforge.core.biocore import (
     BioForgeError,
     SequenceTypeError,
     SequenceValueError,
 )
-from bioforge.genomemap import (
+from bioforge.mapping.genomemap import (
     Anchors,
     Chain,
     GenomeAligner,
@@ -23,8 +23,8 @@ from bioforge.genomemap import (
     chain,
     seed,
 )
-from bioforge.minimizers import encode_bases
-from bioforge.refindex import ReferenceIndex
+from bioforge.mapping.minimizers import encode_bases
+from bioforge.mapping.refindex import ReferenceIndex
 
 
 def _rng_seq(n: int, seed_: int = 0) -> str:

@@ -8,8 +8,8 @@ a su posición correcta, y el filtrado de minimizers hiper-frecuentes.
 
 import numpy as np
 
-from bioforge.minimizers import encode_bases, minimizers
-from bioforge.refindex import LookupResult, ReferenceIndex
+from bioforge.mapping.minimizers import encode_bases, minimizers
+from bioforge.mapping.refindex import LookupResult, ReferenceIndex
 
 
 def _rng_seq(n: int, seed: int = 0) -> str:

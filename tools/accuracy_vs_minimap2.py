@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bioforge.genomemap import GenomeAligner  # noqa: E402
+from bioforge.mapping.genomemap import GenomeAligner  # noqa: E402
 
 _VALID = set("ACGT")
 

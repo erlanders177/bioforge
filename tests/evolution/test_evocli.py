@@ -8,7 +8,7 @@ se extrae de la cabecera, y que los errores de uso se reportan con gracia.
 import numpy as np
 import pytest
 
-from bioforge.evocli import _read_dated_fasta, _year_from_header, main
+from bioforge.cli.evolution import _read_dated_fasta, _year_from_header, main
 
 
 def _write_dated_fasta(path, protein=True, n_year=12, years=range(2015, 2021)):
@@ -89,6 +89,6 @@ def test_cli_directorio_como_fichero_no_revienta(tmp_path, capsys):
 
 
 def test_lectura_envuelve_oserror_en_bioforge(tmp_path):
-    from bioforge.biocore import BioForgeError
+    from bioforge.core.biocore import BioForgeError
     with pytest.raises(BioForgeError):        # directorio, no fichero → BioForgeIOError
         _read_dated_fasta(str(tmp_path))

@@ -11,8 +11,8 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("transformers")
 
-from bioforge.ai import grammaticality_profile, viability_scores  # noqa: E402
-from bioforge.biocore import SequenceValueError  # noqa: E402
+from bioforge.evolution.ai import grammaticality_profile, viability_scores  # noqa: E402
+from bioforge.core.biocore import SequenceValueError  # noqa: E402
 
 # lisozima de clara de huevo (fragmento N-terminal real) — contexto natural para ESM-2
 SEQ = "KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGILQINSRW"

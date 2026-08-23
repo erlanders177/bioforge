@@ -45,7 +45,7 @@ from bioforge import (
 from bioforge.nanopore import basecall as _basecall
 from bioforge.nanopore import read_fast5 as _read_fast5
 from bioforge.nanopore import read_pod5 as _read_pod5
-from bioforge.qcreport import run as _qc_run
+from bioforge.io.qcreport import run as _qc_run
 
 # pore model R9.4 6-mer de ONT, empaquetado con la app (ver app/data/README.md).
 _MODEL_PATH = os.path.join(app_dir(), "data", "r9.4_6mer.model")
@@ -84,19 +84,65 @@ def _guard(fn: Callable) -> Callable:
     return wrapper
 
 
+def _read_records(path: str):
+    """Lee un FASTA/FASTQ del disco -> (records, qualities)."""
+    if os.path.splitext(path)[1].lower() in (".fastq", ".fq"):
+        recs = list(SmartImporter.stream_fastq(path))
+        return [r.sequence for r in recs], [r.quality for r in recs]
+    return list(SmartImporter.from_file(path)), []
+
+
+def _meta_of(records: list, qualities: list) -> dict[str, Any]:
+    """Resumen BARATO de un archivo: se guarda para no tener que releerlo."""
+    lengths = [r.n_symbols for r in records]
+    n_nuc = sum(1 for r in records if r.seq_type == SeqType.NUCLEOTIDE)
+    return {
+        "count": len(records),
+        "nucleotide": n_nuc,
+        "protein": len(records) - n_nuc,
+        "total_symbols": int(sum(lengths)),
+        "min_len": int(min(lengths)),
+        "max_len": int(max(lengths)),
+        "mean_len": round(sum(lengths) / len(lengths), 1),
+        "has_quality": bool(qualities),
+    }
+
+
 class Api:
     """API que PyWebview expone a la interfaz como ``window.pywebview.api``.
 
     Mantiene VARIOS archivos abiertos a la vez (como pestañas de genomas) y uno
-    ACTIVO. Cada archivo es un ``dataset`` = {filename, records, qualities}. Las
-    operaciones (traducir, alinear…) trabajan sobre el archivo activo.
+    ACTIVO. Las operaciones (traducir, alinear…) trabajan sobre el archivo activo.
+
+    RAM PLANA (v10.1): solo el archivo ACTIVO tiene sus secuencias materializadas.
+    De los demás se guarda su ficha (nombre, ruta y resumen ya calculado), y sus
+    datos se sueltan; al volver a uno se relee del disco. Así puedes tener 500
+    archivos abiertos y la memoria no crece con ellos — que es la promesa Edge.
+    Los conjuntos SIN archivo en disco (p.ej. un basecall añadido desde Nanoporo)
+    nunca se sueltan, porque no habría de dónde recuperarlos.
     """
 
     def __init__(self) -> None:
-        self.datasets: list[dict] = []   # cada uno: {filename, records, qualities}
+        # cada dataset: {filename, path, records|None, qualities, meta}
+        self.datasets: list[dict] = []
         self.active: int = -1            # índice del archivo activo (-1 = ninguno)
         self.signals: list = []          # SignalRead de nanoporo cargadas
         self.signal_filename: str = ""
+
+    # ── memoria: materializar el activo, soltar los demás ────────────────────
+    def _materialize(self, i: int) -> list:
+        """Devuelve los registros del archivo *i*, releyéndolos si se soltaron."""
+        ds = self.datasets[i]
+        if ds["records"] is None:
+            ds["records"], ds["qualities"] = _read_records(ds["path"])
+        return ds["records"]
+
+    def _release_inactive(self) -> None:
+        """Suelta los datos de todo archivo que no sea el activo (si es releíble)."""
+        for j, ds in enumerate(self.datasets):
+            if j != self.active and ds["path"] and ds["records"] is not None:
+                ds["records"] = None
+                ds["qualities"] = []
 
     # ── carga y gestión de MÚLTIPLES archivos ────────────────────────────────
     @_guard
@@ -104,19 +150,14 @@ class Api:
         """AÑADE un archivo (FASTA o FASTQ) a los abiertos y lo deja activo."""
         if not path or not os.path.exists(path):
             return {"error": "no existe el archivo"}
-        ext = os.path.splitext(path)[1].lower()
-        if ext in (".fastq", ".fq"):
-            recs = list(SmartImporter.stream_fastq(path))
-            records = [r.sequence for r in recs]
-            qualities = [r.quality for r in recs]
-        else:
-            records = list(SmartImporter.from_file(path))
-            qualities = []
+        records, qualities = _read_records(path)
         if not records:
             return {"error": "el archivo no contiene secuencias legibles"}
         self.datasets.append({"filename": os.path.basename(path), "path": path,
-                              "records": records, "qualities": qualities})
+                              "records": records, "qualities": qualities,
+                              "meta": _meta_of(records, qualities)})
         self.active = len(self.datasets) - 1
+        self._release_inactive()
         return self.workspace()
 
     @_guard
@@ -130,10 +171,12 @@ class Api:
 
     @_guard
     def select_file(self, index: int) -> dict[str, Any]:
-        """Cambia el archivo activo y devuelve su resumen."""
+        """Cambia el archivo activo (lo relee si hacía falta) y devuelve su resumen."""
         if not 0 <= int(index) < len(self.datasets):
             return {"error": "archivo no válido"}
         self.active = int(index)
+        self._materialize(self.active)
+        self._release_inactive()
         return self.summary()
 
     @_guard
@@ -150,11 +193,11 @@ class Api:
         return self.workspace()
 
     def _file_entry(self, i: int) -> dict[str, Any]:
-        recs = self.datasets[i]["records"]
-        n_nuc = sum(1 for r in recs if r.seq_type == SeqType.NUCLEOTIDE)
+        # usa la FICHA guardada: listar las pestañas no obliga a cargar los archivos
+        m = self.datasets[i]["meta"]
         return {"index": i, "filename": self.datasets[i]["filename"],
-                "count": len(recs), "nucleotide": n_nuc,
-                "protein": len(recs) - n_nuc, "active": i == self.active}
+                "count": m["count"], "nucleotide": m["nucleotide"],
+                "protein": m["protein"], "active": i == self.active}
 
     @_guard
     def summary(self) -> dict[str, Any]:
@@ -162,22 +205,12 @@ class Api:
         if self.active < 0 or not self.datasets:
             return {"loaded": False, "n_files": len(self.datasets)}
         ds = self.datasets[self.active]
-        recs = ds["records"]
-        lengths = [r.n_symbols for r in recs]
-        n_nuc = sum(1 for r in recs if r.seq_type == SeqType.NUCLEOTIDE)
-        return {
+        return {                                     # todo sale de la ficha guardada
             "loaded": True,
             "filename": ds["filename"],
             "active_index": self.active,
             "n_files": len(self.datasets),
-            "count": len(recs),
-            "nucleotide": n_nuc,
-            "protein": len(recs) - n_nuc,
-            "total_symbols": int(sum(lengths)),
-            "min_len": int(min(lengths)),
-            "max_len": int(max(lengths)),
-            "mean_len": round(sum(lengths) / len(lengths), 1),
-            "has_quality": bool(ds["qualities"]),
+            **ds["meta"],
         }
 
     @_guard
@@ -272,7 +305,7 @@ class Api:
         if self.active < 0 or not self.datasets:
             return {"error": "no hay ningún archivo activo"}
         ds = self.datasets[self.active]
-        if not ds["qualities"]:
+        if not ds["meta"]["has_quality"]:            # la ficha lo sabe sin releer
             return {"error": "el informe de calidad es para FASTQ (con calidades); "
                              "este archivo no las tiene."}
         r = _qc_run(ds["path"])
@@ -307,9 +340,12 @@ class Api:
         name = (header or "secuencia").strip()[:60]
         rec = SmartImporter.from_string(f">{name}\n{seq}\n",
                                         force_type=SeqType.NUCLEOTIDE)[0]
+        # sin archivo en disco -> se queda siempre en memoria (no se puede releer)
         self.datasets.append({"filename": name, "path": "",
-                              "records": [rec], "qualities": []})
+                              "records": [rec], "qualities": [],
+                              "meta": _meta_of([rec], [])})
         self.active = len(self.datasets) - 1
+        self._release_inactive()
         return self.workspace()
 
     @_guard
@@ -336,8 +372,10 @@ class Api:
         if not records:
             return {"error": "no se pudo construir el ejemplo"}
         self.datasets.append({"filename": "ejemplo_adn.fasta", "path": "",
-                              "records": records, "qualities": []})
+                              "records": records, "qualities": [],
+                              "meta": _meta_of(records, [])})
         self.active = len(self.datasets) - 1
+        self._release_inactive()
         return self.workspace()
 
     # ── evolución: predecir qué mutaciones subirán ────────────────────────────
@@ -450,7 +488,7 @@ class Api:
     def _records(self) -> list:
         if self.active < 0 or not self.datasets:
             raise IndexError("no hay ningún archivo activo")
-        return self.datasets[self.active]["records"]
+        return self._materialize(self.active)        # lo relee si se había soltado
 
     def _get(self, index: int):
         records = self._records()
