@@ -4,16 +4,26 @@
 
 BioForge: motor bioinformático de alto rendimiento para Edge Computing (hardware limitado).
 Sin Biopython. NumPy core + motor C opcional (ctypes). Python 3.13, Windows 10.
-Es un paquete instalable: `from bioforge import ...` (versión actual **10.0.0**,
+Es un paquete instalable: `from bioforge import ...` (versión actual **10.1.0**,
 publicada en PyPI con wheels nativos Win/Linux/Mac). Desde la v10.0 tiene además una
 **app de escritorio** (`bioforge.app`, "la otra cara del motor"): misma versión, dos
 rostros — un `.exe` autocontenido (doble clic, sin Python) y el comando `bioforge-app`
-(`pip install "bioforge[app]"`).
+(`pip install "bioforge[app]"`). También tiene web pública (GitHub Pages, `docs/`,
+bilingüe EN/ES) en https://erlanders177.github.io/bioforge/.
+
+**v10.1 — organización por FUNCIONES + carga perezosa.** El paquete dejó de ser 17
+`.py` planos: ahora son subpaquetes por función (`core/ sequence/ align/ mapping/
+evolution/ nanopore/ io/ cli/ app/ engine/`), y los tests van en espejo. Además,
+`import bioforge` **ya no carga el motor entero**: cada nombre trae su módulo solo
+cuando se usa (PEP 562, mapa `_EXPORTS` en `__init__.py`). Medido: **75 ms → 4.7 ms**
+y **1 submódulo cargado en vez de 15**; pedir `SmartTranslator` no carga nanoporo,
+evolución ni mapeo. La API pública NO cambió y las 14 rutas viejas siguen funcionando
+vía módulos-puente (con `DeprecationWarning`) — nada de lo publicado en 10.0.0 se rompe.
 
 Niveles implementados y validados:
-- **L1** `bioforge/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
-- **L2** `bioforge/smart_translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
-- **L3** `bioforge/aligner.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
+- **L1** `bioforge/core/biocore.py` — almacenamiento 5-bit, LUTs, BitPacker, PackedSequence, SmartImporter
+- **L2** `bioforge/sequence/translator.py` — traducción ADN→Proteína vectorizada (CODON_LUT + sliding_window_view); 6-frame + reverse complement
+- **L3** `bioforge/align/pairwise.py` — Needleman-Wunsch wavefront (global/semi-global), banded NW, Smith-Waterman local
 - **L4 (v5.0)** mapeador de genomas / reads largos — seed-chain-align estilo
   minimap2, **tubería ENTERA en C tras un índice opaco** (cubierta Python fina):
   `bio_index_build` (índice opaco: tabla de minimizers ordenada + codes de la
@@ -21,7 +31,7 @@ Niveles implementados y validados:
   chaining DP+backtrack+supresión → extensión banded del read completo → `Mapping`,
   todo en una llamada C), `bio_map_batch` (lote en paralelo con OpenMP, sin GIL).
   `GenomeAligner.map`/`map_batch` enrutan por C con **fallback NumPy idéntico**
-  (verificado con paridad exacta). Módulos Python `minimizers.py`/`refindex.py`/
+  (verificado con paridad exacta). Módulos Python `mapping/minimizers.py`/`refindex.py`/
   `genomemap.py` siguen como fallback y utilidades. Multi-cromosoma; salida PAF.
   **v6.0 (SIMD + multihilo) — ya competitivo.** Head-to-head real medido en WSL
   (`tools/bench_vs_minimap2.py`, 4.8 Mb, 6000 reads, 5% error, minimap2 -a):
@@ -35,8 +45,8 @@ Niveles implementados y validados:
   mata la cola serial Python → en 4 núcleos **a la par de minimap2** (~4.2-4.7 vs
   ~4.0-5.7 Mb/s, a veces por delante). Single-thread aún ~1.2-1.3× por detrás.
   Red `test_cmap_parity.py` garantiza que nada de esto cambia resultados.
-- **Ingesta v2.0** `bioforge/engine/engine.c` + `biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
-- **L5 (v7.0) — predicción de evolución** `bioforge/evolution.py` (+ `fetch.py`, `ai/`).
+- **Ingesta v2.0** `bioforge/engine/engine.c` + `core/biocore.py` — parser FASTA/FASTQ en C (streaming + por lotes), API columnar, `.gz`
+- **L5 (v7.0) — predicción de evolución** `bioforge/evolution/predict.py` (+ `fetch.py`, `ai/`).
   Genoma-agnóstico, sobre el MSA. Piezas: (a) **backtest honesto** horneado —toda
   predicción se mide contra la ingenua "mañana = hoy"; (b) **linajes ESTABLES** estilo
   Pango/autolin SIN árbol filogenético (GRI = N·D/(S+N+D) por co-ocurrencia, dos
@@ -52,8 +62,8 @@ Niveles implementados y validados:
   científica (DERIVE/EVEscape/Hie ya existen y son mejores); el valor es la CAJA
   integrada, accesible, en portátil y honesta. Ver `docs/` y memoria del proyecto.
 
-- **L6 (v8.0) — JUEZ de predictores + FILTRO de realidad** `bioforge/evalkit.py` y
-  `bioforge/realitycheck.py`. No predictores: las herramientas que deciden.
+- **L6 (v8.0) — JUEZ de predictores + FILTRO de realidad** `bioforge/evolution/evalkit.py` y
+  `bioforge/evolution/realitycheck.py`. No predictores: las herramientas que deciden.
   **`EvolutionBenchmark(seqs, dates).judge(f)`** somete cualquier `f(Context)->scores`
   a la batería completa, cada prueba nacida de un autoengaño real: (a) **listón
   trivial** — el rival no es 0.5 sino el mejor eje gratis (frecuencia/mutabilidad/
@@ -76,7 +86,7 @@ Niveles implementados y validados:
   todo residuo no-ACGT→'N'; ver `git log msa.py`). Bug corregido, modelo reentrenado,
   todo re-medido. Fueron evalkit y RealityCheck los que destaparon la corrupción.
 
-- **L7 (v9.0) — BASECALLER de nanoporo desde cero** `bioforge/nanopore.py`. Señal
+- **L7 (v9.0) — BASECALLER de nanoporo desde cero** `bioforge/nanopore/basecaller.py`. Señal
   eléctrica cruda de Oxford Nanopore → bases, **NumPy puro, sin IA, sin GPU**, vía la
   ruta CLÁSICA (HMM/Viterbi, no red neuronal). Piezas: `read_pod5`/`read_fast5` (ingesta
   de señal, dep OPCIONAL `bioforge[nanopore]` = pod5+h5py, solo la fontanería del
@@ -197,6 +207,22 @@ ya se es competitivo): la honestidad del escaparate es tan importante como la de
 benchmark. Si el README se corrige *después* de un tag, PyPI seguirá mostrando el
 viejo hasta la siguiente versión → publicar un parche solo-docs para sincronizar.
 
+### 10. Organización por funciones y carga perezosa (v10.1) — no degradar
+- **Cada módulo va en su subpaquete por FUNCIÓN** (`core/ sequence/ align/ mapping/
+  evolution/ nanopore/ io/ cli/ app/`). Nada de `.py` sueltos nuevos en la raíz del
+  paquete: los que hay son **puentes de compatibilidad** y no se tocan ni se amplían.
+  Los tests van **en espejo** (`tests/align/…`).
+- **Nada de imports pesados en el nivel superior de `__init__.py`.** La API pública se
+  declara en el mapa `_EXPORTS` de `bioforge/__init__.py`, del que salen *a la vez*
+  `__all__` y la resolución perezosa (PEP 562) — así no se desincronizan. Al añadir un
+  símbolo público, se registra ahí; **no** se añade un `from .x import y` arriba.
+  Regla práctica: `import bioforge` debe seguir cargando **un solo** submódulo.
+- **Rutas canónicas en código propio** (motor, tests, tools, app): los puentes existen
+  solo para quien instaló ≤10.0.0. Si aparece un `DeprecationWarning` nuestro en los
+  tests, es un import que hay que corregir.
+- **La app mantiene la RAM plana**: solo el archivo ACTIVO materializado; de los demás,
+  su ficha (`meta`). Listar pestañas nunca debe forzar la carga de archivos.
+
 ---
 
 ## Números correctos del proyecto
@@ -214,6 +240,8 @@ viejo hasta la siguiente versión → publicar un parche solo-docs para sincroni
 | Leer FASTQ `.gz` (libdeflate + paralelo, n_threads≠1) | **~89 M bases/s** (1.59× vs zlib) |
 | Descompresión gzip libdeflate vs zlib | **2.15×** (379 vs 176 MB/s) |
 | Leer FASTQ **BGZF** (descompresión paralela) | **~113 M bases/s** (~1.95× vs baseline) |
+| `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
+| App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
 Correspondería a 2-bit packing, no al esquema 5-bit implementado.
@@ -222,60 +250,73 @@ Correspondería a 2-bit packing, no al esquema 5-bit implementado.
 
 ## Estructura de archivos
 
+Organizado **por FUNCIONES** (v10.1), no por capas. Los tests van en espejo.
+
 ```
 bioforge/                  paquete instalable (from bioforge import ...)
-  __init__.py              API pública + __version__ (fuente única de versión)
-  biocore.py               L1 — almacenamiento 5-bit, SmartImporter, FastqRecord,
-                           SequenceBatch/ReadBatch (API columnar) — no tocar sin impacto global
-  smart_translator.py      L2 — traducción ADN→Proteína, 6-frame, reverse complement,
-                           translate_many() COLUMNAR (unpack/ATG/pack del lote entero
-                           en una travesía a C cada uno; 14x→4x vs seqkit)
-  aligner.py               L3 — NW global/semi-global, banded, Smith-Waterman,
-                           band="auto" (banda ADAPTATIVA exacta: ensancha si el camino
-                           roza el borde; hasta 14.8x, 27x→7x vs parasail)
-  minimizers.py            L4 — minimizers canónicos (w,k) vectorizados
-  refindex.py              L4 — índice de la referencia (hash ordenado + searchsorted)
-  genomemap.py             L4 — seed-chain-align: GenomeAligner.map → PAF
-  msa.py                   MSA center-star (usa L3); soporte del predictor
-  evolution.py             L5 — predicción de evolución: backtest, linajes estables
-                           (designate_lineages), rank_mutations, score_mutations
-  evalkit.py               L6 — el JUEZ honesto: EvolutionBenchmark.judge/cross_validate,
+  __init__.py              API pública + CARGA PEREZOSA (mapa _EXPORTS -> PEP 562)
+                           + __version__ (fuente única de versión)
+  core/biocore.py          EL CIMIENTO — almacenamiento 5-bit, LUTs, BitPacker,
+                           PackedSequence, SmartImporter (lector FASTA/FASTQ),
+                           FastqRecord, SequenceBatch/ReadBatch (API columnar),
+                           jerarquía de errores — no tocar sin impacto global
+  sequence/translator.py   L2 — traducción ADN→Proteína, 6-frame, reverse complement,
+                           translate_many() COLUMNAR
+  align/
+    pairwise.py            L3 — NW global/semi-global, banded, Smith-Waterman,
+                           band="auto" (banda ADAPTATIVA exacta)
+    msa.py                 MSA center-star — soporte del predictor
+  mapping/
+    minimizers.py          L4 — minimizers canónicos (w,k) vectorizados
+    refindex.py            L4 — índice de la referencia (hash ordenado + searchsorted)
+    genomemap.py           L4 — seed-chain-align: GenomeAligner.map → PAF
+  evolution/
+    predict.py             L5 — backtest, linajes estables (designate_lineages),
+                           rank_mutations, score_mutations
+    evalkit.py             L6 — el JUEZ honesto: EvolutionBenchmark.judge/cross_validate,
                            Context (leak-free), Report (veredicto)
-  realitycheck.py          L6 — FILTRO de realidad: RealityCheck.check/filter,
+    realitycheck.py        L6 — FILTRO de realidad: RealityCheck.check/filter,
                            Verdict (OBSERVADO=evidencia | ESTIMADO=conjetura)
-  nanopore.py              L7 — basecaller de nanoporo desde cero: read_pod5/read_fast5,
-                           detect_events, estimate_pore_model, viterbi_basecall (STAY/
-                           STEP/SKIP), basecall. NumPy puro, sin IA. 74.5% en R9.4 real
-  fetch.py                 L5 — descarga NCBI Entrez fechada (stdlib, caché + reintentos)
-  ai/viability.py          L5 — eje B opcional: ESM-2 (bioforge[ai], carga perezosa)
-  data/ranker_weights.npz  L5 — pesos del rankeador entrenado (2.2 KB, en el wheel)
-  analyze.py               pipeline CLI (dna/protein/both)
-  qcreport.py              informe de calidad FASTQ (tipo FastQC, columnar) — CLI bioforge-qc
-  bgzf.py                  conversor a BGZF (gzip por bloques, paralelo) — CLI bioforge-bgzip
+    fetch.py               L5 — descarga NCBI Entrez fechada (stdlib, caché + reintentos)
+    ai/viability.py        L5 — eje B opcional: ESM-2 (bioforge[ai], carga perezosa)
+  nanopore/basecaller.py   L7 — basecaller desde cero: read_pod5/read_fast5,
+                           detect_events, estimate_pore_model, viterbi_basecall
+                           (STAY/STEP/SKIP), basecall. NumPy puro. 74.5% en R9.4 real
+  io/
+    qcreport.py            informe de calidad FASTQ (tipo FastQC) — CLI bioforge-qc
+    bgzf.py                conversor a BGZF (gzip por bloques) — CLI bioforge-bgzip
+  cli/
+    analyze.py             pipeline CLI (dna/protein/both) — bioforge-analyze
+    evolution.py           CLI de evolución (rank/backtest/linajes) — bioforge-evolution
   app/                     L8 (v10.0) — app de escritorio (PyWebview, local, sin servidor)
-    main.py                lanzador: ventana + diálogos de archivo nativos (comando bioforge-app)
-    backend.py             Api: el PUENTE que la UI invoca (dicts, @_guard) — se prueba sin ventana
+    main.py                lanzador: ventana + diálogos nativos (comando bioforge-app)
+    backend.py             Api: el PUENTE que la UI invoca (dicts, @_guard). RAM PLANA:
+                           solo el archivo ACTIVO materializado (v10.1)
     index.html             toda la interfaz (JS vanilla, offline, gráficos SVG inline)
     data/                  recursos de la UI: pore model + icon.ico (doble hélice)
+  data/ranker_weights.npz  L5 — pesos del rankeador entrenado (2.2 KB, en el wheel)
   engine/
     engine.c               motor C — pack/unpack, NW/SW, parser FASTA/FASTQ + batch + .gz
     engine.dll             binario compilado (versionado en git)
-    _loader.py             ctypes + banderas C_AVAILABLE/C_PARSER_AVAILABLE/C_BATCH_AVAILABLE
+    _loader.py             ctypes + banderas C_AVAILABLE/C_PARSER_AVAILABLE/…
     build.py               compila el DLL/SO (autodetecta GCC, enlaza zlib)
+  aligner.py biocore.py …  14 módulos-PUENTE en las rutas viejas (compatibilidad
+                           con 10.0.0; avisan con DeprecationWarning). No usarlos
+                           en código nuevo: el motor ya usa solo rutas canónicas.
 tools/
   visor.py                 frontend interactivo (loops permitidos aquí)
   comparador.py            comparador de secuencias (CLI)
   stress_test.py           benchmark de 30M bases
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
-tests/                     test_biocore / _translator / _aligner / _analyze / _streaming
-                           / _app_backend (la app, sin ventana) …
-docs/                      architecture · api_reference · benchmarks · roadmap
+tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
+                           evolution/ nanopore/ io/ cli/ app/  (548 tests)
+docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
+                           index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)
 BioForge.spec              PyInstaller: empaqueta la app en dist/BioForge/BioForge.exe
 BioForge.bat               lanzador dev (doble clic) — python -m bioforge.app.main
 .github/workflows/         tests · wheels (tag vX→PyPI) · build-app (Release→.exe adjunto)
 ```
-
 ---
 
 ## Limitaciones conocidas del estado actual (v2.0)

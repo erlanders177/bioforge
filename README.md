@@ -69,6 +69,8 @@ combining them (especially the evolution front).
 | Evolution — judged honestly (Level 6) | on real H3N2: model **AUC 0.837 global / 0.631 on novel mutations**, over the trivial mutability bar (0.793) — *measured by our own `EvolutionBenchmark`* |
 | Data integrity | **anti-corruption guard** refuses to mis-encode a mistyped sequence · property-based invariants over both alphabets · `tools/integrity_check.py` certificate |
 | Nanopore basecaller (Level 7) | **~74% identity on real R9.4 signal** (E. coli, n=36, vs production Guppy; v9.0 was 70%, v9.1 lifted it) — from-scratch classical Viterbi, pure NumPy, no AI. *Reproducible: `tools/bench_basecaller.py`* |
+| Import cost *(v10.1)* | **`import bioforge` in 4.7 ms** — was 75 ms (**16× faster**). The package loads **lazily**: 1 submodule instead of 15, so translating DNA never loads the basecaller, mapper or evolution code |
+| Desktop app memory *(v10.1)* | **flat RAM with many files open** — only the ACTIVE file is materialised; the others keep just their summary and are re-read on demand (20 files: ~0.2 MB, previously growing linearly) |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 
 ---
@@ -629,37 +631,44 @@ python check.py
 ## Project structure
 
 ```
-bioforge/               Python package — all core modules
-  __init__.py           Public API entry point (from bioforge import ...)
-  biocore.py            Level 1 — 5-bit storage engine
-  smart_translator.py   Level 2 — DNA → protein translation
-  aligner.py            Level 3 — pairwise alignment + mutation detection
-  minimizers.py         Level 4 — canonical (w, k) minimizers (C + NumPy)
-  refindex.py           Level 4 — reference minimizer index (hash-sorted lookup)
-  genomemap.py          Level 4 — GenomeAligner: seed-chain-align → PAF
-  msa.py                Multiple sequence alignment (center-star) — evolution's base
-  evolution.py          Level 5 — mutation ranking, stable lineages, backtesting
-  fetch.py              Level 5 — dated NCBI Entrez download (stdlib, cached + retries)
-  evocli.py             Level 5 — bioforge-evolution CLI (rank/backtest/lineages)
-  ai/viability.py       Level 5 — optional ESM-2 axis (bioforge[ai], lazy-loaded)
-  evalkit.py            Level 6 — honest predictor judge (EvolutionBenchmark)
-  realitycheck.py       Level 6 — mutation reality filter (RealityCheck)
-  nanopore.py           Level 7 — from-scratch basecaller (signal → bases, pure NumPy)
-  app/                  Desktop app (v10.0) — local window over the engine (bioforge-app)
+bioforge/               organised BY FUNCTION (v10.1); tests mirror it
+  __init__.py           Public API + LAZY loading (_EXPORTS map, PEP 562) + version
+  core/biocore.py       THE FOUNDATION — 5-bit storage, BitPacker, PackedSequence,
+                        SmartImporter (FASTA/FASTQ reader), columnar batches, errors
+  sequence/translator.py   Level 2 — DNA → protein, 6-frame, reverse complement
+  align/
+    pairwise.py         Level 3 — NW global/semi-global, banded, Smith-Waterman
+    msa.py              Multiple sequence alignment (center-star)
+  mapping/
+    minimizers.py       Level 4 — canonical (w, k) minimizers (C + NumPy)
+    refindex.py         Level 4 — reference minimizer index (hash-sorted lookup)
+    genomemap.py        Level 4 — GenomeAligner: seed-chain-align → PAF
+  evolution/
+    predict.py          Level 5 — mutation ranking, stable lineages, backtesting
+    evalkit.py          Level 6 — honest predictor judge (EvolutionBenchmark)
+    realitycheck.py     Level 6 — mutation reality filter (RealityCheck)
+    fetch.py            Level 5 — dated NCBI Entrez download (stdlib, cached)
+    ai/viability.py     Level 5 — optional ESM-2 axis (bioforge[ai], lazy-loaded)
+  nanopore/basecaller.py   Level 7 — from-scratch basecaller (signal → bases)
+  io/
+    qcreport.py         Fast FASTQ quality report (FastQC-style) — bioforge-qc
+    bgzf.py             BGZF converter (parallel block gzip) — bioforge-bgzip
+  cli/
+    analyze.py          Full DNA + protein pipeline — bioforge-analyze
+    evolution.py        Evolution CLI (rank/backtest/lineages) — bioforge-evolution
+  app/                  Desktop app (v10.0) — local window over the engine
     main.py             PyWebview launcher (window + native file dialogs)
     backend.py          The bridge the UI calls (Api) — tested without a window
     index.html          The whole interface (vanilla JS, offline, inline SVG charts)
     data/               UI resources: pore model + app icon
   data/                 Trained mutation-ranker weights (.npz, in the wheel)
-  analyze.py            Full pipeline: DNA + protein analysis, report generation
-  qcreport.py           Fast FASTQ quality report (FastQC-style, columnar)
-  bgzf.py               BGZF converter (parallel block gzip) — bioforge-bgzip
   engine/
     engine.c            C source — pack/unpack, NW, translate, parser, mapper
     engine.dll          Compiled C backend (Windows; .so on Linux/macOS)
     _loader.py          ctypes wrapper with automatic NumPy fallback
     build.py            Compiles the DLL/SO (auto-detects GCC)
-
+  aligner.py biocore.py …  14 compatibility BRIDGES at the old flat paths, so code
+                        written against <=10.0.0 keeps working (DeprecationWarning)
 check.py                Non-programmer verifier (runs all checks automatically)
 conftest.py             Pytest fixtures shared across all tests
 
@@ -669,25 +678,16 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/
-  test_biocore.py       L1: property-based tests (Hypothesis) + benchmarks
-  test_translator.py    L2: genetic code correctness + error paths
-  test_aligner.py       L3: alignment properties + mutation detection
-  test_analyze.py       Pipeline: full integration tests + CLI tests
-  test_streaming.py     Streaming/batch parser + columnar API (Sequence/ReadBatch)
-  test_qcreport.py      FASTQ quality report (qcreport.py)
-  test_minimizers.py    L4: canonical minimizers (C == NumPy parity)
-  test_refindex.py      L4: reference index lookup
-  test_genomemap.py     L4: seed-chain-align, multi-contig, PAF, robustness
-  test_cindex.py        L4: opaque C index parity (bio_index_build)
-  test_msa.py           MSA: no-corruption invariant (DNA + protein)
-  test_evolution.py     L5: ranking, stable lineages, trained model
-  test_evalkit.py       L6: the honest judge (baselines, leakage, regimes)
-  test_realitycheck.py  L6: mutation reality filter (observed vs estimated)
-  test_integrity.py     Anti-corruption net: property-based, both alphabets
-  test_nanopore.py      L7: signal I/O, event detection, Viterbi basecaller
-  test_app_backend.py   Desktop app: the Api bridge, tested without opening a window
-
+tests/                  mirrors the package layout (548 tests)
+  core/                 5-bit storage, streaming/columnar, errors, integrity net
+  sequence/             genetic code correctness + error paths
+  align/                alignment properties, MSA, SIMD kernel parity
+  mapping/              minimizers, index, seed-chain-align, C parity
+  evolution/            ranking, honest judge, reality filter, ESM-2 axis, CLI
+  nanopore/             signal I/O, event detection, Viterbi basecaller
+  io/                   FASTQ quality report, BGZF
+  cli/                  full pipeline integration + CLI
+  app/                  desktop app bridge, tested without opening a window
 docs/
   architecture.md       Design rules, levels, encoding details
   api_reference.md      Code examples for every module
@@ -738,7 +738,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (546 tests)
+# Full test suite (548 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -801,6 +801,7 @@ python check.py
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
 - [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (5 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
+- [x] **Organised by function + lazy loading** *(v10.1)*: subpackages per domain (`core/ sequence/ align/ mapping/ evolution/ nanopore/ io/ cli/ app/`), tests mirroring them, and a package that loads only what you use (`import bioforge` 75 ms → 4.7 ms). Old import paths keep working through compatibility bridges
 - [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 
 ---
