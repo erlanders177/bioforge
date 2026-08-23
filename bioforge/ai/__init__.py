@@ -1,13 +1,25 @@
 """
-bioforge.ai — extras OPCIONALES basados en modelos de lenguaje de proteínas.
+Puente de compatibilidad: ``bioforge.ai`` se movió a ``bioforge.evolution.ai``.
 
-Este subpaquete NO forma parte del núcleo NumPy: requiere ``pip install bioforge[ai]``
-(torch + transformers). El motor y el predictor funcionan sin él; esto es la palanca
-de arriba (el eje B: viabilidad/gramaticalidad de mutaciones con ESM-2).
-
-Importar aquí no arrastra torch salvo que uses las funciones (carga perezosa).
+En la v10.1 el paquete se reorganizó por funciones y el eje opcional ESM-2 pasó a
+vivir junto al resto de la evolución. Esta ruta sigue funcionando, pero está
+DESACONSEJADA: usa ``bioforge.evolution.ai``.
 """
 
-from .viability import grammaticality_profile, viability_scores
+import warnings as _warnings
+
+from bioforge.evolution import ai as _target
+from bioforge.evolution.ai import grammaticality_profile, viability_scores  # noqa: F401
+
+_warnings.warn(
+    "bioforge.ai se movió a bioforge.evolution.ai; esta ruta seguirá funcionando "
+    "una versión más. Cambia el import cuando puedas.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 __all__ = ["viability_scores", "grammaticality_profile"]
+
+
+def __getattr__(name):
+    return getattr(_target, name)

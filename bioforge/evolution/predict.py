@@ -49,8 +49,8 @@ from typing import NamedTuple, Optional, Sequence, Union
 
 import numpy as np
 
-from .biocore import SequenceTypeError, SequenceValueError
-from .msa import align_multiple
+from ..core.biocore import SequenceTypeError, SequenceValueError
+from ..align.msa import align_multiple
 
 Number = Union[int, float]
 
@@ -1147,7 +1147,8 @@ def _load_ranker():
     global _RANKER
     if _RANKER is None:
         import os
-        path = os.path.join(os.path.dirname(__file__), "data", "ranker_weights.npz")
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "data", "ranker_weights.npz")
         try:
             d = np.load(path, allow_pickle=True)
             _RANKER = {k: d[k] for k in ("W1", "b1", "W2", "b2", "W3", "b3",
