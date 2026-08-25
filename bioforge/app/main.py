@@ -74,6 +74,28 @@ class DesktopApi(Api):
             return {"error": f"no se pudo escribir el archivo: {e}"}
         return {"saved": ruta}
 
+    def save_newick(self) -> dict:
+        """Diálogo nativo para guardar el árbol en Newick (lo abre MEGA, FigTree, iTOL)."""
+        datos = self.newick_text()
+        if "error" in datos:
+            return datos
+        import webview
+        try:
+            destino = self.window.create_file_dialog(
+                webview.FileDialog.SAVE, save_filename="arbol.newick",
+                file_types=("Árbol Newick (*.newick;*.nwk)", "Todos los archivos (*.*)"))
+        except Exception as e:                       # noqa: BLE001
+            return {"error": f"no se pudo abrir el diálogo: {e}"}
+        if not destino:
+            return {"cancelled": True}
+        ruta = destino if isinstance(destino, str) else destino[0]
+        try:
+            with open(ruta, "w", encoding="utf-8") as fh:
+                fh.write(datos["newick"] + "\n")
+        except OSError as e:
+            return {"error": f"no se pudo escribir el archivo: {e}"}
+        return {"saved": ruta}
+
     def pick_and_open_signal(self) -> dict:
         """Diálogo de archivos para señal de nanoporo (POD5/FAST5)."""
         import webview

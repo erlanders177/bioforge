@@ -13,7 +13,7 @@ bilingüe EN/ES) en https://erlanders177.github.io/bioforge/.
 
 **v10.1 — organización por FUNCIONES + carga perezosa.** El paquete dejó de ser 17
 `.py` planos: ahora son subpaquetes por función (`core/ sequence/ align/ mapping/
-variants/ evolution/ nanopore/ io/ cli/ app/ engine/`), y los tests van en espejo. Además,
+variants/ phylo/ evolution/ nanopore/ io/ cli/ app/ engine/`), y los tests van en espejo. Además,
 `import bioforge` **ya no carga el motor entero**: cada nombre trae su módulo solo
 cuando se usa (PEP 562, mapa `_EXPORTS` en `__init__.py`). Medido: **75 ms → 4.7 ms**
 y **1 submódulo cargado en vez de 15**; pedir `SmartTranslator` no carga nanoporo,
@@ -109,10 +109,11 @@ Niveles implementados y validados:
 - **L8 (v10.0) — APP DE ESCRITORIO** `bioforge/app/`. "La otra cara del motor": una
   ventana NATIVA y LOCAL (PyWebview) sobre el mismo `bioforge`, para no-programadores —
   analizar ADN a clics, sin código y sin que los datos salgan de la máquina (ADN Edge,
-  sin servidor ni red). SEIS pestañas, cada una con explicación "para todos":
+  sin servidor ni red). SIETE pestañas, cada una con explicación "para todos":
   **Secuencias** (listar/traducir ADN→proteína codón a codón), **Calidad** (informe QC
   estilo FastQC con gráficos SVG), **Alinear** (dos secuencias → mutaciones), **Variantes** (lecturas vs genoma de
-  referencia → cobertura + mutaciones + VCF descargable), **Nanoporo**
+  referencia → cobertura + mutaciones + VCF descargable), **Árbol**
+  (filogenia: NJ/UPGMA con soporte bootstrap, dibujo SVG y Newick), **Nanoporo**
   (señal cruda → bases con nuestro basecaller, y "usar en otras pestañas") y **Evolución**
   (rank_mutations + RealityCheck). Piezas: `main.py` (lanzador PyWebview + diálogos de
   archivo nativos), `backend.py` (`Api`, el PUENTE que la interfaz invoca — cada método
@@ -149,6 +150,28 @@ Niveles implementados y validados:
   diploides. **Primera familia con carga perezosa INTERNA** (su `__init__` resuelve
   por PEP 562): pedir `pileup` no carga `caller`. Es el listón nuevo de la Regla #11.
   No depende de `mapping`: consume cualquier objeto con los atributos de un `Mapping`.
+
+- **L10 (v10.2) — FILOGENIA** `bioforge/phylo/`. Completa el frente evolutivo: sobre el
+  MSA que ya había, reconstruye **quién desciende de quién**. `distance.py` (matrices de
+  distancia con corrección de sustituciones múltiples: p, **Jukes-Cantor**, **Kimura 2P**
+  con transiciones/transversiones separadas, Poisson para proteínas; todo por **matmuls**
+  sobre one-hot, sin bucles por columna) y `tree.py` (**Neighbor-Joining**, **UPGMA**,
+  **WPGMA**, Newick, y **soporte por bootstrap** de Felsenstein). Borrado por parejas en
+  los huecos. **CONTRASTADO CONTRA EL ESTÁNDAR** (`tools/bench_vs_biopython_phylo.py`,
+  vs Biopython 1.87): topología NJ **idéntica en 5/5** casos (6-60 taxones), matrices de
+  distancia iguales hasta **1.5e-8** (precisión de máquina), y **15× más rápido** en
+  distancias y **3.8×** en NJ. ⚠ **HALLAZGO:** el `upgma()` de Biopython promedia
+  `(d(k,i)+d(k,j))/2` SIN ponderar por tamaño de grupo — eso es **WPGMA, no UPGMA**
+  (ver su código, línea del `dm[min_j,k]`). El nuestro pondera, que es la definición de
+  Sokal & Michener 1958; por eso difiere a partir de ~20 taxones. Añadimos `wpgma()`
+  aparte, que reproduce su salida en **5/5**. Fijado en `tests/phylo/` con
+  `test_el_upgma_de_biopython_es_en_realidad_wpgma`. **Verdad no negociable:** esto es
+  filogenia por DISTANCIAS; la máxima verosimilitud (RAxML, IQ-TREE) juega en otra liga
+  y no pretendemos igualarla. Validación matemática propia: sobre una matriz **aditiva**
+  NJ recupera las longitudes de rama **exactas** (garantía teórica, test incluido), y el
+  bootstrap da soporte <70 % con secuencias al azar (no inventa genealogías).
+  INTEGRADA: CLI `bioforge-phylo` (dibuja el árbol en la terminal) + pestaña **Árbol**
+  en la app (SVG con soporte por colores) + `ejemplos/filogenia_especies.fasta`.
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
@@ -235,7 +258,7 @@ viejo hasta la siguiente versión → publicar un parche solo-docs para sincroni
 
 ### 10. Organización por funciones y carga perezosa (v10.1) — no degradar
 - **Cada módulo va en su subpaquete por FUNCIÓN** (`core/ sequence/ align/ mapping/
-  variants/ evolution/ nanopore/ io/ cli/ app/`). Nada de `.py` sueltos nuevos en la raíz del
+  variants/ phylo/ evolution/ nanopore/ io/ cli/ app/`). Nada de `.py` sueltos nuevos en la raíz del
   paquete: los que hay son **puentes de compatibilidad** y no se tocan ni se amplían.
   Los tests van **en espejo** (`tests/align/…`).
 - **Nada de imports pesados en el nivel superior de `__init__.py`.** La API pública se
@@ -296,6 +319,9 @@ la regresión para confirmar que se pone rojo.
 | `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
 | App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
 | Llamada de variantes — SNVs (v10.2) | **100% sensibilidad y 100% precisión desde 10×** (error 0.1–1%); a 5× sensib. 64-72% pero precisión sigue 100% |
+| Filogenia — NJ vs Biopython | **topología idéntica en 5/5** casos (6-60 taxones); matrices de distancia iguales a **1.5e-8** |
+| Filogenia — velocidad vs Biopython | **15× más rápido** en distancias · **3.8×** en NJ |
+| Filogenia — hallazgo | el `upgma()` de Biopython es en realidad **WPGMA**; nuestro `wpgma()` lo reproduce 5/5 |
 | Llamada de variantes — datos ruidosos | con 5% error, ajustar `error_rate=0.05` sube la precisión **71%→100%** a 10× sin perder sensibilidad |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
@@ -325,6 +351,9 @@ bioforge/                  paquete instalable (from bioforge import ...)
     minimizers.py          L4 — minimizers canónicos (w,k) vectorizados
     refindex.py            L4 — índice de la referencia (hash ordenado + searchsorted)
     genomemap.py           L4 — seed-chain-align: GenomeAligner.map → PAF
+  phylo/                   L10 (v10.2) — filogenia: árboles evolutivos
+    distance.py            matrices de distancia (p/JC/K2P/Poisson) por matmuls
+    tree.py                Neighbor-Joining, UPGMA, WPGMA, Newick, bootstrap
   variants/                L9 (v10.2) — llamada de variantes: la tubería completa
     pileup.py              apila lecturas sobre la referencia (matriz A/C/G/T/N/DEL,
                            profundidad, cobertura) — vale sola para "¿leí bastante?"
@@ -351,6 +380,7 @@ bioforge/                  paquete instalable (from bioforge import ...)
     evolution.py           CLI de evolución (rank/backtest/linajes) — bioforge-evolution
     variants.py            CLI de variantes (mapeo→pileup→VCF + informe de cobertura)
                            — bioforge-variants
+    phylo.py               CLI de filogenia (árbol en terminal + Newick) — bioforge-phylo
   app/                     L8 (v10.0) — app de escritorio (PyWebview, local, sin servidor)
     main.py                lanzador: ventana + diálogos nativos (comando bioforge-app)
     backend.py             Api: el PUENTE que la UI invoca (dicts, @_guard). RAM PLANA:
@@ -372,8 +402,8 @@ tools/
   stress_test.py           benchmark de 30M bases
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
-                           variants/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
-                           (el guardián de la Regla #11)  (593 tests)
+                           variants/ phylo/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
+                           (el guardián de la Regla #11)  (628 tests)
 docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
                            index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)

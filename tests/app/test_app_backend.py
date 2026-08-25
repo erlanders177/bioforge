@@ -410,3 +410,119 @@ def test_vcf_text_antes_y_despues(genoma_y_lecturas):
     assert "#CHROM\tPOS\tID\tREF\tALT" in texto
     datos = [x for x in texto.strip().split("\n") if not x.startswith("#")]
     assert len(datos) >= 2 and all(len(x.split("\t")) == 8 for x in datos)
+
+
+# ── árbol evolutivo en la app ────────────────────────────────────────────────
+NL = chr(10)
+
+
+@pytest.fixture()
+def fasta_familias(tmp_path):
+    """Seis secuencias en DOS familias claras, para un árbol con topología conocida."""
+    import numpy as np
+    rng = np.random.default_rng(2027)
+    L = 800
+
+    def mutar(s, t):
+        a = np.array(list(s))
+        m = rng.random(len(s)) < t
+        if m.any():
+            a[m] = rng.choice(list("ACGT"), size=int(m.sum()))
+        return "".join(a)
+
+    anc = "".join(rng.choice(list("ACGT"), size=L))
+    fam1, fam2 = mutar(anc, 0.12), mutar(anc, 0.12)
+    grupos = {"gato": fam1, "tigre": fam1, "leon": fam1,
+              "perro": fam2, "lobo": fam2, "zorro": fam2}
+    p = tmp_path / "familias.fasta"
+    with open(p, "w", encoding="utf-8") as fh:
+        for nom, base in grupos.items():
+            fh.write(">" + nom + " simulada" + NL + mutar(base, 0.03) + NL)
+    return str(p)
+
+
+def test_phylo_tree_construye_el_arbol(fasta_familias):
+    api = Api()
+    api.open_file(fasta_familias)
+    r = api.phylo_tree(method="nj", model="jc", bootstrap=0)
+
+    assert "error" not in r, r.get("error")
+    assert r["n_seqs"] == 6 and r["n_cols"] > 0
+    assert r["method"] == "nj" and r["rooted"] is False
+    assert r["newick"].endswith(";")
+    # el árbol devuelto es anidado y contiene las 6 hojas
+    hojas = []
+    def rec(n):
+        if "children" in n:
+            for h in n["children"]:
+                rec(h)
+        else:
+            hojas.append(n["name"])
+    rec(r["tree"])
+    assert sorted(hojas) == ["gato", "leon", "lobo", "perro", "tigre", "zorro"]
+
+
+def test_phylo_tree_agrupa_las_familias(fasta_familias):
+    """La prueba que importa: felinos con felinos y cánidos con cánidos.
+
+    El árbol de Neighbor-Joining es SIN RAÍZ, así que un grupo no se comprueba
+    mirando subárboles (dependen de dónde se dibuje la raíz) sino **biparticiones**:
+    ¿existe una rama que deje a los felinos a un lado y a los cánidos al otro?
+    Un grupo y su complemento son la misma bipartición.
+    """
+    api = Api()
+    api.open_file(fasta_familias)
+    r = api.phylo_tree(method="nj", bootstrap=0)
+
+    felinos = {"gato", "tigre", "leon"}
+    canidos = {"perro", "lobo", "zorro"}
+    todas = felinos | canidos
+
+    biparticiones = []
+    def rec(n):
+        if "children" not in n:
+            return {n["name"]}
+        abajo = set()
+        for h in n["children"]:
+            abajo |= rec(h)
+        if 2 <= len(abajo) <= len(todas) - 2:      # informativa
+            biparticiones.append(frozenset(abajo))
+        return abajo
+    rec(r["tree"])
+
+    assert any(set(b) in (felinos, canidos) for b in biparticiones), (
+        f"debería haber una rama que separe felinos de cánidos; "
+        f"biparticiones halladas: {[sorted(b) for b in biparticiones]}")
+
+
+def test_phylo_tree_con_bootstrap_anota_soporte(fasta_familias):
+    api = Api()
+    api.open_file(fasta_familias)
+    r = api.phylo_tree(bootstrap=50)
+    assert r["bootstrap"] == 50
+    soportes = []
+    def rec(n):
+        if "support" in n:
+            soportes.append(n["support"])
+        for h in n.get("children", []):
+            rec(h)
+    rec(r["tree"])
+    assert soportes, "con bootstrap debe anotar el soporte de las ramas internas"
+    assert all(0 <= x <= 100 for x in soportes)
+
+
+def test_phylo_tree_pocas_secuencias(fasta):
+    """El FASTA de ejemplo tiene 3 secuencias: justo el mínimo; con 2 debe avisar."""
+    api = Api()
+    api.open_file(fasta)
+    r = api.phylo_tree()
+    assert "error" not in r or "al menos 3" in r.get("error", "")
+
+
+def test_newick_text_antes_y_despues(fasta_familias):
+    api = Api()
+    assert "error" in api.newick_text()
+    api.open_file(fasta_familias)
+    api.phylo_tree(bootstrap=0)
+    nw = api.newick_text()["newick"]
+    assert nw.endswith(";") and nw.count("(") == nw.count(")")

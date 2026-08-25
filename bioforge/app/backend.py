@@ -2,7 +2,7 @@
 bioforge/app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
 
 La app de escritorio es "la otra cara" del mismo motor: una capa FINA de interfaz
-sobre el paquete ``bioforge`` (que ya está probado, 593 tests). Aquí vive la lógica
+sobre el paquete ``bioforge`` (que ya está probado, 628 tests). Aquí vive la lógica
 que la interfaz (HTML/JS) invoca; la ventana en sí (PyWebview) es solo un lanzador.
 
 Todo es LOCAL y SIN SERVIDOR: los datos —el ADN del usuario— nunca salen de la
@@ -595,6 +595,78 @@ class Api:
                           "af": round(v.af, 3), "kind": v.kind}
                          for v in variantes[:500]],
         }
+
+    # ── filogenia: el árbol evolutivo del archivo activo ─────────────────────
+    @_guard
+    def phylo_tree(self, method: str = "nj", model: str = "jc",
+                   bootstrap: int = 0, max_seqs: int = 60) -> dict[str, Any]:
+        """Alinea el archivo activo, calcula distancias y construye el árbol.
+
+        ``max_seqs`` acota el trabajo: el alineamiento múltiple y el bootstrap
+        crecen deprisa, y esto es una ventana de escritorio. Con más secuencias se
+        usan las primeras y se avisa.
+        """
+        from bioforge.align.msa import align_multiple
+        from bioforge.phylo.distance import distance_matrix
+        from bioforge.phylo.tree import bootstrap_support, build_tree
+
+        records = self._records()
+        if len(records) < 3:
+            return {"error": f"hacen falta al menos 3 secuencias para un árbol "
+                             f"(este archivo tiene {len(records)})."}
+        recortado = len(records) > int(max_seqs)
+        usados = records[:int(max_seqs)]
+        nombres, vistos = [], set()
+        for i, r in enumerate(usados):               # nombres únicos y cortos
+            base = (r.header.split()[0] if r.header else f"seq{i+1}")[:28]
+            nom, k = base, 2
+            while nom in vistos:
+                nom = f"{base}_{k}"; k += 1
+            vistos.add(nom)
+            nombres.append(nom)
+
+        seqs = [r.to_string().upper() for r in usados]
+        largos = {len(s) for s in seqs}
+        alineadas = seqs if len(largos) == 1 else align_multiple(seqs).aligned
+
+        dm = distance_matrix(alineadas, model=model, names=nombres)
+        reps = int(bootstrap)
+        if reps > 0:
+            arbol = bootstrap_support(alineadas, names=nombres, method=method,
+                                      model=model, replicates=reps, seed=7)
+        else:
+            arbol = build_tree(alineadas, names=nombres, method=method, model=model)
+
+        flojas = []
+        def revisar(n):
+            if n.support is not None and n.support < 70:
+                flojas.append(n.support)
+            for h in n.children:
+                revisar(h)
+        revisar(arbol.root)
+
+        self._newick = arbol.newick()
+        return {
+            "tree": arbol.to_dict(),
+            "newick": self._newick,
+            "n_seqs": len(seqs),
+            "n_cols": len(alineadas[0]),
+            "method": method, "model": model,
+            "rooted": arbol.rooted,
+            "bootstrap": reps,
+            "weak": len(flojas),
+            "saturated": dm.saturated,
+            "truncated": recortado,
+            "was_aligned": len(largos) == 1,
+        }
+
+    @_guard
+    def newick_text(self) -> dict[str, Any]:
+        """El árbol del último análisis en Newick, para guardarlo."""
+        texto = getattr(self, "_newick", "")
+        if not texto:
+            return {"error": "todavía no has construido ningún árbol"}
+        return {"newick": texto}
 
     @_guard
     def vcf_text(self) -> dict[str, Any]:

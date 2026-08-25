@@ -122,6 +122,7 @@
       <a data-view="calidad"><span class="ic">📊</span>Calidad</a>
       <a data-view="alinear"><span class="ic">⚗️</span>Alinear</a>
       <a data-view="variantes"><span class="ic">🔍</span>Variantes</a>
+      <a data-view="arbol"><span class="ic">🌳</span>Árbol</a>
       <a data-view="nanoporo"><span class="ic">〜</span>Nanoporo</a>
       <a data-view="evolucion"><span class="ic">🔮</span>Evolución</a>
     </div>
@@ -224,6 +225,7 @@ function render(){
   if(VIEW==="calidad")     return renderCalidad(c);
   if(VIEW==="alinear")     return renderAlinear(c);
   if(VIEW==="variantes")   return renderVariantes(c);
+  if(VIEW==="arbol")       return renderArbol(c);
   if(VIEW==="nanoporo")    return renderNanoporo(c);
   if(VIEW==="evolucion")   return renderEvolucion(c);
 }
@@ -240,6 +242,7 @@ function viewInicio(){
       <li><b>Calidad</b> — si vienen de una máquina de secuenciación, mide cómo de fiables son las letras.</li>
       <li><b>Alinear</b> — compara dos secuencias y ve en qué se diferencian (mutaciones).</li>
       <li><b>Variantes</b> — compara MUCHAS lecturas contra un genoma y encuentra sus mutaciones.</li>
+      <li><b>Árbol</b> — reconstruye el parentesco evolutivo entre varias secuencias.</li>
       <li><b>Nanoporo</b> — convierte la señal eléctrica cruda de un secuenciador en letras de ADN.</li>
       <li><b>Evolución</b> — predice qué mutaciones de una proteína podrían extenderse con el tiempo.</li>
     </ul>`));
@@ -514,6 +517,152 @@ function svgDepth(vals,paso){
     ${yt}<polygon points="${area}" fill="#4f8cff" opacity="0.18"/>
     <polyline points="${linea}" fill="none" stroke="#4f8cff" stroke-width="1.6"/>
     <text x="${w/2}" y="${h-4}" fill="#93a0bd" font-size="11" text-anchor="middle">posición en el genoma (1 punto ≈ ${paso} bases)</text></svg>`;
+}
+
+// ── Árbol evolutivo (filogenia por distancias) ──────────────────────────────
+async function renderArbol(c){
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Árbol evolutivo</h2>`),
+    el(`<p class="sub">¿Quién se parece a quién, y en qué orden se separaron?</p>`),
+    explain(`<span class="t">¿Qué es esto?</span>
+      Un <b>árbol evolutivo</b> (o filogenético) ordena un grupo de secuencias según su parentesco: las que están unidas por una rama cercana comparten un antepasado más reciente. Es la forma en que la biología reconstruye historias que nadie presenció.
+      <ul>
+        <li><b>Cómo se hace</b> — primero se mide cuánto se diferencian todas las parejas; luego se busca el árbol que mejor explica esas distancias.</li>
+        <li><b>Corrección de saturación</b> — contar letras distintas se queda corto: en mucho tiempo, una posición puede mutar y <b>volver</b> a su letra original. El modelo <b>Jukes-Cantor</b> estima esas mutaciones invisibles.</li>
+        <li><b>Longitud de la rama</b> — cuánto cambio acumuló ese linaje. Ramas largas = evolución más rápida o más tiempo.</li>
+        <li><b>Soporte (bootstrap)</b> — el número sobre cada nudo. Se reconstruye el árbol cientos de veces con trozos al azar del alineamiento y se cuenta cuántas veces sale esa misma agrupación. <b>Es lo más importante:</b> un árbol sin soporte es una opinión.</li>
+      </ul>
+      <b>Cómo leerlo con honestidad:</b> ≥95 % es sólido · 70-95 % razonable · <b>por debajo de 70 % los datos no lo sostienen</b>, y esa agrupación no debería contarse como resultado.`));
+
+  if(!STATE.summary){
+    box.append(el(`<div class="soon">Carga un archivo FASTA con <b>al menos 3 secuencias emparentadas</b>.<br>
+      Prueba con <b>ejemplos/filogenia_especies.fasta</b>.</div>`));
+    c.replaceChildren(box); return;
+  }
+  if(STATE.summary.count<3){
+    box.append(el(`<div class="err">Este archivo solo tiene ${STATE.summary.count} secuencia(s). Un árbol necesita al menos 3.</div>`));
+    c.replaceChildren(box); return;
+  }
+
+  const bar=el(`<div class="selbar" style="flex-wrap:wrap">
+     <span>Método</span>
+     <select id="phMethod">
+       <option value="nj">Neighbor-Joining (recomendado)</option>
+       <option value="upgma">UPGMA (supone ritmo constante)</option>
+     </select>
+     <span style="margin-left:8px">Modelo</span>
+     <select id="phModel">
+       <option value="jc">Jukes-Cantor</option>
+       <option value="k2p">Kimura 2 parámetros (ADN)</option>
+       <option value="p">Sin corregir</option>
+       <option value="poisson">Poisson (proteínas)</option>
+     </select>
+     <span style="margin-left:8px">Bootstrap</span>
+     <select id="phBoot">
+       <option value="0">sin soporte (rápido)</option>
+       <option value="100" selected>100 réplicas</option>
+       <option value="500">500 réplicas (lento)</option>
+     </select>
+     <button class="primary" id="goPhylo">Construir árbol</button></div>`);
+  box.append(bar, el(`<div id="phyOut"></div>`));
+  c.replaceChildren(box);
+
+  $("#goPhylo",bar).addEventListener("click",async()=>{
+    const out=$("#phyOut");
+    out.replaceChildren(el(`<p class="hint">Alineando, midiendo distancias y construyendo el árbol… (con bootstrap puede tardar unos segundos)</p>`));
+    const r=await API.phylo_tree($("#phMethod").value,$("#phModel").value,+$("#phBoot").value);
+    if(r.error){ out.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+    pintarArbol(out,r);
+  });
+}
+
+function pintarArbol(out,r){
+  const avisos=[];
+  if(r.truncated) avisos.push(`Se usaron las primeras ${r.n_seqs} secuencias para que la app siga respondiendo.`);
+  if(r.saturated) avisos.push(`${r.saturated} pareja(s) demasiado divergentes para corregirlas: el árbol en esa zona es poco fiable.`);
+  if(r.bootstrap>0 && r.weak>0) avisos.push(`${r.weak} rama(s) con soporte por debajo del 70 %: los datos no las sostienen.`);
+
+  const node=el(`<div>
+    <div class="cards">
+      <div class="card"><div class="k">Secuencias</div><div class="v">${r.n_seqs}</div></div>
+      <div class="card"><div class="k">Columnas</div><div class="v">${r.n_cols.toLocaleString()}</div></div>
+      <div class="card"><div class="k">Método</div><div class="v" style="font-size:16px">${r.method==="nj"?"Neighbor-Joining":"UPGMA"}</div></div>
+      <div class="card"><div class="k">Ramas dudosas</div><div class="v" style="color:${r.weak?'#ffb454':'#37d39b'}">${r.bootstrap>0?r.weak:"—"}</div></div>
+    </div>
+    ${avisos.map(a=>`<div class="err" style="color:#ffb454;background:#2a2417;border-color:#5a4522">${esc(a)}</div>`).join("")}
+    <div class="row" style="margin:14px 0 6px"><h3 style="margin:0;flex:1">El árbol</h3>
+      <button class="primary" id="saveNwk" title="Formato Newick: lo abren MEGA, FigTree e iTOL">Guardar árbol…</button></div>
+    <p class="hint" style="margin:0 0 8px">${r.rooted
+        ? "UPGMA da un árbol <b>con raíz</b>: el punto de la izquierda representa el ancestro común."
+        : "Neighbor-Joining da un árbol <b>sin raíz</b>: muestra el parentesco, pero el punto de la izquierda NO es un ancestro real."}
+      ${r.bootstrap>0?" Los números sobre los nudos son el <b>soporte</b> (%).":""}</p>
+    <div class="chart" style="overflow-x:auto">${svgArbol(r.tree,r.bootstrap>0)}</div>
+    <h3 style="margin-top:18px">Newick</h3>
+    <p class="hint" style="margin:0 0 8px">El formato estándar del campo. Cópialo en MEGA, FigTree o iTOL para dibujarlo con más opciones.</p>
+    <div class="seqbox mono" style="max-height:110px">${esc(r.newick)}</div>
+  </div>`);
+  out.replaceChildren(node);
+  const b=$("#saveNwk",node);
+  if(b) b.addEventListener("click",async()=>{
+    const res=await API.save_newick();
+    if(res && res.error) toast(res.error);
+    else if(res && res.saved) b.textContent="✓ Guardado";
+  });
+}
+
+function svgArbol(raiz,conSoporte){
+  // 1) posiciones: x = distancia acumulada desde la raíz, y = orden de las hojas
+  const hojas=[]; let maxX=0;
+  (function medir(n,x){
+    n._x=x; if(x>maxX) maxX=x;
+    if(!n.children||!n.children.length){ n._hoja=true; hojas.push(n); return; }
+    n.children.forEach(h=>medir(h,x+(h.length||0)));
+  })(raiz,0);
+  if(!hojas.length) return "";
+  hojas.forEach((h,i)=>h._y=i);
+  (function centrar(n){
+    if(n._hoja) return n._y;
+    const ys=n.children.map(centrar);
+    n._y=(Math.min(...ys)+Math.max(...ys))/2; return n._y;
+  })(raiz);
+
+  // si todas las ramas miden ~0, se dibuja por topología (cladograma)
+  if(maxX<1e-9){
+    (function prof(n,d){ n._x=d; if(d>maxX)maxX=d; (n.children||[]).forEach(h=>prof(h,d+1)); })(raiz,0);
+  }
+
+  const filas=hojas.length, alto=Math.max(150,filas*26+40);
+  const L=14, R=190, T=22, B=14, ancho=760;
+  const usable=ancho-L-R;
+  const X=v=>L+(maxX>0?(v/maxX)*usable:0);
+  const Y=v=>T+v*((alto-T-B)/Math.max(filas-1,1));
+
+  const trazos=[];
+  (function dibujar(n){
+    if(n._hoja) return;
+    const ys=n.children.map(h=>h._y);
+    // conector vertical que une a todos los hijos
+    trazos.push(`<line x1="${X(n._x).toFixed(1)}" y1="${Y(Math.min(...ys)).toFixed(1)}" x2="${X(n._x).toFixed(1)}" y2="${Y(Math.max(...ys)).toFixed(1)}" stroke="#5a6a8c" stroke-width="1.6"/>`);
+    n.children.forEach(h=>{
+      trazos.push(`<line x1="${X(n._x).toFixed(1)}" y1="${Y(h._y).toFixed(1)}" x2="${X(h._x).toFixed(1)}" y2="${Y(h._y).toFixed(1)}" stroke="#5a6a8c" stroke-width="1.6"/>`);
+      dibujar(h);
+    });
+    if(conSoporte && n.support!==undefined && n!==raiz){
+      const col=n.support>=95?"#37d39b":(n.support>=70?"#ffb454":"#ff6b6b");
+      trazos.push(`<text x="${(X(n._x)+4).toFixed(1)}" y="${(Y(n._y)-4).toFixed(1)}" fill="${col}" font-size="11" font-weight="600">${n.support.toFixed(0)}</text>`);
+    }
+  })(raiz);
+
+  const etiquetas=hojas.map(h=>
+    `<circle cx="${X(h._x).toFixed(1)}" cy="${Y(h._y).toFixed(1)}" r="3" fill="#4f8cff"/>`
+   +`<text x="${(X(h._x)+8).toFixed(1)}" y="${(Y(h._y)+4).toFixed(1)}" fill="#e7ecf5" font-size="12.5">${esc(h.name)}</text>`).join("");
+
+  // barra de escala: una referencia de cuánto cambio representa la distancia
+  const paso=maxX>0?Math.pow(10,Math.floor(Math.log10(maxX/3))):0;
+  const escala=paso>0?`<line x1="${L}" y1="${alto-4}" x2="${(L+(paso/maxX)*usable).toFixed(1)}" y2="${alto-4}" stroke="#93a0bd" stroke-width="1.5"/>`
+    +`<text x="${(L+(paso/maxX)*usable+6).toFixed(1)}" y="${alto-1}" fill="#93a0bd" font-size="10.5">${paso} sustituciones/sitio</text>`:"";
+
+  return `<svg viewBox="0 0 ${ancho} ${alto+8}" width="100%" preserveAspectRatio="xMinYMin meet">${trazos.join("")}${etiquetas}${escala}</svg>`;
 }
 
 // ── Calidad (QC estilo FastQC) ───────────────────────────────────────────────

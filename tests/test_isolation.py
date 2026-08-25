@@ -96,6 +96,9 @@ HERRAMIENTAS = [
     # el llamador de variantes NO depende del mapeador: consume cualquier objeto
     # con los atributos de un Mapping (pato). Por eso 'mapping' está prohibido.
     ("variantes",  "call_variants",   {"nanopore", "evolution", "mapping", "app", "io"}),
+    # la filogenia se apoya en el MSA (align) pero nada más: no toca el mapeador,
+    # ni el nanoporo, ni el predictor de evolución.
+    ("filogenia",  "build_tree",      {"nanopore", "evolution", "mapping", "app", "io"}),
 ]
 
 
@@ -144,6 +147,19 @@ def test_familia_variants_es_perezosa_por_dentro():
     assert "bioforge.variants.pileup" in subs
     assert "bioforge.variants.caller" not in subs, (
         "pedir el pileup cargó el llamador: el __init__ de variants dejó de ser perezoso")
+
+
+def test_familia_phylo_es_perezosa_por_dentro():
+    """Pedir la matriz de distancias no debe cargar el constructor de árboles.
+
+    Comparar cómo de parecidas son unas secuencias es una pregunta legítima por sí
+    sola: quien solo quiera eso no tiene por qué cargar Neighbor-Joining ni el
+    bootstrap.
+    """
+    subs, _ = _huella("from bioforge import distance_matrix")
+    assert "bioforge.phylo.distance" in subs
+    assert "bioforge.phylo.tree" not in subs, (
+        "pedir distance_matrix cargó tree: el __init__ de phylo dejó de ser perezoso")
 
 
 # ── 4. el nanoporo, caso ejemplar: aislamiento total ─────────────────────────

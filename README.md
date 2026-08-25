@@ -34,11 +34,12 @@ section (with examples) further down.
 | **Alignment** | pairwise (Needleman–Wunsch / banded / Smith–Waterman) · **multiple sequence alignment** (center-star) |
 | **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
+| **Phylogenetics** *(v10.2)* | distance matrices (p / Jukes-Cantor / Kimura-2P / Poisson) · Neighbor-Joining · UPGMA · WPGMA · Newick output · **bootstrap support** — *NJ topology identical to Biopython, 15× faster* |
 | **Variant calling** *(v10.2)* | pileup (depth & coverage) · SNV/indel calling by binomial likelihood ratio · VCF 4.2 output — closes the pipeline: reads → mapping → **variants** |
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 | **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
-| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 6 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
+| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 7 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -72,6 +73,9 @@ combining them (especially the evolution front).
 | Nanopore basecaller (Level 7) | **~74% identity on real R9.4 signal** (E. coli, n=36, vs production Guppy; v9.0 was 70%, v9.1 lifted it) — from-scratch classical Viterbi, pure NumPy, no AI. *Reproducible: `tools/bench_basecaller.py`* |
 | Import cost *(v10.1)* | **`import bioforge` in 4.7 ms** — was 75 ms (**16× faster**). The package loads **lazily**: 1 submodule instead of 15, so translating DNA never loads the basecaller, mapper or evolution code |
 | Desktop app memory *(v10.1)* | **flat RAM with many files open** — only the ACTIVE file is materialised; the others keep just their summary and are re-read on demand (20 files: ~0.2 MB, previously growing linearly) |
+| Phylogenetics — vs Biopython (the reference) | **NJ topology identical in 5/5 cases** (6–60 taxa) · distance matrices agree to **1.5e-8** (machine precision) · **15× faster** distances, **3.8× faster** NJ. *`tools/bench_vs_biopython_phylo.py`* |
+| Phylogenetics — a finding | Biopython's `upgma()` averages `(d(k,i)+d(k,j))/2` **without weighting by cluster size** — that is **WPGMA, not UPGMA**. Ours weights (Sokal & Michener 1958); we also ship `wpgma()`, which reproduces Biopython's output in 5/5 cases |
+| Phylogenetics — own proof | on an **additive** matrix NJ recovers the exact branch lengths (theoretical guarantee, in the test suite); bootstrap gives <70% support on random sequences — it does not invent genealogies |
 | Variant calling — SNV accuracy | **100% sensitivity and 100% precision from 10× coverage** (0.1–1% read error, 5 kb genome, 25 known SNVs). At 5× sensitivity drops to 64–72% but precision stays 100% — it prefers silence over invention. *`tools/bench_variants.py`* |
 | Variant calling — noisy reads | at 5% error the default (`error_rate=0.01`) misfires; setting it to 0.05 lifts precision **71% → 100%** at 10× with no loss of sensitivity |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
@@ -82,6 +86,9 @@ combining them (especially the evolution front).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
+│  Level 10 — phylo/ (distance · tree)     Who descends from whom│
+│  NJ · UPGMA · WPGMA · bootstrap support · Newick               │
+├──────────────────────────────────────────────────────────────┤
 │  Level 9 — variants/ (pileup · caller)   Reads → what changed │
 │  binomial likelihood ratio · Phred QUAL · VCF 4.2 output      │
 ├──────────────────────────────────────────────────────────────┤
@@ -171,7 +178,7 @@ pip install hypothesis pytest pytest-benchmark
 
 BioForge also has a **desktop app**: the same engine behind a friendly window, for
 people who don't write code. Everything runs **locally and offline** — your DNA never
-leaves your machine (*DNA Edge*). Six tabs, each with a plain-language explanation:
+leaves your machine (*DNA Edge*). Seven tabs, each with a plain-language explanation:
 
 - **🧬 Sequences** — browse your FASTA/FASTQ, see each sequence's type and size, and
   translate DNA → protein (codon by codon, colour-coded by amino-acid type).
@@ -180,6 +187,8 @@ leaves your machine (*DNA Edge*). Six tabs, each with a plain-language explanati
 - **⚗️ Align** — compare two sequences and see their differences (mutations) highlighted.
 - **🔍 Variants** — stack many reads on a reference genome, see the coverage and get the
   mutations, with a one-click **VCF** export.
+- **🌳 Tree** — reconstruct the evolutionary tree of several sequences, drawn with
+  branch lengths and **bootstrap support**, exportable as **Newick**.
 - **〜 Nanopore** — turn raw electrical signal (POD5/FAST5) into DNA bases with our own
   classical basecaller, then reuse those bases anywhere in the app.
 - **🔮 Evolution** — rank which protein mutations may rise, and reality-check a specific one.
@@ -719,6 +728,9 @@ bioforge/               organised BY FUNCTION (v10.1); tests mirror it
     minimizers.py       Level 4 — canonical (w, k) minimizers (C + NumPy)
     refindex.py         Level 4 — reference minimizer index (hash-sorted lookup)
     genomemap.py        Level 4 — GenomeAligner: seed-chain-align → PAF
+  phylo/
+    distance.py         Level 10 — distance matrices (p/JC/K2P/Poisson), matmul-based
+    tree.py             Level 10 — Neighbor-Joining, UPGMA, WPGMA, Newick, bootstrap
   variants/
     pileup.py           Level 9 — stacks reads on the reference: depth, coverage
     caller.py           Level 9 — SNV/indel calling (binomial LR) → VCF 4.2
@@ -757,11 +769,13 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/                  mirrors the package layout (593 tests)
+tests/                  mirrors the package layout (628 tests)
   core/                 5-bit storage, streaming/columnar, errors, integrity net
   sequence/             genetic code correctness + error paths
   align/                alignment properties, MSA, SIMD kernel parity
   mapping/              minimizers, index, seed-chain-align, C parity
+  phylo/                distances, NJ exactness on additive matrices, bootstrap honesty,
+                        head-to-head against Biopython
   variants/             pileup, SNV/indel calling, VCF, no-false-positive guarantees
   evolution/            ranking, honest judge, reality filter, ESM-2 axis, CLI
   nanopore/             signal I/O, event detection, Viterbi basecaller
@@ -819,7 +833,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (593 tests)
+# Full test suite (628 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -881,11 +895,13 @@ python check.py
 - [x] **Level 7 — nanopore basecaller from scratch** (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi stay/skip · pure NumPy) — **~70 % on real R9.4** *(v9.0)*
 - [x] Nanopore: **iterative per-read rescaling + tuned transitions → ~74 %** on real R9.4 *(v9.1)*
 - [x] **Variant calling** — `pileup` + `call_variants` → VCF 4.2, binomial likelihood-ratio QUAL, honest sensitivity/precision benchmark *(v10.2)*
+- [x] **Phylogenetics** — distance matrices, Neighbor-Joining, UPGMA/WPGMA, Newick, bootstrap support; validated head-to-head against Biopython *(v10.2)*
+- [ ] Head-to-head for the variant caller against `bcftools` on WSL (as done for minimap2) — no scriptable Windows reference exists, so it is honestly still unmeasured
 - [ ] Affine gap penalties in the aligner (open/extend) so long indels stop being split — the measured root cause behind imprecise indel coordinates
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
-- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (6 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
+- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (7 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
 - [x] **Organised by function + lazy loading** *(v10.1)*: subpackages per domain (`core/ sequence/ align/ mapping/ evolution/ nanopore/ io/ cli/ app/`), tests mirroring them, and a package that loads only what you use (`import bioforge` 75 ms → 4.7 ms). Old import paths keep working through compatibility bridges
 - [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 
