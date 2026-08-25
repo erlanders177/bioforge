@@ -340,3 +340,123 @@ def test_tuberia_completa_encuentra_la_mutacion_sin_falsos_positivos():
     assert len(acertadas) == 1, f"no encontró la mutación real; llamó {vs}"
     assert [v for v in vs if v.kind == "SNV"] == acertadas, (
         f"inventó sustituciones falsas: {[v for v in vs if v not in acertadas]}")
+
+
+# ── contraste contra un ORÁCULO ingenuo ──────────────────────────────────────
+# El pileup rápido hace su trabajo con bincount sobre índices planos y una LUT.
+# Eso es rápido, pero también es donde se esconden los errores de vectorización
+# (un desplazamiento de una posición, una hebra sin complementar, un tramo del
+# CIGAR mal contado). La forma de cazarlos es escribir aparte una versión LENTA
+# y obviamente correcta —base por base, sin trucos— y exigir que coincidan
+# EXACTAMENTE. Es la misma red que ya protege el motor C frente al NumPy.
+
+def _pileup_ingenuo(ref_len, pares):
+    """Oráculo: cuenta base a base, con bucles explícitos. Lento y evidente."""
+    import numpy as np
+    from bioforge.variants.pileup import DEL, N_CANALES, _revcomp
+
+    codigo = {"A": 0, "C": 1, "G": 2, "T": 3}
+    counts = np.zeros((ref_len, N_CANALES), dtype=np.int32)
+    inserciones = {}
+
+    for lectura, mp in pares:
+        seq = lectura.upper()
+        if mp.strand == "-":
+            seq = _revcomp(seq)
+        r, q = mp.target_start, mp.query_start
+        num = ""
+        for ch in mp.cigar:                          # recorre el CIGAR carácter a carácter
+            if ch.isdigit():
+                num += ch
+                continue
+            largo, num = int(num), ""
+            if ch == "M":
+                for _ in range(largo):               # base a base, a propósito
+                    if 0 <= r < ref_len and q < len(seq):
+                        counts[r, codigo.get(seq[q], 4)] += 1
+                    r += 1
+                    q += 1
+            elif ch == "D":
+                for _ in range(largo):
+                    if 0 <= r < ref_len:
+                        counts[r, DEL] += 1
+                    r += 1
+            else:                                    # "I"
+                if 0 <= r < ref_len and q + largo <= len(seq):
+                    clave = (r, seq[q:q + largo])
+                    inserciones[clave] = inserciones.get(clave, 0) + 1
+                q += largo
+    return counts, inserciones
+
+
+def test_pileup_coincide_con_el_oraculo_ingenuo(ref):
+    """El pileup vectorizado debe dar EXACTAMENTE lo mismo que el ingenuo.
+
+    Se le tiran casos variados a la vez: hebra directa e inversa, deleciones,
+    inserciones y lecturas que se salen por el borde de la referencia.
+    """
+    rng = np.random.default_rng(4242)
+    pares = []
+    for _ in range(120):                             # muchas lecturas, muchas formas
+        ini = int(rng.integers(0, 900))
+        largo = int(rng.integers(40, 100))
+        trozo = list(ref[ini:ini + largo])
+        for k in range(len(trozo)):                  # ruido, para que no sea trivial
+            if rng.random() < 0.03:
+                trozo[k] = str(rng.choice(list("ACGT")))
+        seq = "".join(trozo)
+
+        tipo = rng.random()
+        if tipo < 0.45:                              # solo coincidencias
+            cigar = f"{len(seq)}M"
+        elif tipo < 0.7:                             # con una deleción
+            corte = len(seq) // 2
+            d = int(rng.integers(1, 5))
+            seq = seq[:corte] + seq[corte + d:]
+            cigar = f"{corte}M{d}D{len(seq) - corte}M"
+        else:                                        # con una inserción
+            corte = len(seq) // 2
+            ins = "".join(rng.choice(list("ACGT"), size=int(rng.integers(1, 5))))
+            seq = seq[:corte] + ins + seq[corte:]
+            cigar = f"{corte}M{len(ins)}I{len(seq) - corte - len(ins)}M"
+
+        inversa = rng.random() < 0.5
+        guardada = _rc(seq) if inversa else seq
+        pares.append((guardada, _mk(guardada, ini, cigar,
+                                    strand="-" if inversa else "+")))
+
+    # el oráculo no normaliza indels: para comparar, se pide lo mismo (solo longitud)
+    rapido = pileup(len(ref), pares)
+    lento_counts, lento_ins = _pileup_ingenuo(len(ref), pares)
+
+    assert np.array_equal(rapido.counts, lento_counts), (
+        "el pileup vectorizado difiere del ingenuo: hay un error de vectorización")
+    assert rapido.insertions == lento_ins, "las inserciones no coinciden con el oráculo"
+
+
+def test_calidad_coincide_con_el_calculo_escalar():
+    """La razón de verosimilitudes vectorizada, contra la fórmula hecha a mano.
+
+    ``_phred_lr`` procesa el genoma entero de golpe con NumPy. Aquí se comprueba
+    contra el mismo cálculo escrito con ``math.log10`` sobre escalares, que es la
+    fórmula tal cual aparece en el papel.
+    """
+    import math
+    from bioforge.variants.caller import _phred_lr
+
+    eps = 0.01
+    casos = [(0, 10), (1, 10), (5, 10), (10, 10), (3, 100), (50, 100),
+             (99, 100), (100, 100), (7, 7), (0, 0), (1, 1)]
+    k = np.array([c[0] for c in casos])
+    n = np.array([c[1] for c in casos])
+    vector = _phred_lr(k, n, eps)
+
+    for i, (ki, ni) in enumerate(casos):
+        if ni == 0:
+            continue
+        f = ki / ni
+        t1 = ki * math.log10(f / eps) if ki > 0 else 0.0
+        t2 = (ni - ki) * math.log10((1 - f) / (1 - eps)) if ni - ki > 0 else 0.0
+        esperado = max(0.0, min(5000.0, 10.0 * (t1 + t2)))
+        assert vector[i] == pytest.approx(esperado, rel=1e-9, abs=1e-9), (
+            f"k={ki} n={ni}: vectorizado {vector[i]} vs escalar {esperado}")
