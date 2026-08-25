@@ -52,6 +52,28 @@ class DesktopApi(Api):
             return {"cancelled": True}
         return self.open_file(paths[0])
 
+    def save_vcf(self) -> dict:
+        """Diálogo nativo para guardar el VCF del último análisis de variantes."""
+        datos = self.vcf_text()
+        if "error" in datos:
+            return datos
+        import webview
+        try:
+            destino = self.window.create_file_dialog(
+                webview.FileDialog.SAVE, save_filename="variantes.vcf",
+                file_types=("Archivo VCF (*.vcf)", "Todos los archivos (*.*)"))
+        except Exception as e:                       # noqa: BLE001
+            return {"error": f"no se pudo abrir el diálogo: {e}"}
+        if not destino:
+            return {"cancelled": True}
+        ruta = destino if isinstance(destino, str) else destino[0]
+        try:
+            with open(ruta, "w", encoding="utf-8") as fh:
+                fh.write(datos["vcf"])
+        except OSError as e:
+            return {"error": f"no se pudo escribir el archivo: {e}"}
+        return {"saved": ruta}
+
     def pick_and_open_signal(self) -> dict:
         """Diálogo de archivos para señal de nanoporo (POD5/FAST5)."""
         import webview

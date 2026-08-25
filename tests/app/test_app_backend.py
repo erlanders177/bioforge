@@ -286,3 +286,127 @@ def test_secuencia_en_memoria_no_se_suelta(fasta):
 
 def test_ping():
     assert Api().ping()["ok"] is True
+
+
+# ── variantes en la app: la tubería completa detrás de un botón ──────────────
+@pytest.fixture()
+def genoma_y_lecturas(tmp_path):
+    """Un genoma de referencia y unas lecturas con 2 mutaciones conocidas."""
+    import numpy as np
+    rng = np.random.default_rng(31)
+    L = 2500
+    ref = "".join(rng.choice(list("ACGT"), size=L))
+    verdad = {}
+    muestra = list(ref)
+    for p in (800, 1600):
+        nueva = "A" if ref[p] != "A" else "G"
+        muestra[p] = nueva
+        verdad[p + 1] = nueva                        # 1-based, como el VCF
+    muestra = "".join(muestra)
+
+    rp = tmp_path / "genoma.fasta"
+    rp.write_text(f">contig_prueba genoma\n{ref}\n", encoding="utf-8")
+
+    comp = str.maketrans("ACGT", "TGCA")
+    lp = tmp_path / "lecturas.fastq"
+    with open(lp, "w", encoding="utf-8") as fh:
+        for i in range(250):
+            s = int(rng.integers(0, L - 200))
+            r = list(muestra[s:s + 200])
+            for j in range(len(r)):
+                if rng.random() < 0.01:              # 1 % de error
+                    r[j] = rng.choice(list("ACGT"))
+            seq = "".join(r)
+            if rng.random() < 0.5:
+                seq = seq.translate(comp)[::-1]
+            fh.write(f"@lectura_{i}\n{seq}\n+\n{'I' * len(seq)}\n")
+    return str(rp), str(lp), verdad
+
+
+def test_variant_sources_no_materializa_nada(genoma_y_lecturas):
+    """Listar las opciones se apoya en las fichas: nunca debe cargar los archivos."""
+    ref_path, reads_path, _ = genoma_y_lecturas
+    api = Api()
+    api.open_file(ref_path)
+    api.open_file(reads_path)                        # este queda activo
+
+    src = api.variant_sources()
+    assert len(src["files"]) == 2
+    # el archivo NO activo sigue sin materializar (RAM plana, regla nº10)
+    assert api.datasets[0]["records"] is None
+
+    ref_f = next(f for f in src["files"] if f["filename"] == "genoma.fasta")
+    reads_f = next(f for f in src["files"] if f["filename"] == "lecturas.fastq")
+    assert reads_f["looks_like_reads"] is True       # heurística de los desplegables
+    assert ref_f["looks_like_reads"] is False
+
+
+def test_reference_options_lista_las_secuencias(genoma_y_lecturas):
+    ref_path, reads_path, _ = genoma_y_lecturas
+    api = Api()
+    api.open_file(ref_path)
+    api.open_file(reads_path)
+    o = api.reference_options(0)
+    assert o["filename"] == "genoma.fasta"
+    assert len(o["options"]) == 1
+    assert o["options"][0]["length"] == 2500
+
+
+def test_call_variants_app_encuentra_las_mutaciones(genoma_y_lecturas):
+    """Extremo a extremo desde la app: encuentra las 2 reales y ninguna falsa."""
+    ref_path, reads_path, verdad = genoma_y_lecturas
+    api = Api()
+    api.open_file(ref_path)
+    api.open_file(reads_path)
+
+    r = api.call_variants_app(ref_file=0, ref_index=0, reads_file=1)
+    assert "error" not in r, r.get("error")
+    assert r["reference"] == "contig_prueba"
+    assert r["n_mapped"] > 200
+    assert r["mean_depth"] > 5
+    assert len(r["depth_series"]) > 0                # datos para el gráfico
+    assert r["coverage"]["1"] > 90
+
+    encontradas = {(v["pos"], v["alt"]) for v in r["variants"] if v["kind"] == "SNV"}
+    assert encontradas == set(verdad.items()), (
+        f"esperaba {set(verdad.items())}, encontró {encontradas}")
+
+
+def test_call_variants_app_rechaza_proteina(tmp_path):
+    """Pedir variantes con una proteína de referencia da un error amable, no un crash."""
+    p = tmp_path / "prot.fasta"
+    p.write_text(">p1 proteina\nMKGFPWYEQLLIPMKGFPWYEQLLIP\n", encoding="utf-8")
+    q = tmp_path / "reads.fastq"
+    q.write_text("@r1\nACGTACGTAC\n+\nIIIIIIIIII\n", encoding="utf-8")
+    api = Api()
+    api.open_file(str(p))
+    api.open_file(str(q))
+    r = api.call_variants_app(ref_file=0, ref_index=0, reads_file=1)
+    assert "error" in r and "ADN" in r["error"]
+
+
+def test_call_variants_app_indices_invalidos(genoma_y_lecturas):
+    ref_path, reads_path, _ = genoma_y_lecturas
+    api = Api()
+    api.open_file(ref_path)
+    api.open_file(reads_path)
+    assert "error" in api.call_variants_app(ref_file=9, ref_index=0, reads_file=1)
+    assert "error" in api.call_variants_app(ref_file=0, ref_index=9, reads_file=1)
+
+
+def test_vcf_text_antes_y_despues(genoma_y_lecturas):
+    """El VCF solo existe tras analizar; es lo que guarda el botón de la interfaz."""
+    ref_path, reads_path, _ = genoma_y_lecturas
+    api = Api()
+    assert "error" in api.vcf_text()                 # todavía no se ha analizado
+
+    api.open_file(ref_path)
+    api.open_file(reads_path)
+    api.call_variants_app(ref_file=0, ref_index=0, reads_file=1)
+
+    texto = api.vcf_text()["vcf"]
+    assert texto.startswith("##fileformat=VCFv4.2")
+    assert "##contig=<ID=contig_prueba,length=2500>" in texto
+    assert "#CHROM\tPOS\tID\tREF\tALT" in texto
+    datos = [x for x in texto.strip().split("\n") if not x.startswith("#")]
+    assert len(datos) >= 2 and all(len(x.split("\t")) == 8 for x in datos)

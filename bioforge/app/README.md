@@ -5,7 +5,7 @@ escribir código. Todo corre en tu ordenador — **sin servidor, sin conexión**
 datos (tu ADN) nunca salen de la máquina.
 
 > "Un motor, dos caras." La app es una capa fina de interfaz sobre el paquete
-> `bioforge`, que ya está probado (585 tests). El motor no se toca.
+> `bioforge`, que ya está probado (593 tests). El motor no se toca.
 
 ## Abrirla
 
@@ -23,13 +23,15 @@ Dos formas, mismo código y misma versión:
 
 Se abre una ventana. Pulsa **Abrir archivo…** (o **Probar con un ejemplo**) y explora.
 
-## Qué hace (5 pestañas)
+## Qué hace (6 pestañas)
 
 - **Secuencias** — cargar FASTA/FASTQ, ver el resumen y el detalle de cada secuencia,
   traducir ADN → proteína (codón a codón, coloreado por tipo de aminoácido).
 - **Calidad** — informe de calidad FASTQ estilo FastQC (calidad por posición, GC,
   Phred), con gráficos SVG.
 - **Alinear** — comparar dos secuencias: identidad + mutaciones coloreadas.
+- **Variantes** — apilar muchas lecturas sobre un genoma de referencia: cobertura,
+  mutaciones encontradas y exportación a **VCF** con un clic.
 - **Nanoporo** — cargar señal POD5/FAST5 → bases con nuestro basecaller clásico, y
   "usar en las otras pestañas".
 - **Evolución** — rankear qué mutaciones podrían subir y filtrar una concreta con

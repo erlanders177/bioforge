@@ -2,7 +2,7 @@
 bioforge/app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
 
 La app de escritorio es "la otra cara" del mismo motor: una capa FINA de interfaz
-sobre el paquete ``bioforge`` (que ya está probado, 585 tests). Aquí vive la lógica
+sobre el paquete ``bioforge`` (que ya está probado, 593 tests). Aquí vive la lógica
 que la interfaz (HTML/JS) invoca; la ventana en sí (PyWebview) es solo un lanzador.
 
 Todo es LOCAL y SIN SERVIDOR: los datos —el ADN del usuario— nunca salen de la
@@ -485,6 +485,125 @@ class Api:
         }
 
     # ── util ─────────────────────────────────────────────────────────────────
+    # ── variantes: ¿qué cambió respecto a un genoma de referencia? ────────────
+    @_guard
+    def variant_sources(self) -> dict[str, Any]:
+        """Qué se puede usar como referencia y como lecturas, para los desplegables.
+
+        Se apoya SOLO en las fichas (``meta``), así que no materializa ningún
+        archivo: listar opciones nunca debe hacer crecer la RAM (regla nº10).
+        """
+        archivos = []
+        for i, ds in enumerate(self.datasets):
+            m = ds["meta"]
+            archivos.append({
+                "index": i, "filename": ds["filename"], "count": m["count"],
+                "has_quality": m["has_quality"], "mean_len": m["mean_len"],
+                # heurística amable: muchas secuencias cortas = lecturas;
+                # pocas y largas = referencia. Solo ordena los desplegables.
+                "looks_like_reads": bool(m["has_quality"] or
+                                         (m["count"] >= 20 and m["mean_len"] <= 5000)),
+            })
+        return {"files": archivos}
+
+    @_guard
+    def reference_options(self, file_index: int) -> dict[str, Any]:
+        """Las secuencias de un archivo, para elegir cuál hace de referencia."""
+        i = int(file_index)
+        if not 0 <= i < len(self.datasets):
+            return {"error": "archivo no válido"}
+        records = self._materialize(i)
+        opciones = [{"index": j, "header": r.header[:70], "length": r.n_symbols}
+                    for j, r in enumerate(records[:200])]
+        self._release_inactive()
+        return {"filename": self.datasets[i]["filename"], "options": opciones}
+
+    @_guard
+    def call_variants_app(self, ref_file: int, ref_index: int, reads_file: int,
+                          min_depth: int = 5, min_af: float = 0.2,
+                          error_rate: float = 0.01,
+                          max_reads: int = 3000) -> dict[str, Any]:
+        """Tubería completa para la app: mapeo → pileup → variantes.
+
+        Devuelve además la serie de profundidad ya submuestreada para el gráfico y
+        el VCF en texto (que la interfaz puede guardar). ``max_reads`` acota el
+        trabajo para que la ventana no se quede colgada: es una app de escritorio,
+        no un clúster.
+        """
+        from bioforge.mapping.genomemap import GenomeAligner
+        from bioforge.variants.caller import call_variants, write_vcf
+        from bioforge.variants.pileup import pileup
+
+        rf, ri, lf = int(ref_file), int(ref_index), int(reads_file)
+        if not 0 <= rf < len(self.datasets) or not 0 <= lf < len(self.datasets):
+            return {"error": "archivo no válido"}
+
+        registros_ref = self._materialize(rf)
+        if not 0 <= ri < len(registros_ref):
+            return {"error": "secuencia de referencia no válida"}
+        rec = registros_ref[ri]
+        if rec.seq_type != SeqType.NUCLEOTIDE:
+            return {"error": "la referencia debe ser ADN, no una proteína."}
+        nombre = (rec.header.split()[0] if rec.header else "referencia")[:40]
+        ref = rec.to_string().upper()
+        if len(ref) < 100:
+            return {"error": f"la referencia es muy corta ({len(ref)} bases); "
+                             "hacen falta al menos 100 para mapear."}
+
+        lecturas_rec = self._materialize(lf)
+        lecturas = [r.to_string().upper() for r in lecturas_rec[:max_reads]]
+        recortadas = len(lecturas_rec) > max_reads
+        if not lecturas:
+            return {"error": "el archivo de lecturas está vacío"}
+
+        aligner = GenomeAligner(ref, name=nombre)
+        pares = []
+        for lectura in lecturas:                      # bucle por LECTURA (registro)
+            hits = aligner.map(lectura)
+            if hits:
+                pares.append((lectura, hits[0]))
+        if not pares:
+            return {"error": "ninguna lectura mapeó contra esa referencia. "
+                             "¿Seguro que las lecturas son de ese genoma?"}
+
+        pile = pileup(ref, pares, contig=nombre)
+        variantes = call_variants(pile, ref, min_depth=int(min_depth),
+                                  min_af=float(min_af), error_rate=float(error_rate))
+
+        # serie de profundidad submuestreada (~600 puntos) para el gráfico
+        prof = pile.depth
+        paso = max(1, prof.size // 600)
+        serie = [int(x) for x in prof[::paso]]
+
+        self._vcf = write_vcf(variantes, contigs=[(nombre, len(ref))])
+        self._release_inactive()
+        return {
+            "reference": nombre,
+            "ref_length": len(ref),
+            "n_reads": len(lecturas),
+            "n_mapped": len(pares),
+            "truncated": recortadas,
+            "mean_depth": round(pile.mean_depth, 1),
+            "coverage": {str(u): round(pile.covered(u) * 100, 1)
+                         for u in (1, 5, 10, 30)},
+            "depth_series": serie,
+            "depth_step": paso,
+            "n_snv": sum(1 for v in variantes if v.kind == "SNV"),
+            "n_indel": sum(1 for v in variantes if v.kind != "SNV"),
+            "variants": [{"pos": v.pos, "ref": v.ref[:12], "alt": v.alt[:12],
+                          "qual": round(v.qual, 1), "depth": v.depth,
+                          "af": round(v.af, 3), "kind": v.kind}
+                         for v in variantes[:500]],
+        }
+
+    @_guard
+    def vcf_text(self) -> dict[str, Any]:
+        """El VCF del último análisis, para guardarlo desde la interfaz."""
+        texto = getattr(self, "_vcf", "")
+        if not texto:
+            return {"error": "todavía no has buscado mutaciones"}
+        return {"vcf": texto}
+
     def _records(self) -> list:
         if self.active < 0 or not self.datasets:
             raise IndexError("no hay ningún archivo activo")

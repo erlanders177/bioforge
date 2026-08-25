@@ -97,6 +97,35 @@ def test_pileup_filtra_por_mapq(ref):
     assert pile.n_reads == 3 and pile.n_skipped == 5
 
 
+def test_pileup_no_filtra_por_defecto_regresion(ref):
+    """REGRESIÓN: el contig por defecto no debe descartar todas las lecturas.
+
+    El defecto era ``contig="ref"``, que filtraba SIEMPRE por ``target_name``. Si el
+    mapeador etiquetaba el contig con otro nombre (p.ej. el del FASTA), se
+    descartaba el 100 % de las lecturas EN SILENCIO: la profundidad salía 0× sin
+    ninguna pista de por qué. Lo destapó integrar la CLI. Ahora el defecto es
+    ``None`` = no filtrar y tomar el nombre del primer mapeo.
+    """
+    trozo = ref[100:160]
+    mp = _mk(trozo, 100, "60M")._replace(target_name="cromosoma_raro")
+    pile = pileup(ref, [(trozo, mp)] * 8)          # sin pasar contig
+
+    assert pile.n_reads == 8 and pile.n_skipped == 0
+    assert pile.contig == "cromosoma_raro"          # hereda el nombre del mapeo
+    assert pile.depth[100] == 8
+
+
+def test_pileup_filtra_si_se_pide_contig_explicito(ref):
+    """Con varios contigs sí hace falta filtrar, y entonces se pide explícitamente."""
+    trozo = ref[100:160]
+    a = _mk(trozo, 100, "60M")._replace(target_name="chr1")
+    b = _mk(trozo, 100, "60M")._replace(target_name="chr2")
+    pile = pileup(ref, [(trozo, a)] * 5 + [(trozo, b)] * 3, contig="chr1")
+
+    assert pile.n_reads == 5 and pile.n_skipped == 3
+    assert pile.contig == "chr1"
+
+
 def test_pileup_rechaza_longitud_invalida():
     with pytest.raises(SequenceValueError):
         pileup(0, [], contig="ref")

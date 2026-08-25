@@ -171,7 +171,7 @@ def _izquierda_ins(ref: str, r: int, seq: str) -> tuple[int, str]:
 
 
 def pileup(reference, alignments: Iterable[tuple[str, object]], *,
-           contig: str = "ref", min_mapq: int = 0,
+           contig: Optional[str] = None, min_mapq: int = 0,
            oriented: bool = True) -> Pileup:
     """Apila lecturas mapeadas sobre la referencia.
 
@@ -187,7 +187,14 @@ def pileup(reference, alignments: Iterable[tuple[str, object]], *,
         :meth:`bioforge.mapping.genomemap.GenomeAligner.map`. Se ignoran los
         mapeos sin CIGAR.
     contig:
-        Nombre del contig; si se pasan mapeos de varios, filtra por ``target_name``.
+        Nombre del contig a apilar. Si es ``None`` (por defecto) **no se filtra**:
+        se toma el nombre del primer mapeo y se apila todo. Pásalo explícitamente
+        solo cuando la referencia tenga VARIOS contigs y quieras uno concreto.
+
+        (Antes el valor por defecto era ``"ref"`` y filtraba siempre, lo que
+        descartaba en silencio el 100 % de las lecturas si el mapeador etiquetaba
+        el contig con otro nombre — la profundidad salía 0× sin decir por qué.
+        Ese fallo se detectó integrando la CLI, y por eso el defecto ya no filtra.)
     min_mapq:
         Descarta mapeos con calidad de mapeo inferior (0 = no filtrar).
     oriented:
@@ -224,9 +231,16 @@ def pileup(reference, alignments: Iterable[tuple[str, object]], *,
         buffer = []
         pendientes = 0
 
+    nombre = contig                                  # se fija con el primer mapeo
     for lectura, mp in alignments:
         cigar = getattr(mp, "cigar", None)
-        if not cigar or getattr(mp, "target_name", contig) != contig:
+        if not cigar:
+            n_skipped += 1
+            continue
+        suyo = getattr(mp, "target_name", None)
+        if nombre is None:
+            nombre = suyo or "ref"
+        elif suyo is not None and suyo != nombre:    # solo filtra si se pidió contig
             n_skipped += 1
             continue
         if getattr(mp, "mapq", 0) < min_mapq:
@@ -274,8 +288,8 @@ def pileup(reference, alignments: Iterable[tuple[str, object]], *,
             volcar()
 
     volcar()
-    return Pileup(contig=contig, counts=counts, insertions=inserciones,
-                  n_reads=n_reads, n_skipped=n_skipped)
+    return Pileup(contig=nombre or (contig or "ref"), counts=counts,
+                  insertions=inserciones, n_reads=n_reads, n_skipped=n_skipped)
 
 
 def pileup_from_mappings(reference, reads: Iterable[str], mappings, *,
@@ -290,6 +304,4 @@ def pileup_from_mappings(reference, reads: Iterable[str], mappings, *,
     for lectura, maps in zip(reads, mappings):
         if maps:
             pares.append((lectura, maps[0]))
-    nombre = contig if contig is not None else (
-        getattr(pares[0][1], "target_name", "ref") if pares else "ref")
-    return pileup(reference, pares, contig=nombre, min_mapq=min_mapq)
+    return pileup(reference, pares, contig=contig, min_mapq=min_mapq)

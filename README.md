@@ -38,7 +38,7 @@ section (with examples) further down.
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 | **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
-| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 5 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
+| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 6 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -171,13 +171,15 @@ pip install hypothesis pytest pytest-benchmark
 
 BioForge also has a **desktop app**: the same engine behind a friendly window, for
 people who don't write code. Everything runs **locally and offline** — your DNA never
-leaves your machine (*DNA Edge*). Five tabs, each with a plain-language explanation:
+leaves your machine (*DNA Edge*). Six tabs, each with a plain-language explanation:
 
 - **🧬 Sequences** — browse your FASTA/FASTQ, see each sequence's type and size, and
   translate DNA → protein (codon by codon, colour-coded by amino-acid type).
 - **📊 Quality** — a FastQC-style report for FASTQ (per-position quality, GC, Phred),
   drawn as inline charts.
 - **⚗️ Align** — compare two sequences and see their differences (mutations) highlighted.
+- **🔍 Variants** — stack many reads on a reference genome, see the coverage and get the
+  mutations, with a one-click **VCF** export.
 - **〜 Nanopore** — turn raw electrical signal (POD5/FAST5) into DNA bases with our own
   classical basecaller, then reuse those bases anywhere in the app.
 - **🔮 Evolution** — rank which protein mutations may rise, and reality-check a specific one.
@@ -409,6 +411,19 @@ for v in variants:
     print(v)                      # Variant(ref:1501 C>A SNV AF=1.00 DP=46 Q=920)
 
 open("calls.vcf", "w").write(write_vcf(variants, contigs=[("ref", len(reference))]))
+```
+
+From the terminal, the same pipeline in one command — it also prints a coverage report:
+
+```bash
+bioforge-variants reference.fasta reads.fastq -o calls.vcf
+#   reference : chromosome_1  (4,000 bp)
+#   mapped    : 500 (100.0%)
+#   mean depth: 31.2×    ≥10×: 97.2% of the genome
+#   variants  : 3  (3 substitutions, 0 indels)
+
+bioforge-variants ref.fasta reads.fastq --error-rate 0.05   # noisy (nanopore) reads
+bioforge-variants ref.fasta reads.fastq --solo-cobertura    # coverage report only
 ```
 
 **How it decides.** For every position it weighs two hypotheses with a binomial
@@ -742,7 +757,7 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/                  mirrors the package layout (585 tests)
+tests/                  mirrors the package layout (593 tests)
   core/                 5-bit storage, streaming/columnar, errors, integrity net
   sequence/             genetic code correctness + error paths
   align/                alignment properties, MSA, SIMD kernel parity
@@ -804,7 +819,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (585 tests)
+# Full test suite (593 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -870,7 +885,7 @@ python check.py
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
-- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (5 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
+- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (6 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
 - [x] **Organised by function + lazy loading** *(v10.1)*: subpackages per domain (`core/ sequence/ align/ mapping/ evolution/ nanopore/ io/ cli/ app/`), tests mirroring them, and a package that loads only what you use (`import bioforge` 75 ms → 4.7 ms). Old import paths keep working through compatibility bridges
 - [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 

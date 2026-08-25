@@ -121,6 +121,7 @@
       <a data-view="secuencias"><span class="ic">🧬</span>Secuencias</a>
       <a data-view="calidad"><span class="ic">📊</span>Calidad</a>
       <a data-view="alinear"><span class="ic">⚗️</span>Alinear</a>
+      <a data-view="variantes"><span class="ic">🔍</span>Variantes</a>
       <a data-view="nanoporo"><span class="ic">〜</span>Nanoporo</a>
       <a data-view="evolucion"><span class="ic">🔮</span>Evolución</a>
     </div>
@@ -222,6 +223,7 @@ function render(){
   if(VIEW==="secuencias")  return renderSecuencias(c);
   if(VIEW==="calidad")     return renderCalidad(c);
   if(VIEW==="alinear")     return renderAlinear(c);
+  if(VIEW==="variantes")   return renderVariantes(c);
   if(VIEW==="nanoporo")    return renderNanoporo(c);
   if(VIEW==="evolucion")   return renderEvolucion(c);
 }
@@ -237,6 +239,7 @@ function viewInicio(){
       <li><b>Secuencias</b> — mira las secuencias que cargaste (su tipo y tamaño).</li>
       <li><b>Calidad</b> — si vienen de una máquina de secuenciación, mide cómo de fiables son las letras.</li>
       <li><b>Alinear</b> — compara dos secuencias y ve en qué se diferencian (mutaciones).</li>
+      <li><b>Variantes</b> — compara MUCHAS lecturas contra un genoma y encuentra sus mutaciones.</li>
       <li><b>Nanoporo</b> — convierte la señal eléctrica cruda de un secuenciador en letras de ADN.</li>
       <li><b>Evolución</b> — predice qué mutaciones de una proteína podrían extenderse con el tiempo.</li>
     </ul>`));
@@ -383,6 +386,134 @@ function colorAln(a,b){
     else{A+=ca;B+=cb;}
   }
   return `A  ${A}\nB  ${B}`;
+}
+
+// ── Variantes (lecturas vs genoma de referencia → mutaciones) ────────────────
+async function renderVariantes(c){
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Variantes · ¿qué cambió?</h2>`),
+    el(`<p class="sub">Compara muchas lecturas contra un genoma de referencia y encuentra sus mutaciones.</p>`),
+    explain(`<span class="t">¿Qué es esto?</span>
+      Cuando se secuencia una muestra (un virus, una bacteria, una persona), la máquina no devuelve el genoma entero de una pieza: devuelve <b>muchísimos trozos cortos</b> llamados <b>lecturas</b>. Para saber qué tiene esa muestra de distinto, se colocan todas las lecturas sobre un <b>genoma de referencia</b> ya conocido y se mira en qué posiciones discrepan.
+      <ul>
+        <li><b>Cobertura</b> (o profundidad) — cuántas lecturas pasan por cada punto del genoma. Cuantas más, más seguridad. Con menos de 5 no nos fiamos.</li>
+        <li><b>Variante</b> — una posición donde la muestra dice algo distinto a la referencia: una <b>sustitución</b> (letra cambiada), una <b>inserción</b> (letras de más) o una <b>deleción</b> (letras de menos).</li>
+        <li><b>Calidad (Q)</b> — cuánta confianza hay. Q20 = 100 veces más probable que sea real que un error; Q30 = mil veces.</li>
+        <li><b>Frecuencia</b> — qué proporción de las lecturas la lleva. 100% = todas; 30% = solo un tercio de la población.</li>
+      </ul>
+      El resultado se puede guardar en <b>VCF</b>, el formato estándar que usan los laboratorios de todo el mundo.`));
+
+  const ws=STATE.workspace;
+  if(!ws || !ws.files || ws.files.length<2){
+    box.append(el(`<div class="soon">Para buscar variantes necesitas <b>dos archivos abiertos</b>:<br>
+      un <b>genoma de referencia</b> (FASTA) y las <b>lecturas</b> (FASTQ o FASTA).<br><br>
+      Pulsa "Abrir archivo…" arriba y carga los dos.</div>`));
+    c.replaceChildren(box); return;
+  }
+
+  const src=await API.variant_sources();
+  if(src.error){ box.append(el(`<div class="err">${esc(src.error)}</div>`)); c.replaceChildren(box); return; }
+
+  const opt=(f)=>`<option value="${f.index}">${esc(f.filename)} (${f.count} sec.)</option>`;
+  const refSug=(src.files.find(f=>!f.looks_like_reads)||src.files[0]).index;
+  const readSug=(src.files.find(f=>f.looks_like_reads&&f.index!==refSug)||
+                 src.files.find(f=>f.index!==refSug)||src.files[0]).index;
+
+  const bar=el(`<div class="selbar" style="flex-wrap:wrap">
+     <span>Referencia</span><select id="refFile">${src.files.map(opt).join("")}</select>
+     <select id="refSeq"><option>cargando…</option></select>
+     <span style="margin-left:8px">Lecturas</span><select id="readFile">${src.files.map(opt).join("")}</select>
+     <button class="primary" id="goVar">Buscar mutaciones</button></div>`);
+  box.append(bar);
+
+  const inp="width:78px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px";
+  const avz=el(`<details style="margin:0 0 14px">
+      <summary class="hint" style="cursor:pointer">Ajustes avanzados</summary>
+      <div class="row" style="margin:10px 0 0">
+        <label class="hint">Profundidad mínima <input id="vDepth" type="number" value="5" min="1" style="${inp}"></label>
+        <label class="hint">Frecuencia mínima <input id="vAf" type="number" value="0.2" step="0.05" min="0.01" max="1" style="${inp}"></label>
+        <label class="hint">Error del secuenciador <input id="vErr" type="number" value="0.01" step="0.01" min="0.001" max="0.5" style="${inp}"></label>
+      </div>
+      <p class="hint" style="margin:8px 0 0">Si tus lecturas son de <b>nanoporo</b> (más ruidosas), sube el error a <b>0.05</b>: es lo que evita mutaciones falsas. Baja la frecuencia mínima para buscar variantes minoritarias.</p>
+    </details>`);
+  box.append(avz, el(`<div id="varOut"></div>`));
+  c.replaceChildren(box);
+
+  $("#refFile",bar).value=String(refSug);
+  $("#readFile",bar).value=String(readSug);
+
+  async function cargarSecs(){
+    const o=await API.reference_options(+$("#refFile").value);
+    const sel=$("#refSeq");
+    if(o.error||!o.options||!o.options.length){ sel.innerHTML=`<option value="0">—</option>`; return; }
+    sel.innerHTML=o.options.map(x=>`<option value="${x.index}">${esc(x.header)} (${x.length.toLocaleString()} pb)</option>`).join("");
+  }
+  $("#refFile",bar).addEventListener("change",cargarSecs);
+  await cargarSecs();
+
+  $("#goVar",bar).addEventListener("click",async()=>{
+    const out=$("#varOut");
+    out.replaceChildren(el(`<p class="hint">Mapeando lecturas y buscando mutaciones… (es cálculo real, puede tardar unos segundos)</p>`));
+    const r=await API.call_variants_app(
+      +$("#refFile").value, +($("#refSeq").value||0), +$("#readFile").value,
+      +$("#vDepth").value, +$("#vAf").value, +$("#vErr").value);
+    if(r.error){ out.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+    pintarVariantes(out,r);
+  });
+}
+
+function pintarVariantes(out,r){
+  const pct=(100*r.n_mapped/Math.max(r.n_reads,1)).toFixed(1);
+  const total=r.n_snv+r.n_indel;
+  const filas=r.variants.map(v=>{
+    const tipo=v.kind==="SNV"?`<span class="tag" style="color:#8ecbff;border-color:#2b4a70">sustitución</span>`
+             :v.kind==="INS"?`<span class="tag" style="color:#37d39b;border-color:#1d6b52">inserción</span>`
+             :`<span class="tag" style="color:#ffb454;border-color:#5a4522">deleción</span>`;
+    return `<tr><td>${v.pos.toLocaleString()}</td><td class="mono">${esc(v.ref)} → <b style="color:#ff8c8c">${esc(v.alt)}</b></td>`
+         + `<td>${tipo}</td><td>${v.qual.toFixed(0)}</td><td>${v.depth}</td><td>${(v.af*100).toFixed(0)}%</td></tr>`;
+  }).join("");
+
+  const node=el(`<div>
+    <div class="cards">
+      <div class="card"><div class="k">Lecturas mapeadas</div><div class="v">${pct}%</div></div>
+      <div class="card"><div class="k">Profundidad media</div><div class="v">${r.mean_depth}×</div></div>
+      <div class="card"><div class="k">Mutaciones</div><div class="v">${total}</div></div>
+      <div class="card"><div class="k">Genoma</div><div class="v" style="font-size:15px">${esc(r.reference)}</div></div>
+    </div>
+    ${r.truncated?`<div class="err">Se analizaron solo las primeras ${r.n_reads.toLocaleString()} lecturas para que la app siga respondiendo.</div>`:``}
+    <h3>Cobertura a lo largo del genoma</h3>
+    <p class="hint" style="margin:0 0 8px">Cuántas lecturas pasan por cada punto. Los valles son zonas con menos evidencia — ahí el programa prefiere callarse antes que arriesgar.</p>
+    <div class="chart">${svgDepth(r.depth_series,r.depth_step)}</div>
+    <p class="hint" style="margin:10px 0 0">Cubierto por al menos… ≥1×: <b>${r.coverage["1"]}%</b> · ≥5×: <b>${r.coverage["5"]}%</b> · ≥10×: <b>${r.coverage["10"]}%</b> · ≥30×: <b>${r.coverage["30"]}%</b> del genoma</p>
+    <div class="row" style="margin-top:18px"><h3 style="margin:0;flex:1">Mutaciones encontradas (${r.n_snv} sustituciones, ${r.n_indel} indels)</h3>
+      ${total?`<button class="primary" id="saveVcf" title="Formato estándar de los laboratorios">Guardar VCF…</button>`:``}</div>
+    ${total
+      ? `<table class="seqtable"><thead><tr><th>Posición</th><th>Cambio</th><th>Tipo</th><th>Calidad</th><th>Lecturas</th><th>Frecuencia</th></tr></thead><tbody>${filas}</tbody></table>`
+      : `<div class="soon">No se encontró ninguna mutación con estos ajustes.<br>Puede que la muestra sea idéntica a la referencia, o que falte cobertura.<br>Prueba a bajar la profundidad o la frecuencia mínima en "Ajustes avanzados".</div>`}
+    <p class="hint" style="margin-top:12px">Cada mutación se decide comparando dos posibilidades: que sea un <b>error del secuenciador</b> o que sea <b>real</b>. La "calidad" mide cuántas veces más probable es lo segundo. Los indels largos pueden salir partidos en varios trozos: es una limitación conocida de nuestro alineador, no un fallo de tus datos.</p>
+  </div>`);
+  out.replaceChildren(node);
+  const b=$("#saveVcf",node);
+  if(b) b.addEventListener("click",async()=>{
+    const res=await API.save_vcf();
+    if(res && res.error) toast(res.error);
+    else if(res && res.saved) b.textContent="✓ Guardado";
+  });
+}
+
+function svgDepth(vals,paso){
+  const w=720,h=190,L=48,B=26,T=10,R=14,n=vals.length; if(!n) return "";
+  const mx=Math.max(...vals,1);
+  const X=i=>L+i*(w-L-R)/Math.max(n-1,1), Y=v=>T+(mx-v)*(h-T-B)/mx;
+  const linea=vals.map((v,i)=>`${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+  const area=`${X(0).toFixed(1)},${(h-B).toFixed(1)} ${linea} ${X(n-1).toFixed(1)},${(h-B).toFixed(1)}`;
+  const yt=[0,Math.round(mx/2),mx].map(v=>
+    `<line x1="${L}" y1="${Y(v).toFixed(1)}" x2="${w-R}" y2="${Y(v).toFixed(1)}" stroke="#26314c"/>`
+   +`<text x="${L-6}" y="${(Y(v)+4).toFixed(1)}" fill="#93a0bd" font-size="11" text-anchor="end">${v}×</text>`).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
+    ${yt}<polygon points="${area}" fill="#4f8cff" opacity="0.18"/>
+    <polyline points="${linea}" fill="none" stroke="#4f8cff" stroke-width="1.6"/>
+    <text x="${w/2}" y="${h-4}" fill="#93a0bd" font-size="11" text-anchor="middle">posición en el genoma (1 punto ≈ ${paso} bases)</text></svg>`;
 }
 
 // ── Calidad (QC estilo FastQC) ───────────────────────────────────────────────
