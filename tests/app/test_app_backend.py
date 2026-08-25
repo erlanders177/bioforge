@@ -526,3 +526,88 @@ def test_newick_text_antes_y_despues(fasta_familias):
     api.phylo_tree(bootstrap=0)
     nw = api.newick_text()["newick"]
     assert nw.endswith(";") and nw.count("(") == nw.count(")")
+
+
+# ── herramientas de laboratorio en la app ────────────────────────────────────
+@pytest.fixture()
+def fasta_lab(tmp_path):
+    """Un 'plásmido' con sitios EcoRI/BamHI colocados y un gen dentro."""
+    import numpy as np
+    rng = np.random.default_rng(77)
+    rel = lambda n: "".join(rng.choice(list("ACGT"), size=n))
+    gen = "ATG" + "".join(rng.choice(["GCA", "CGT", "AAA", "GGC", "TTT"], size=120)) + "TAA"
+    seq = rel(200) + "GAATTC" + rel(150) + gen + rel(200) + "GGATCC" + rel(250)
+    p = tmp_path / "plasmido.fasta"
+    p.write_text(">plasmido_demo prueba" + NL + seq + NL, encoding="utf-8")
+    return str(p), gen
+
+
+def test_lab_enzimas_encuentra_los_sitios(fasta_lab):
+    ruta, _ = fasta_lab
+    api = Api()
+    api.open_file(ruta)
+    r = api.lab_enzymes(0, "EcoRI,BamHI")
+    assert "error" not in r, r.get("error")
+    # ojo: el relleno aleatorio puede traer sitios extra por casualidad (un sitio de
+    # 6 bases sale ~1 vez cada 4096), así que no se fija un número: se fija la
+    # RELACIÓN, que es la que debe cumplirse siempre en ADN lineal.
+    assert r["n_fragments"] == len(r["cuts"]) + 1
+    assert {c["enzyme"] for c in r["cuts"]} <= {"EcoRI", "BamHI"}
+    assert len(r["cuts"]) >= 2                    # al menos los dos colocados
+    assert sum(f["length"] for f in r["fragments"]) == r["length"]
+
+
+def test_lab_enzimas_circular_da_un_fragmento_menos(fasta_lab):
+    ruta, _ = fasta_lab
+    api = Api()
+    api.open_file(ruta)
+    lineal = api.lab_enzymes(0, "EcoRI,BamHI", False)
+    circular = api.lab_enzymes(0, "EcoRI,BamHI", True)
+    # es la propiedad matemática del corte: n cortes dan n+1 trozos en lineal y n
+    # en circular. Se usa en el laboratorio para saber si un plásmido está cerrado.
+    assert circular["n_fragments"] == len(circular["cuts"])
+    assert lineal["n_fragments"] == len(lineal["cuts"]) + 1
+
+
+def test_lab_enzimas_rechaza_proteina(tmp_path):
+    p = tmp_path / "prot.fasta"
+    p.write_text(">p1" + NL + "MKGFPWYEQLLIPMKGFPWYEQLLIP" + NL, encoding="utf-8")
+    api = Api()
+    api.open_file(str(p))
+    assert "error" in api.lab_enzymes(0, "EcoRI")
+
+
+def test_lab_orfs_encuentra_el_gen(fasta_lab):
+    ruta, gen = fasta_lab
+    api = Api()
+    api.open_file(ruta)
+    r = api.lab_orfs(0, min_length=300)
+    assert "error" not in r
+    assert r["n_orfs"] >= 1
+    # el gen colocado debe estar entre los encontrados (mismo largo, hebra +)
+    assert any(o["length"] == len(gen) and o["strand"] == "+" for o in r["orfs"]), (
+        f"no halló el gen de {len(gen)} nt; halló {[(o['strand'], o['length']) for o in r['orfs']]}")
+
+
+def test_lab_primers_disena_una_pareja(fasta_lab):
+    ruta, _ = fasta_lab
+    api = Api()
+    api.open_file(ruta)
+    r = api.lab_primers(0)
+    assert r["mode"] == "design"
+    for lado in ("forward", "reverse"):
+        assert 18 <= r[lado]["len"] <= 27
+        assert 45 <= r[lado]["tm"] <= 75
+    assert r["tm_diff"] >= 0
+
+
+def test_lab_pcr_amplifica_con_los_cebadores_disenados(fasta_lab):
+    """Coherencia: los cebadores que propone deben amplificar la secuencia entera."""
+    ruta, _ = fasta_lab
+    api = Api()
+    api.open_file(ruta)
+    d = api.lab_primers(0)
+    r = api.lab_primers(0, 60.0, d["forward"]["seq"], d["reverse"]["seq"])
+    assert r["mode"] == "pcr"
+    assert r["n_products"] == 1
+    assert r["products"][0]["length"] == d["amplicon"]

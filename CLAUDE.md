@@ -109,7 +109,7 @@ Niveles implementados y validados:
 - **L8 (v10.0) — APP DE ESCRITORIO** `bioforge/app/`. "La otra cara del motor": una
   ventana NATIVA y LOCAL (PyWebview) sobre el mismo `bioforge`, para no-programadores —
   analizar ADN a clics, sin código y sin que los datos salgan de la máquina (ADN Edge,
-  sin servidor ni red). SIETE pestañas, cada una con explicación "para todos":
+  sin servidor ni red). OCHO pestañas, cada una con explicación "para todos":
   **Secuencias** (listar/traducir ADN→proteína codón a codón), **Calidad** (informe QC
   estilo FastQC con gráficos SVG), **Alinear** (dos secuencias → mutaciones), **Variantes** (lecturas vs genoma de
   referencia → cobertura + mutaciones + VCF descargable), **Árbol**
@@ -172,6 +172,26 @@ Niveles implementados y validados:
   bootstrap da soporte <70 % con secuencias al azar (no inventa genealogías).
   INTEGRADA: CLI `bioforge-phylo` (dibuja el árbol en la terminal) + pestaña **Árbol**
   en la app (SVG con soporte por colores) + `ejemplos/filogenia_especies.fasta`.
+
+- **L11 (v10.2) — HERRAMIENTAS DE LABORATORIO** `bioforge/lab/`. Las preguntas del día
+  a día con una pipeta en la mano, que hoy se resuelven a mano o subiendo la secuencia
+  a una web ajena. `restriction.py` (enzimas: sitios, digestión lineal/circular,
+  fragmentos, **cortadores únicos**, gel simulado; búsqueda por **máscaras de bits**
+  para soportar códigos IUPAC ambiguos sin expandir patrones; catálogo de 64 enzimas
+  de uso corriente, datos de REBASE, subconjunto DECLARADO), `orf.py` (marcos abiertos
+  en los **seis marcos**, con proteína; codones a enteros → todo vectorizado) y
+  `primers.py` (**Tm por vecino más próximo** Allawi & SantaLucia 1997 con corrección
+  de sal, diseño de parejas con avisos de las pegas clásicas, y **PCR in silico**).
+  **CONTRASTADO** (`tools/bench_lab_vs_estandares.py`): enzimas **64/64 posiciones
+  IDÉNTICAS** a Biopython/REBASE; ORFs **100% de acuerdo con `getorf` de EMBOSS 6.6**
+  en sus DOS modos (434/434 entre paradas, 116/116 desde ATG); Tm **idéntica a
+  Biopython a precisión de máquina** (1.1e-13 °C en 66 cebadores). ⚠ **HALLAZGO:**
+  Biopython **no detecta** la autocomplementariedad — hay que pasarle `selfcomp=True`
+  a mano; el nuestro la detecta solo, así que un cebador palindrómico no sale con la
+  Tm equivocada en silencio. (EMBOSS `restrict` está instalado pero sin la base REBASE
+  descargada, así que ese contraste no aplica; lo cubre Biopython.)
+  INTEGRADA: CLI `bioforge-lab` (enzimas/orfs/primers) + pestaña **Laboratorio** en la
+  app (tres sub-pestañas) + `ejemplos/laboratorio_plasmido.fasta`.
 
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
@@ -299,6 +319,48 @@ ni siquiera toca el core. Ese es el listón a copiar.
 `pywebview`. El guardián lo comprueba en intérpretes limpios y se probó inyectando
 la regresión para confirmar que se pone rojo.
 
+### 12. Nada se vende sin compararlo con los MEJORES del mundo
+Una herramienta que solo se ha probado contra sí misma no está validada, está
+*acompañada*. Toda herramienta que no sea trivial (un `2+2=4`) necesita su
+**contraste head-to-head contra el estándar del campo** antes de considerarse
+terminada y antes de anunciarse en el README o la web.
+
+**El contraste debe ser JUSTO — y esto no es un detalle, es la regla.** En el
+primer intento contra `bcftools` salimos ganando (97.6% vs 85.1%) y era **trampa**:
+se comparaba su salida por DEFECTO (diploide y sin filtrar) contra la nuestra ya
+filtrada. Configurado en igualdad (`--ploidy 1` + los mismos umbrales) daba
+100%/100%, empatando con nosotros. Antes de publicar cualquier cifra:
+- **configurar al rival como se configuraría a sí mismo** un experto (ploidía,
+  filtros, modelo, hilos);
+- **aislar la variable**: si se compara un llamador, que ambos partan de los MISMOS
+  alineamientos; si se compara un mapeador, de los mismos datos;
+- **si salimos ganando, sospechar primero de la comparación**, no celebrar;
+- **decir dónde perdemos**, y en qué liga no jugamos (p. ej. RAxML/IQ-TREE en
+  máxima verosimilitud, GATK en diploides).
+
+Cada contraste vive en `tools/bench_vs_<rival>.py`, es **reproducible** y sus
+cifras van al README. Si el rival no está instalado, el script lo dice y explica
+cómo instalarlo (WSL sirve: `wsl -u root` no pide contraseña).
+
+**El contraste es también la mejor caza de bugs que tenemos.** Los dos últimos
+salieron de ahí y eran invisibles con nuestros propios datos:
+- el lector de CIGAR ignoraba en silencio los recortes blandos `S` → con un SAM real
+  de minimap2/bwa se habrían desplazado TODAS las bases;
+- el `upgma()` de Biopython resultó ser WPGMA, no UPGMA.
+
+**Estado actual (mantener esta tabla al día):**
+
+| herramienta | estándar contra el que se mide | resultado |
+|---|---|---|
+| Mapeador (L4) | minimap2 | a la par en multinúcleo, ~99.8% posiciones correctas |
+| Alineador (L3) | parasail | ~1.3× de su velocidad, resultado exacto |
+| Ingesta/QC | Biopython, seqkit | ~6.9× menos RAM, ~9.5× más rápido |
+| Basecaller (L7) | Guppy | 74.5% identidad en R9.4 real (ellos ~99%) |
+| Evolución (L5/L6) | ESM-2, ejes triviales | 0.631 en NUEVAS sobre listón 0.52 |
+| Variantes (L9) | **bcftools** | concordancia **100%** (40/40), 0.16 s vs 4.73 s |
+| Filogenia (L10) | **Biopython** | topología NJ **idéntica 5/5**, 15× más rápido |
+| Laboratorio (L11) | **Biopython/REBASE, EMBOSS** | enzimas 64/64 · ORFs 100% · Tm a precisión de máquina |
+
 ---
 
 ## Números correctos del proyecto
@@ -319,6 +381,9 @@ la regresión para confirmar que se pone rojo.
 | `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
 | App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
 | Llamada de variantes — SNVs (v10.2) | **100% sensibilidad y 100% precisión desde 10×** (error 0.1–1%); a 5× sensib. 64-72% pero precisión sigue 100% |
+| Laboratorio — enzimas vs Biopython/REBASE | **64/64 posiciones idénticas** |
+| Laboratorio — ORFs vs EMBOSS getorf | **100% de acuerdo** en los dos modos (434/434 y 116/116) |
+| Laboratorio — Tm vs Biopython | **idéntica a precisión de máquina** (1.1e-13 °C, 66 cebadores) |
 | Variantes vs **bcftools** (el estándar) | mismos alineamientos + mismos umbrales → **concordancia 100%** (40 de 40 llamadas idénticas), ambos 100% sensib./100% precisión. Nuestro llamador 0.16 s vs 4.73 s la tubería estándar |
 | Filogenia — NJ vs Biopython | **topología idéntica en 5/5** casos (6-60 taxones); matrices de distancia iguales a **1.5e-8** |
 | Filogenia — velocidad vs Biopython | **15× más rápido** en distancias · **3.8×** en NJ |
@@ -352,6 +417,10 @@ bioforge/                  paquete instalable (from bioforge import ...)
     minimizers.py          L4 — minimizers canónicos (w,k) vectorizados
     refindex.py            L4 — índice de la referencia (hash ordenado + searchsorted)
     genomemap.py           L4 — seed-chain-align: GenomeAligner.map → PAF
+  lab/                     L11 (v10.2) — herramientas de laboratorio
+    restriction.py         enzimas: sitios, digestión, fragmentos, gel (máscaras IUPAC)
+    orf.py                 marcos abiertos de lectura en los 6 marcos
+    primers.py             Tm vecino más próximo, diseño de cebadores, PCR in silico
   phylo/                   L10 (v10.2) — filogenia: árboles evolutivos
     distance.py            matrices de distancia (p/JC/K2P/Poisson) por matmuls
     tree.py                Neighbor-Joining, UPGMA, WPGMA, Newick, bootstrap
@@ -394,6 +463,7 @@ bioforge/                  paquete instalable (from bioforge import ...)
     variants.py            CLI de variantes (mapeo→pileup→VCF + informe de cobertura)
                            — bioforge-variants
     phylo.py               CLI de filogenia (árbol en terminal + Newick) — bioforge-phylo
+    lab.py                 CLI de laboratorio (enzimas/orfs/primers) — bioforge-lab
   app/                     L8 (v10.0) — app de escritorio (PyWebview, local, sin servidor)
     main.py                lanzador: ventana + diálogos nativos (comando bioforge-app)
     backend.py             Api: el PUENTE que la UI invoca (dicts, @_guard). RAM PLANA:
@@ -416,7 +486,7 @@ tools/
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
                            variants/ phylo/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
-                           (el guardián de la Regla #11)  (630 tests)
+                           (el guardián de la Regla #11)  (683 tests)
 docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
                            index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)

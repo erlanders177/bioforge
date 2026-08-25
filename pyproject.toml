@@ -78,6 +78,7 @@ bioforge-bgzip     = "bioforge.io.bgzf:main"
 bioforge-evolution = "bioforge.cli.evolution:main"
 bioforge-variants  = "bioforge.cli.variants:main"
 bioforge-phylo     = "bioforge.cli.phylo:main"
+bioforge-lab       = "bioforge.cli.lab:main"
 bioforge-app       = "bioforge.app.main:main"      # app de escritorio (requiere extra 'app')
 
 # La versión vive solo en bioforge/__init__.py (una única fuente de verdad).

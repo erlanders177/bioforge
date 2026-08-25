@@ -57,6 +57,11 @@ _register("bioforge.align.msa", "align_multiple", "MSAResult")
 _register("bioforge.mapping.genomemap", "GenomeAligner", "Mapping")
 _register("bioforge.variants.pileup", "Pileup", "pileup", "pileup_from_mappings")
 _register("bioforge.variants.caller", "Variant", "call_variants", "write_vcf")
+_register("bioforge.lab.restriction", "Enzyme", "ENZYMES", "get_enzyme", "Site",
+          "Fragment", "Digestion", "find_sites", "digest", "unique_cutters", "gel")
+_register("bioforge.lab.orf", "ORF", "find_orfs", "longest_orf")
+_register("bioforge.lab.primers", "Primer", "Amplicon", "tm_nn", "tm_wallace",
+          "gc_percent", "design_primers", "pcr")
 _register("bioforge.phylo.distance", "DistanceMatrix", "distance_matrix")
 _register("bioforge.phylo.tree", "Clade", "Tree", "neighbor_joining", "upgma",
           "build_tree", "bootstrap_support", "wpgma")
@@ -162,6 +167,28 @@ if TYPE_CHECKING:                                   # pragma: no cover
         viterbi_basecall,
     )
     from .sequence.translator import SmartTranslator
+    from .lab.orf import ORF, find_orfs, longest_orf
+    from .lab.primers import (
+        Amplicon,
+        Primer,
+        design_primers,
+        gc_percent,
+        pcr,
+        tm_nn,
+        tm_wallace,
+    )
+    from .lab.restriction import (
+        ENZYMES,
+        Digestion,
+        Enzyme,
+        Fragment,
+        Site,
+        digest,
+        find_sites,
+        gel,
+        get_enzyme,
+        unique_cutters,
+    )
     from .phylo.distance import DistanceMatrix, distance_matrix
     from .phylo.tree import (
         Clade,

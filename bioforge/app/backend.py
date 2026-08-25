@@ -2,7 +2,7 @@
 bioforge/app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
 
 La app de escritorio es "la otra cara" del mismo motor: una capa FINA de interfaz
-sobre el paquete ``bioforge`` (que ya está probado, 630 tests). Aquí vive la lógica
+sobre el paquete ``bioforge`` (que ya está probado, 683 tests). Aquí vive la lógica
 que la interfaz (HTML/JS) invoca; la ventana en sí (PyWebview) es solo un lanzador.
 
 Todo es LOCAL y SIN SERVIDOR: los datos —el ADN del usuario— nunca salen de la
@@ -594,6 +594,110 @@ class Api:
                           "qual": round(v.qual, 1), "depth": v.depth,
                           "af": round(v.af, 3), "kind": v.kind}
                          for v in variantes[:500]],
+        }
+
+    # ── laboratorio: enzimas, ORFs y cebadores ───────────────────────────────
+    @_guard
+    def lab_enzymes(self, index: int = 0, enzymes: str = "",
+                    circular: bool = False) -> dict[str, Any]:
+        """Qué enzimas de restricción cortan la secuencia elegida, y en cuántos trozos."""
+        from bioforge.lab.restriction import ENZYMES, digest, find_sites, unique_cutters
+
+        rec = self._get(index)
+        if rec.seq_type != SeqType.NUCLEOTIDE:
+            return {"error": "las enzimas de restricción cortan ADN, no proteínas."}
+        seq = rec.to_string().upper()
+        if len(seq) < 10:
+            return {"error": f"la secuencia es muy corta ({len(seq)} bases)."}
+
+        pedidas = [e.strip() for e in enzymes.split(",") if e.strip()]
+        if pedidas:
+            d = digest(seq, pedidas, circular=circular)
+            cortes = [{"enzyme": s.enzyme, "position": s.position + 1}
+                      for s in d.sites]
+            frags = [{"start": f.start + 1, "end": f.end, "length": f.length}
+                     for f in sorted(d.fragments, key=lambda x: -x.length)]
+        else:
+            d, cortes, frags = None, [], []
+
+        # resumen de TODAS: cuántas veces corta cada una (para elegir)
+        todos = find_sites(seq, circular=circular)
+        cuenta: dict[str, int] = {}
+        for s in todos:
+            cuenta[s.enzyme] = cuenta.get(s.enzyme, 0) + 1
+        return {
+            "name": rec.header[:60], "length": len(seq), "circular": circular,
+            "catalog_size": len(ENZYMES),
+            "cutters": sorted(({"enzyme": e, "n": n} for e, n in cuenta.items()),
+                              key=lambda x: (x["n"], x["enzyme"]))[:60],
+            "unique": unique_cutters(seq, circular=circular),
+            "selected": d.enzymes if d else [],
+            "cuts": cortes,
+            "fragments": frags,
+            "n_fragments": len(frags),
+        }
+
+    @_guard
+    def lab_orfs(self, index: int = 0, min_length: int = 150,
+                 require_start: bool = True) -> dict[str, Any]:
+        """Marcos abiertos de lectura: los genes candidatos de una secuencia."""
+        from bioforge.lab.orf import find_orfs
+
+        rec = self._get(index)
+        if rec.seq_type != SeqType.NUCLEOTIDE:
+            return {"error": "los ORFs se buscan en ADN, no en proteínas."}
+        seq = rec.to_string().upper()
+        orfs = find_orfs(seq, min_length=int(min_length),
+                         require_start=bool(require_start))
+        return {
+            "name": rec.header[:60], "length": len(seq),
+            "n_orfs": len(orfs),
+            "orfs": [{"start": o.start + 1, "end": o.end, "strand": o.strand,
+                      "frame": o.frame, "length": o.length, "n_aa": o.n_aa,
+                      "truncated": not o.has_stop,
+                      "protein": o.protein[:400]}
+                     for o in orfs[:100]],
+        }
+
+    @_guard
+    def lab_primers(self, index: int = 0, target_tm: float = 60.0,
+                    forward: str = "", reverse: str = "") -> dict[str, Any]:
+        """Diseña una pareja de cebadores, o simula la PCR con los que le pases."""
+        from bioforge.lab.primers import design_primers, gc_percent, pcr, tm_nn
+
+        rec = self._get(index)
+        if rec.seq_type != SeqType.NUCLEOTIDE:
+            return {"error": "los cebadores son de ADN, no de proteínas."}
+        seq = rec.to_string().upper()
+
+        if forward.strip() and reverse.strip():
+            f, r = forward.strip().upper(), reverse.strip().upper()
+            datos = {}
+            for etiqueta, c in (("forward", f), ("reverse", r)):
+                try:
+                    datos[etiqueta] = {"seq": c, "tm": round(tm_nn(c), 1),
+                                       "gc": round(gc_percent(c), 1), "len": len(c)}
+                except BioForgeError as e:
+                    return {"error": f"cebador {etiqueta}: {e}"}
+            productos = pcr(seq, f, r)
+            return {"mode": "pcr", "name": rec.header[:60], **datos,
+                    "products": [{"start": p.start + 1, "end": p.end,
+                                  "length": p.length} for p in productos[:20]],
+                    "n_products": len(productos)}
+
+        par = design_primers(seq, target_tm=float(target_tm))
+        if par is None:
+            return {"error": f"la secuencia es muy corta ({len(seq)} bases) para "
+                             "diseñar cebadores; hacen falta al menos 100."}
+        d, i = par
+        return {
+            "mode": "design", "name": rec.header[:60], "length": len(seq),
+            "forward": {"seq": d.sequence, "tm": round(d.tm, 1), "gc": round(d.gc, 1),
+                        "len": d.length, "warnings": d.warnings},
+            "reverse": {"seq": i.sequence, "tm": round(i.tm, 1), "gc": round(i.gc, 1),
+                        "len": i.length, "warnings": i.warnings},
+            "tm_diff": round(abs(d.tm - i.tm), 1),
+            "amplicon": len(seq),
         }
 
     # ── filogenia: el árbol evolutivo del archivo activo ─────────────────────

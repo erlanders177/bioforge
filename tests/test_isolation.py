@@ -99,6 +99,13 @@ HERRAMIENTAS = [
     # la filogenia se apoya en el MSA (align) pero nada más: no toca el mapeador,
     # ni el nanoporo, ni el predictor de evolución.
     ("filogenia",  "build_tree",      {"nanopore", "evolution", "mapping", "app", "io"}),
+    # las de laboratorio son autónomas: ni alinean, ni mapean, ni predicen nada
+    ("restricción", "digest",         {"nanopore", "evolution", "mapping", "app", "io",
+                                       "phylo", "variants"}),
+    ("ORFs",       "find_orfs",       {"nanopore", "evolution", "mapping", "app", "io",
+                                       "phylo", "variants", "align"}),
+    ("cebadores",  "tm_nn",           {"nanopore", "evolution", "mapping", "app", "io",
+                                       "phylo", "variants", "align"}),
 ]
 
 
@@ -147,6 +154,18 @@ def test_familia_variants_es_perezosa_por_dentro():
     assert "bioforge.variants.pileup" in subs
     assert "bioforge.variants.caller" not in subs, (
         "pedir el pileup cargó el llamador: el __init__ de variants dejó de ser perezoso")
+
+
+def test_familia_lab_es_perezosa_por_dentro():
+    """Las tres herramientas de laboratorio no se llaman entre sí.
+
+    Quien solo quiere saber la temperatura de fusión de un cebador no tiene por qué
+    cargar el catálogo de enzimas ni el buscador de ORFs.
+    """
+    subs, _ = _huella("from bioforge import tm_nn")
+    assert "bioforge.lab.primers" in subs
+    assert "bioforge.lab.restriction" not in subs, "tm_nn cargó el módulo de enzimas"
+    assert "bioforge.lab.orf" not in subs, "tm_nn cargó el buscador de ORFs"
 
 
 def test_familia_phylo_es_perezosa_por_dentro():

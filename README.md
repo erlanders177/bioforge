@@ -35,11 +35,12 @@ section (with examples) further down.
 | **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
 | **Phylogenetics** *(v10.2)* | distance matrices (p / Jukes-Cantor / Kimura-2P / Poisson) · Neighbor-Joining · UPGMA · WPGMA · Newick output · **bootstrap support** — *NJ topology identical to Biopython, 15× faster* |
+| **Lab tools** *(v10.2)* | restriction enzymes (sites, digest, unique cutters, gel) · ORF finder (six frames) · primer design, melting temperature and **in-silico PCR** — *positions identical to Biopython/REBASE and EMBOSS* |
 | **Variant calling** *(v10.2)* | pileup (depth & coverage) · SNV/indel calling by binomial likelihood ratio · VCF 4.2 output — closes the pipeline: reads → mapping → **variants** |
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 | **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
-| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 7 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
+| **Desktop app** *(v10.0)* | the whole engine behind a friendly local window — 8 tabs for non-coders. Double-click `.exe` or `pip install "bioforge[app]" && bioforge-app`. Offline, private (*DNA Edge*) |
 
 Why one engine instead of a pile of separate tools? **Fewer resources and less
 friction** — no piping data between programs, no format conversions, one install
@@ -76,6 +77,8 @@ combining them (especially the evolution front).
 | Phylogenetics — vs Biopython (the reference) | **NJ topology identical in 5/5 cases** (6–60 taxa) · distance matrices agree to **1.5e-8** (machine precision) · **15× faster** distances, **3.8× faster** NJ. *`tools/bench_vs_biopython_phylo.py`* |
 | Phylogenetics — a finding | Biopython's `upgma()` averages `(d(k,i)+d(k,j))/2` **without weighting by cluster size** — that is **WPGMA, not UPGMA**. Ours weights (Sokal & Michener 1958); we also ship `wpgma()`, which reproduces Biopython's output in 5/5 cases |
 | Phylogenetics — own proof | on an **additive** matrix NJ recovers the exact branch lengths (theoretical guarantee, in the test suite); bootstrap gives <70% support on random sequences — it does not invent genealogies |
+| Lab tools — vs the references | Restriction sites **identical to Biopython/REBASE in 64/64 enzymes** · ORF finder **100% agreement with EMBOSS `getorf`** in both of its modes (434/434 and 116/116) · melting temperature **identical to Biopython to machine precision** (1.1e-13 °C over 66 primers). *`tools/bench_lab_vs_estandares.py`* |
+| Lab tools — a finding | Biopython's `Tm_NN` does **not** detect self-complementary primers — you must pass `selfcomp=True` yourself, or a palindromic primer silently gets the wrong Tm. Ours detects it automatically |
 | Variant calling — vs **bcftools** (the reference) | On the **same minimap2 alignments** and matched thresholds: **100% concordance** — the exact same 40 calls out of 40, 100% sensitivity and 100% precision for both. BioForge's caller takes **0.16 s vs 4.73 s** for the standard pipeline. *`tools/bench_vs_bcftools.py`* |
 | Variant calling — what the comparison fixed | Connecting to real SAM exposed that our CIGAR reader silently ignored soft clips (`S`), which would misplace every base of a `bwa`/`minimap2` alignment. Now the **full SAM CIGAR alphabet** is supported. It also justified raising `min_alt_count` 2→3 (measured over 10 runs: removes every false positive, loses no true mutation) |
 | Variant calling — SNV accuracy | **100% sensitivity and 100% precision from 10× coverage** (0.1–1% read error, 5 kb genome, 25 known SNVs). At 5× sensitivity drops to 64–72% but precision stays 100% — it prefers silence over invention. *`tools/bench_variants.py`* |
@@ -180,7 +183,7 @@ pip install hypothesis pytest pytest-benchmark
 
 BioForge also has a **desktop app**: the same engine behind a friendly window, for
 people who don't write code. Everything runs **locally and offline** — your DNA never
-leaves your machine (*DNA Edge*). Seven tabs, each with a plain-language explanation:
+leaves your machine (*DNA Edge*). Eight tabs, each with a plain-language explanation:
 
 - **🧬 Sequences** — browse your FASTA/FASTQ, see each sequence's type and size, and
   translate DNA → protein (codon by codon, colour-coded by amino-acid type).
@@ -189,6 +192,9 @@ leaves your machine (*DNA Edge*). Seven tabs, each with a plain-language explana
 - **⚗️ Align** — compare two sequences and see their differences (mutations) highlighted.
 - **🔍 Variants** — stack many reads on a reference genome, see the coverage and get the
   mutations, with a one-click **VCF** export.
+- **✂️ Lab** — the everyday bench questions: which restriction enzymes cut your
+  sequence (and which cut *once*), what genes it might contain, and whether your
+  PCR primers will work.
 - **🌳 Tree** — reconstruct the evolutionary tree of several sequences, drawn with
   branch lengths and **bootstrap support**, exportable as **Newick**.
 - **〜 Nanopore** — turn raw electrical signal (POD5/FAST5) into DNA bases with our own
@@ -730,6 +736,10 @@ bioforge/               organised BY FUNCTION (v10.1); tests mirror it
     minimizers.py       Level 4 — canonical (w, k) minimizers (C + NumPy)
     refindex.py         Level 4 — reference minimizer index (hash-sorted lookup)
     genomemap.py        Level 4 — GenomeAligner: seed-chain-align → PAF
+  lab/
+    restriction.py      Level 11 — restriction enzymes: sites, digest, gel (IUPAC-aware)
+    orf.py              Level 11 — ORF finder across the six reading frames
+    primers.py          Level 11 — nearest-neighbour Tm, primer design, in-silico PCR
   phylo/
     distance.py         Level 10 — distance matrices (p/JC/K2P/Poisson), matmul-based
     tree.py             Level 10 — Neighbor-Joining, UPGMA, WPGMA, Newick, bootstrap
@@ -771,11 +781,12 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/                  mirrors the package layout (630 tests)
+tests/                  mirrors the package layout (683 tests)
   core/                 5-bit storage, streaming/columnar, errors, integrity net
   sequence/             genetic code correctness + error paths
   align/                alignment properties, MSA, SIMD kernel parity
   mapping/              minimizers, index, seed-chain-align, C parity
+  lab/                  enzymes, ORFs, primers — head-to-head against Biopython/REBASE
   phylo/                distances, NJ exactness on additive matrices, bootstrap honesty,
                         head-to-head against Biopython
   variants/             pileup, SNV/indel calling, VCF, no-false-positive guarantees
@@ -835,7 +846,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (630 tests)
+# Full test suite (683 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -897,13 +908,14 @@ python check.py
 - [x] **Level 7 — nanopore basecaller from scratch** (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi stay/skip · pure NumPy) — **~70 % on real R9.4** *(v9.0)*
 - [x] Nanopore: **iterative per-read rescaling + tuned transitions → ~74 %** on real R9.4 *(v9.1)*
 - [x] **Variant calling** — `pileup` + `call_variants` → VCF 4.2, binomial likelihood-ratio QUAL, honest sensitivity/precision benchmark *(v10.2)*
+- [x] **Lab tools** — restriction enzymes, ORF finder, primer design + in-silico PCR; validated against Biopython/REBASE and EMBOSS *(v10.2)*
 - [x] **Phylogenetics** — distance matrices, Neighbor-Joining, UPGMA/WPGMA, Newick, bootstrap support; validated head-to-head against Biopython *(v10.2)*
 - [x] **Head-to-head for the variant caller against `bcftools`** (WSL) — 100% concordance on identical alignments *(v10.2)*
 - [ ] Affine gap penalties in the aligner (open/extend) so long indels stop being split — the measured root cause behind imprecise indel coordinates
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads
-- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (7 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
+- [x] **Phase 2 — desktop application** *(v10.0)*: the whole engine behind a friendly local window (8 tabs), for non-coders. Ships **inside the package** (`bioforge.app`, launch with `bioforge-app`) **and** as a self-contained `.exe`, auto-built and attached to each release. Local, no servers, privacy-first — your DNA never leaves the machine
 - [x] **Organised by function + lazy loading** *(v10.1)*: subpackages per domain (`core/ sequence/ align/ mapping/ evolution/ nanopore/ io/ cli/ app/`), tests mirroring them, and a package that loads only what you use (`import bioforge` 75 ms → 4.7 ms). Old import paths keep working through compatibility bridges
 - [ ] **Phase 3 — a true predictor**, built to beat the honest bar Level 6 now measures (0.631 on novel mutations)
 

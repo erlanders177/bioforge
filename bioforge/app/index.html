@@ -123,6 +123,7 @@
       <a data-view="alinear"><span class="ic">⚗️</span>Alinear</a>
       <a data-view="variantes"><span class="ic">🔍</span>Variantes</a>
       <a data-view="arbol"><span class="ic">🌳</span>Árbol</a>
+      <a data-view="lab"><span class="ic">✂️</span>Laboratorio</a>
       <a data-view="nanoporo"><span class="ic">〜</span>Nanoporo</a>
       <a data-view="evolucion"><span class="ic">🔮</span>Evolución</a>
     </div>
@@ -226,6 +227,7 @@ function render(){
   if(VIEW==="alinear")     return renderAlinear(c);
   if(VIEW==="variantes")   return renderVariantes(c);
   if(VIEW==="arbol")       return renderArbol(c);
+  if(VIEW==="lab")         return renderLab(c);
   if(VIEW==="nanoporo")    return renderNanoporo(c);
   if(VIEW==="evolucion")   return renderEvolucion(c);
 }
@@ -243,6 +245,7 @@ function viewInicio(){
       <li><b>Alinear</b> — compara dos secuencias y ve en qué se diferencian (mutaciones).</li>
       <li><b>Variantes</b> — compara MUCHAS lecturas contra un genoma y encuentra sus mutaciones.</li>
       <li><b>Árbol</b> — reconstruye el parentesco evolutivo entre varias secuencias.</li>
+      <li><b>Laboratorio</b> — enzimas que cortan, genes candidatos y cebadores de PCR.</li>
       <li><b>Nanoporo</b> — convierte la señal eléctrica cruda de un secuenciador en letras de ADN.</li>
       <li><b>Evolución</b> — predice qué mutaciones de una proteína podrían extenderse con el tiempo.</li>
     </ul>`));
@@ -663,6 +666,190 @@ function svgArbol(raiz,conSoporte){
     +`<text x="${(L+(paso/maxX)*usable+6).toFixed(1)}" y="${alto-1}" fill="#93a0bd" font-size="10.5">${paso} sustituciones/sitio</text>`:"";
 
   return `<svg viewBox="0 0 ${ancho} ${alto+8}" width="100%" preserveAspectRatio="xMinYMin meet">${trazos.join("")}${etiquetas}${escala}</svg>`;
+}
+
+// ── Laboratorio (enzimas, ORFs y cebadores) ─────────────────────────────────
+let LAB_SUB = "enzimas";
+
+async function renderLab(c){
+  const box=el(`<div></div>`);
+  box.append(el(`<h2>Laboratorio</h2>`),
+    el(`<p class="sub">Las tres preguntas de antes de tocar una pipeta.</p>`),
+    explain(`<span class="t">¿Para qué sirve esto?</span>
+      Son las herramientas del día a día en un laboratorio de biología molecular — las que normalmente se resuelven a mano o subiendo la secuencia a una web ajena. Aquí van en tu ordenador, sin que los datos salgan.
+      <ul>
+        <li><b>Enzimas de restricción</b> — tijeras moleculares. Cada una reconoce una secuencia corta y corta ahí. Son la base de la <b>clonación</b>: recortar un gen de un sitio y pegarlo en otro. Lo que más se busca son las que cortan <b>una sola vez</b>: permiten abrir la secuencia por un punto conocido sin romperla en trozos.</li>
+        <li><b>Genes candidatos (ORFs)</b> — tramos que podrían codificar una proteína: empiezan en <b>ATG</b>, siguen de tres en tres y acaban en una señal de parada. Se buscan en los <b>seis marcos</b> posibles (dos hebras × tres puntos de arranque), porque un gen puede estar en cualquiera.</li>
+        <li><b>Cebadores de PCR</b> — la PCR copia millones de veces un trozo concreto de ADN, y los cebadores marcan dónde empieza y dónde acaba. Diseñarlos mal es la causa nº1 de que una PCR falle; lo crítico es que los dos tengan <b>temperatura de fusión (Tm) parecida</b>, o uno se pega y el otro no.</li>
+      </ul>`));
+
+  if(!STATE.summary){
+    box.append(el(`<div class="soon">Carga una secuencia de ADN.<br>Prueba con <b>ejemplos/laboratorio_plasmido.fasta</b>.</div>`));
+    c.replaceChildren(box); return;
+  }
+
+  const page=await API.records_page(0,300);
+  const opts=page.items.filter(x=>x.type==="ADN")
+    .map(x=>`<option value="${x.index}">#${x.index} · ${esc(x.header)} (${x.length.toLocaleString()} pb)</option>`).join("");
+  if(!opts){
+    box.append(el(`<div class="err">Este archivo no tiene secuencias de ADN (las herramientas de laboratorio son de ADN).</div>`));
+    c.replaceChildren(box); return;
+  }
+
+  const tabs=el(`<div class="row" style="gap:6px;margin:0 0 14px">
+    <button id="tEnz" class="${LAB_SUB==="enzimas"?"primary":""}">✂️ Enzimas</button>
+    <button id="tOrf" class="${LAB_SUB==="orfs"?"primary":""}">🧬 Genes (ORFs)</button>
+    <button id="tPri" class="${LAB_SUB==="primers"?"primary":""}">🔬 Cebadores</button>
+    <span style="flex:1"></span>
+    <span class="hint">Secuencia</span><select id="labSeq">${opts}</select></div>`);
+  box.append(tabs, el(`<div id="labOpts"></div>`), el(`<div id="labOut"></div>`));
+  c.replaceChildren(box);
+
+  const ir=(s)=>{ LAB_SUB=s; renderLab(c); };
+  $("#tEnz",tabs).addEventListener("click",()=>ir("enzimas"));
+  $("#tOrf",tabs).addEventListener("click",()=>ir("orfs"));
+  $("#tPri",tabs).addEventListener("click",()=>ir("primers"));
+
+  const opciones=$("#labOpts"), salida=$("#labOut");
+  const idx=()=>+$("#labSeq").value;
+
+  if(LAB_SUB==="enzimas"){
+    opciones.replaceChildren(el(`<div class="selbar" style="flex-wrap:wrap">
+      <span>Enzimas</span><input id="enzList" placeholder="EcoRI,BamHI (vacío = ver todas)"
+        style="flex:1;min-width:200px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font-family:monospace">
+      <label class="hint"><input type="checkbox" id="enzCirc"> circular (plásmido)</label>
+      <button class="primary" id="goEnz">Analizar</button></div>`));
+    $("#goEnz").addEventListener("click",async()=>{
+      salida.replaceChildren(el(`<p class="hint">Buscando sitios…</p>`));
+      const r=await API.lab_enzymes(idx(), $("#enzList").value, $("#enzCirc").checked);
+      if(r.error){ salida.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+      pintarEnzimas(salida,r);
+    });
+  } else if(LAB_SUB==="orfs"){
+    opciones.replaceChildren(el(`<div class="selbar" style="flex-wrap:wrap">
+      <label class="hint">Longitud mínima <input id="orfMin" type="number" value="150" min="30" step="30"
+        style="width:90px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px"> nt</label>
+      <label class="hint"><input type="checkbox" id="orfAtg" checked> exigir ATG al inicio</label>
+      <button class="primary" id="goOrf">Buscar genes</button></div>`));
+    $("#goOrf").addEventListener("click",async()=>{
+      salida.replaceChildren(el(`<p class="hint">Recorriendo los seis marcos…</p>`));
+      const r=await API.lab_orfs(idx(), +$("#orfMin").value, $("#orfAtg").checked);
+      if(r.error){ salida.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+      pintarOrfs(salida,r);
+    });
+  } else {
+    opciones.replaceChildren(el(`<div class="selbar" style="flex-wrap:wrap">
+      <label class="hint">Tm objetivo <input id="priTm" type="number" value="60" min="45" max="75"
+        style="width:70px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px">°C</label>
+      <button class="primary" id="goPri">Diseñar pareja</button>
+      <span style="flex:1"></span>
+      <input id="priF" placeholder="cebador directo" style="width:190px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font-family:monospace">
+      <input id="priR" placeholder="cebador inverso" style="width:190px;background:#0b0f1a;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font-family:monospace">
+      <button id="goPcr">Simular PCR</button></div>`));
+    $("#goPri").addEventListener("click",async()=>{
+      salida.replaceChildren(el(`<p class="hint">Diseñando…</p>`));
+      const r=await API.lab_primers(idx(), +$("#priTm").value, "", "");
+      if(r.error){ salida.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+      pintarPrimers(salida,r);
+    });
+    $("#goPcr").addEventListener("click",async()=>{
+      const f=$("#priF").value.trim(), rv=$("#priR").value.trim();
+      if(!f||!rv){ salida.replaceChildren(el(`<div class="err">Escribe los dos cebadores.</div>`)); return; }
+      salida.replaceChildren(el(`<p class="hint">Simulando la PCR…</p>`));
+      const r=await API.lab_primers(idx(), 60, f, rv);
+      if(r.error){ salida.replaceChildren(el(`<div class="err">${esc(r.error)}</div>`)); return; }
+      pintarPrimers(salida,r);
+    });
+  }
+}
+
+function pintarEnzimas(out,r){
+  const filasCut=r.cuts.map(c=>`<tr><td class="mono">${esc(c.enzyme)}</td><td>${c.position.toLocaleString()}</td></tr>`).join("");
+  const filasFrag=r.fragments.map((f,i)=>`<tr><td>${i+1}</td><td>${f.length.toLocaleString()} pb</td><td>${f.start.toLocaleString()}–${f.end.toLocaleString()}</td></tr>`).join("");
+  const chips=(lista)=>lista.map(x=>`<span class="tag" style="color:#8ecbff;border-color:#2b4a70">${esc(x)}</span>`).join(" ");
+  const cortadores=r.cutters.map(x=>`<span class="tag" title="${x.n} corte(s)" style="color:${x.n===1?'#37d39b':'#93a0bd'};border-color:${x.n===1?'#1d6b52':'var(--line)'}">${esc(x.enzyme)} <b>${x.n}</b></span>`).join(" ");
+  out.replaceChildren(el(`<div>
+    <div class="cards">
+      <div class="card"><div class="k">Longitud</div><div class="v">${r.length.toLocaleString()}</div></div>
+      <div class="card"><div class="k">Enzimas que cortan</div><div class="v">${r.cutters.length}</div></div>
+      <div class="card"><div class="k">Cortan 1 sola vez</div><div class="v" style="color:#37d39b">${r.unique.length}</div></div>
+      <div class="card"><div class="k">Forma</div><div class="v" style="font-size:16px">${r.circular?"circular":"lineal"}</div></div>
+    </div>
+    <h3>Cortadores únicos — los útiles para clonar</h3>
+    <p class="hint" style="margin:0 0 8px">Abren la secuencia por un solo punto, sin romperla en trozos. Son los que se buscan al planear una clonación.</p>
+    <div class="row" style="gap:6px">${r.unique.length?chips(r.unique):'<span class="hint">ninguna</span>'}</div>
+    ${r.cuts.length?`
+      <h3 style="margin-top:18px">Digestión con ${esc(r.selected.join(" + "))}</h3>
+      <p class="hint" style="margin:0 0 8px">${r.cuts.length} cortes → <b>${r.n_fragments} fragmentos</b>. ${r.circular?"En circular, n cortes dan n fragmentos.":"En lineal, n cortes dan n+1 fragmentos."}</p>
+      <div class="row" style="align-items:flex-start;gap:20px">
+        <div style="flex:1"><table class="seqtable"><thead><tr><th>Enzima</th><th>Corta en</th></tr></thead><tbody>${filasCut}</tbody></table></div>
+        <div style="flex:1"><table class="seqtable"><thead><tr><th>#</th><th>Tamaño</th><th>Posición</th></tr></thead><tbody>${filasFrag}</tbody></table></div>
+      </div>`:``}
+    <h3 style="margin-top:18px">Todas las que cortan (de ${r.catalog_size} del catálogo)</h3>
+    <p class="hint" style="margin:0 0 8px">En verde las que cortan una sola vez. El número es cuántas veces corta.</p>
+    <div class="row" style="gap:6px">${cortadores}</div>
+  </div>`));
+}
+
+function pintarOrfs(out,r){
+  if(!r.n_orfs){
+    out.replaceChildren(el(`<div class="soon">No se encontró ningún gen candidato con esos ajustes.<br>Prueba a bajar la longitud mínima o a desmarcar "exigir ATG".</div>`));
+    return;
+  }
+  const filas=r.orfs.map((o,i)=>{
+    const marca=o.truncated?`<span class="tag" style="color:#ffb454;border-color:#5a4522" title="Llega al final sin señal de parada: el gen podría continuar">truncado</span>`:"";
+    return `<tr class="pick" data-i="${i}"><td>${i+1}</td><td class="mono">${o.strand}${Math.abs(o.frame)}</td>`
+         + `<td>${o.start.toLocaleString()}–${o.end.toLocaleString()}</td><td>${o.length.toLocaleString()} nt</td>`
+         + `<td>${o.n_aa} aa</td><td>${marca}</td></tr>`;
+  }).join("");
+  const node=el(`<div>
+    <div class="cards">
+      <div class="card"><div class="k">Genes candidatos</div><div class="v">${r.n_orfs}</div></div>
+      <div class="card"><div class="k">El más largo</div><div class="v">${r.orfs[0].n_aa} aa</div></div>
+      <div class="card"><div class="k">Secuencia</div><div class="v">${r.length.toLocaleString()} pb</div></div>
+    </div>
+    <p class="hint">El marco indica hebra y punto de arranque: <b>+1/+2/+3</b> en la hebra directa, <b>−1/−2/−3</b> en la inversa. Haz clic en una fila para ver la proteína.</p>
+    <table class="seqtable"><thead><tr><th>#</th><th>Marco</th><th>Posición</th><th>Largo</th><th>Proteína</th><th></th></tr></thead><tbody>${filas}</tbody></table>
+    <div id="orfDet"></div>
+  </div>`);
+  out.replaceChildren(node);
+  node.querySelectorAll("tbody tr").forEach(tr=>tr.addEventListener("click",()=>{
+    const o=r.orfs[+tr.dataset.i];
+    $("#orfDet",node).replaceChildren(el(`<div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <h3>Proteína del ORF ${o.strand}${Math.abs(o.frame)} · ${o.n_aa} aminoácidos</h3>
+      <div class="row" style="gap:6px;margin:6px 0">${aaLegend()}</div>
+      <div class="seqbox mono">${colorProtein(o.protein)}</div></div>`));
+  }));
+}
+
+function pintarPrimers(out,r){
+  const ficha=(t,p)=>`<div class="card" style="min-width:250px">
+     <div class="k">${t}</div>
+     <div class="mono" style="font-size:14px;margin:6px 0;word-break:break-all">${esc(p.seq)}</div>
+     <div class="hint">${p.len} nt · Tm <b>${p.tm}°C</b> · GC ${p.gc}%</div>
+     ${(p.warnings&&p.warnings.length)?p.warnings.map(w=>`<div class="hint" style="color:#ffb454">⚠ ${esc(w)}</div>`).join(""):`<div class="hint" style="color:#37d39b">✓ sin pegas</div>`}
+   </div>`;
+  if(r.mode==="pcr"){
+    const filas=r.products.map(p=>`<tr><td>${p.start.toLocaleString()}–${p.end.toLocaleString()}</td><td>${p.length.toLocaleString()} pb</td></tr>`).join("");
+    out.replaceChildren(el(`<div>
+      <div class="cards">${ficha("Cebador directo",r.forward)}${ficha("Cebador inverso",r.reverse)}</div>
+      <h3>Productos de la PCR</h3>
+      ${r.n_products
+        ? `<p class="hint" style="margin:0 0 8px">${r.n_products===1?"Un solo producto: lo que se busca.":`<b style="color:#ffb454">${r.n_products} productos</b>: en el gel saldrían varias bandas. Los cebadores pegan en más sitios de los previstos.`}</p>
+           <table class="seqtable"><thead><tr><th>Posición</th><th>Tamaño</th></tr></thead><tbody>${filas}</tbody></table>`
+        : `<div class="soon">Ningún producto: los cebadores no pegan en esta secuencia.<br>Comprueba que el inverso esté escrito en su propio sentido (5'→3').</div>`}
+    </div>`));
+    return;
+  }
+  const dif=r.tm_diff;
+  out.replaceChildren(el(`<div>
+    <div class="cards">${ficha("Cebador directo",r.forward)}${ficha("Cebador inverso",r.reverse)}</div>
+    <p class="hint">Diferencia de Tm entre los dos: <b style="color:${dif<5?'#37d39b':'#ffb454'}">${dif}°C</b> —
+      ${dif<5?"bien: por debajo de 5°C los dos se pegan a la vez."
+             :"más de 5°C: uno se pegará y el otro no, y la PCR puede fallar."}
+      El producto sería de <b>${r.amplicon.toLocaleString()} pb</b>.</p>
+    <p class="hint">La Tm se calcula por <b>vecino más próximo</b> (Allawi &amp; SantaLucia), el modelo estándar: tiene en cuenta qué bases están juntas, no solo cuántas G y C hay. Coincide con Biopython a precisión de máquina.</p>
+  </div>`));
 }
 
 // ── Calidad (QC estilo FastQC) ───────────────────────────────────────────────
