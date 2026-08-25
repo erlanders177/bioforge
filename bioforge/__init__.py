@@ -55,6 +55,8 @@ _register("bioforge.align.pairwise",
           "SequenceAligner", "format_alignment", "Mutation", "AlignmentResult")
 _register("bioforge.align.msa", "align_multiple", "MSAResult")
 _register("bioforge.mapping.genomemap", "GenomeAligner", "Mapping")
+_register("bioforge.variants.pileup", "Pileup", "pileup", "pileup_from_mappings")
+_register("bioforge.variants.caller", "Variant", "call_variants", "write_vcf")
 _register(
     "bioforge.evolution.predict",
     "predict_evolution", "backtest_evolution", "estimate_growth", "escape_potential",
@@ -157,3 +159,5 @@ if TYPE_CHECKING:                                   # pragma: no cover
         viterbi_basecall,
     )
     from .sequence.translator import SmartTranslator
+    from .variants.caller import Variant, call_variants, write_vcf
+    from .variants.pileup import Pileup, pileup, pileup_from_mappings

@@ -13,7 +13,7 @@ bilingüe EN/ES) en https://erlanders177.github.io/bioforge/.
 
 **v10.1 — organización por FUNCIONES + carga perezosa.** El paquete dejó de ser 17
 `.py` planos: ahora son subpaquetes por función (`core/ sequence/ align/ mapping/
-evolution/ nanopore/ io/ cli/ app/ engine/`), y los tests van en espejo. Además,
+variants/ evolution/ nanopore/ io/ cli/ app/ engine/`), y los tests van en espejo. Además,
 `import bioforge` **ya no carga el motor entero**: cada nombre trae su módulo solo
 cuando se usa (PEP 562, mapa `_EXPORTS` en `__init__.py`). Medido: **75 ms → 4.7 ms**
 y **1 submódulo cargado en vez de 15**; pedir `SmartTranslator` no carga nanoporo,
@@ -124,6 +124,31 @@ Niveles implementados y validados:
   recursos desde `sys._MEIPASS` (.exe) o `bioforge/app/` (paquete). Icono propio
   (`data/icon.ico`, doble hélice). El motor y la CLI funcionan sin el extra `app`.
 
+- **L9 (v10.2) — LLAMADA DE VARIANTES** `bioforge/variants/`. El eslabón que faltaba:
+  ya mapeábamos lecturas contra un genoma, pero no decíamos **qué cambió**. Cierra la
+  tubería `FASTQ → GenomeAligner → pileup → call_variants → VCF`. Dos piezas
+  separables: `pileup.py` (apila las lecturas sobre la referencia; da la matriz
+  `(L,6)` A/C/G/T/N/DEL, más `depth`/`covered()` — vale sola para responder «¿he leído
+  bastante?») y `caller.py` (decide qué es mutación y qué es ruido; escribe VCF 4.2).
+  **Estadística:** razón de verosimilitudes binomial — H₀ «solo error a tasa ε» vs H₁
+  «variante a frecuencia k/n»; `QUAL = 10·log₁₀ LR`, que ES la escala Phred del VCF.
+  El coeficiente binomial se cancela → solo logaritmos vectorizados, sin funciones
+  especiales ni dependencias nuevas. **Medido** (`tools/bench_variants.py`, 5 kb,
+  25 SNVs conocidas): **100 % sensibilidad y 100 % precisión desde 10× de cobertura**
+  con error 0,1 % y 1 %; a 5× cae la sensibilidad (64-72 %) pero la precisión sigue
+  al 100 % — prefiere callar antes que inventar, por diseño. Con 5 % de error el
+  defecto produce falsos positivos: subir `error_rate` a 0.05 recupera la precisión
+  del **71 %→100 %** a 10× sin perder sensibilidad (medido). **Limitación honesta:**
+  los indels largos salen PARTIDOS, y la causa está aguas arriba — el alineador usa
+  modelo de hueco **lineal** (`GAP=−2`, `align/pairwise.py:163`), así que un hueco de
+  5 pb cuesta lo mismo entero que en 3+2 y nada empuja a mantenerlo junto (medido:
+  deleción de 5 pb → 3+2; inserción de 4 → 1+3). El arreglo correcto es hueco **afín**
+  en el alineador, no un parche en el llamador. Las SNVs no se ven afectadas.
+  Es haploide/una muestra (virus, bacterias, amplicones): no compite con GATK en
+  diploides. **Primera familia con carga perezosa INTERNA** (su `__init__` resuelve
+  por PEP 562): pedir `pileup` no carga `caller`. Es el listón nuevo de la Regla #11.
+  No depende de `mapping`: consume cualquier objeto con los atributos de un `Mapping`.
+
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
 
@@ -209,7 +234,7 @@ viejo hasta la siguiente versión → publicar un parche solo-docs para sincroni
 
 ### 10. Organización por funciones y carga perezosa (v10.1) — no degradar
 - **Cada módulo va en su subpaquete por FUNCIÓN** (`core/ sequence/ align/ mapping/
-  evolution/ nanopore/ io/ cli/ app/`). Nada de `.py` sueltos nuevos en la raíz del
+  variants/ evolution/ nanopore/ io/ cli/ app/`). Nada de `.py` sueltos nuevos en la raíz del
   paquete: los que hay son **puentes de compatibilidad** y no se tocan ni se amplían.
   Los tests van **en espejo** (`tests/align/…`).
 - **Nada de imports pesados en el nivel superior de `__init__.py`.** La API pública se
@@ -222,6 +247,33 @@ viejo hasta la siguiente versión → publicar un parche solo-docs para sincroni
   tests, es un import que hay que corregir.
 - **La app mantiene la RAM plana**: solo el archivo ACTIVO materializado; de los demás,
   su ficha (`meta`). Listar pestañas nunca debe forzar la carga de archivos.
+
+### 11. Toda herramienta nueva nace AISLADA — contrato obligatorio
+El norte es la caja más completa del mundo, y eso solo escala si **usar una
+herramienta nunca activa las demás**. No es preferencia: es la propiedad que permite
+añadir la herramienta nº 30 sin que abrir la caja cueste más que con 10. Toda
+herramienta nueva cumple estos cinco puntos **antes** de considerarse terminada:
+
+1. **Su propia familia**: `bioforge/<funcion>/<modulo>.py`, con su `__init__.py`.
+   Nunca un `.py` suelto en la raíz del paquete. Tests en espejo (`tests/<funcion>/`).
+2. **Se registra SOLO en `_EXPORTS`** de `bioforge/__init__.py` (PEP 562). Jamás un
+   `from .x import y` en el nivel superior — eso destruye la carga perezosa en silencio.
+3. **Dependencias pesadas u opcionales, DENTRO de la función** que las usa (como ya
+   hacen `pod5`/`h5py` en nanoporo y `torch` en el eje ESM-2). Nunca al importar el
+   módulo: quien solo quiere traducir ADN no puede acabar cargando PyTorch.
+4. **Añade su fila a `HERRAMIENTAS`** en `tests/test_isolation.py`, declarando qué
+   familias NO puede tocar. Así cada herramienta nueva queda auto-vigilada y la
+   promesa no puede degradarse por un despiste.
+5. **Trae su benchmark honesto** desde el primer commit: contra qué se compara, qué
+   mide y dónde pierde. Sin cifra medida, la herramienta no está lista (Regla #5).
+
+**Referencia de aislamiento total:** `nanopore` — pedir `basecall` carga 2 módulos y
+ni siquiera toca el core. Ese es el listón a copiar.
+
+**Verificado, no prometido:** `import bioforge` carga 0 submódulos y 0 dependencias
+(ni NumPy); ninguna herramienta arrastra `torch`/`transformers`/`h5py`/`pod5`/
+`pywebview`. El guardián lo comprueba en intérpretes limpios y se probó inyectando
+la regresión para confirmar que se pone rojo.
 
 ---
 
@@ -242,6 +294,8 @@ viejo hasta la siguiente versión → publicar un parche solo-docs para sincroni
 | Leer FASTQ **BGZF** (descompresión paralela) | **~113 M bases/s** (~1.95× vs baseline) |
 | `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
 | App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
+| Llamada de variantes — SNVs (v10.2) | **100% sensibilidad y 100% precisión desde 10×** (error 0.1–1%); a 5× sensib. 64-72% pero precisión sigue 100% |
+| Llamada de variantes — datos ruidosos | con 5% error, ajustar `error_rate=0.05` sube la precisión **71%→100%** a 10× sin perder sensibilidad |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
 Correspondería a 2-bit packing, no al esquema 5-bit implementado.
@@ -270,6 +324,11 @@ bioforge/                  paquete instalable (from bioforge import ...)
     minimizers.py          L4 — minimizers canónicos (w,k) vectorizados
     refindex.py            L4 — índice de la referencia (hash ordenado + searchsorted)
     genomemap.py           L4 — seed-chain-align: GenomeAligner.map → PAF
+  variants/                L9 (v10.2) — llamada de variantes: la tubería completa
+    pileup.py              apila lecturas sobre la referencia (matriz A/C/G/T/N/DEL,
+                           profundidad, cobertura) — vale sola para "¿leí bastante?"
+    caller.py              Variant/call_variants/write_vcf — razón de verosimilitudes
+                           binomial, QUAL Phred, salida VCF 4.2
   evolution/
     predict.py             L5 — backtest, linajes estables (designate_lineages),
                            rank_mutations, score_mutations
@@ -309,7 +368,8 @@ tools/
   stress_test.py           benchmark de 30M bases
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
-                           evolution/ nanopore/ io/ cli/ app/  (548 tests)
+                           variants/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
+                           (el guardián de la Regla #11)  (585 tests)
 docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
                            index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)

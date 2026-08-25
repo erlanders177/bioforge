@@ -34,6 +34,7 @@ section (with examples) further down.
 | **Alignment** | pairwise (Needleman–Wunsch / banded / Smith–Waterman) · **multiple sequence alignment** (center-star) |
 | **Genome mapping** | long-read seed-chain-align mapper, whole pipeline in C, PAF output — *on par with minimap2 on multi-core, ~99.8% accurate* |
 | **Analysis & QC** | FastQC-style quality report · GC content · k-mer spectrum |
+| **Variant calling** *(v10.2)* | pileup (depth & coverage) · SNV/indel calling by binomial likelihood ratio · VCF 4.2 output — closes the pipeline: reads → mapping → **variants** |
 | **Evolution** *(v7.0)* | mutation ranking · stable lineage designation (Pango/autolin-style, no tree) · honest backtesting — `bioforge-evolution` |
 | **Evaluation & reality-check** *(v8.0)* | `EvolutionBenchmark` — judge any evolution predictor honestly (trivial-baseline bar, novel-regime split, bootstrap CI, pretraining-leakage detector) · `RealityCheck` — filter another tool's mutation hits by real-world traction |
 | **Nanopore basecalling** *(v9.0–9.1)* | raw electrical signal → bases, from scratch (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi with stay/skip · iterative rescaling). Pure NumPy, no AI — **~74% on real R9.4 signal** |
@@ -71,6 +72,8 @@ combining them (especially the evolution front).
 | Nanopore basecaller (Level 7) | **~74% identity on real R9.4 signal** (E. coli, n=36, vs production Guppy; v9.0 was 70%, v9.1 lifted it) — from-scratch classical Viterbi, pure NumPy, no AI. *Reproducible: `tools/bench_basecaller.py`* |
 | Import cost *(v10.1)* | **`import bioforge` in 4.7 ms** — was 75 ms (**16× faster**). The package loads **lazily**: 1 submodule instead of 15, so translating DNA never loads the basecaller, mapper or evolution code |
 | Desktop app memory *(v10.1)* | **flat RAM with many files open** — only the ACTIVE file is materialised; the others keep just their summary and are re-read on demand (20 files: ~0.2 MB, previously growing linearly) |
+| Variant calling — SNV accuracy | **100% sensitivity and 100% precision from 10× coverage** (0.1–1% read error, 5 kb genome, 25 known SNVs). At 5× sensitivity drops to 64–72% but precision stays 100% — it prefers silence over invention. *`tools/bench_variants.py`* |
+| Variant calling — noisy reads | at 5% error the default (`error_rate=0.01`) misfires; setting it to 0.05 lifts precision **71% → 100%** at 10× with no loss of sensitivity |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
 
 ---
@@ -79,6 +82,9 @@ combining them (especially the evolution front).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
+│  Level 9 — variants/ (pileup · caller)   Reads → what changed │
+│  binomial likelihood ratio · Phred QUAL · VCF 4.2 output      │
+├──────────────────────────────────────────────────────────────┤
 │  Level 7 — nanopore.py                   Signal → bases       │
 │  from-scratch classical basecaller (Viterbi, pure NumPy)      │
 ├──────────────────────────────────────────────────────────────┤
@@ -381,6 +387,61 @@ python3 tools/bench_vs_minimap2.py --genome 4800000 --reads 6000 --error 0.05
 > first). Honest note: at higher error minimap2 is marginally ahead, and this is
 > *E. coli* scale — larger genomes may differ.
 
+### Call variants: what actually changed (Level 9 — v10.2)
+
+Mapping tells you *where* each read came from. Variant calling tells you **what
+changed** — the step that turns a pile of reads into an answer. This closes the
+pipeline: `FASTQ → mapping → pileup → variants → VCF`.
+
+```python
+from bioforge import GenomeAligner, pileup, call_variants, write_vcf
+
+aligner = GenomeAligner(reference)                  # reference: str
+pairs = [(read, hits[0]) for read in reads
+         for hits in [aligner.map(read)] if hits]   # keep the primary hit
+
+pile = pileup(reference, pairs, contig="ref")
+print(pile)                       # Pileup('ref', 5000 bp, 200 reads, mean depth 10.0×)
+print(f"{pile.covered(10)*100:.0f}% of the genome at 10× or more")
+
+variants = call_variants(pile, reference, min_depth=5, min_af=0.2)
+for v in variants:
+    print(v)                      # Variant(ref:1501 C>A SNV AF=1.00 DP=46 Q=920)
+
+open("calls.vcf", "w").write(write_vcf(variants, contigs=[("ref", len(reference))]))
+```
+
+**How it decides.** For every position it weighs two hypotheses with a binomial
+**likelihood ratio**: *"these odd reads are sequencing errors"* (rate `error_rate`)
+versus *"this base is really there"* (at the observed frequency). `QUAL` is
+`10·log₁₀ LR`, which is exactly the Phred scale VCF expects — so Q30 means the
+variant is a thousand times likelier than error. The binomial coefficient cancels
+in the ratio, so it's plain logarithms over NumPy arrays: no special functions, no
+new dependencies, no loop over positions.
+
+**Measured** (`tools/bench_variants.py` — 5 kb genome, 25 known SNVs):
+
+| read error | coverage | sensitivity | precision |
+|-----------|----------|-------------|-----------|
+| 0.1% / 1% | 10× and up | **100%** | **100%** |
+| 0.1% / 1% | 5× | 64–72% | **100%** |
+| 5% | 10× | 100% | 71% → **100%** with `error_rate=0.05` |
+
+At low coverage it loses sensitivity but *never* precision: **it prefers silence
+over invention**, which is the deliberate design. With noisy reads, match
+`error_rate` to your sequencer — the parameter is not decorative.
+
+> **Honest limitation — long indels come out split, and the cause is upstream.**
+> The aligner uses a **linear** gap model (`GAP = −2` per base), so a 5 bp gap
+> costs exactly the same whole as split into 3+2 — nothing pushes it to stay
+> together. Measured: a 5 bp deletion is reported as 3 bp + 2 bp, a 4 bp insertion
+> as 1 + 3. The indel *is* detected, but its exact coordinates may be spread. The
+> real fix is **affine** gap penalties in the aligner (open expensive, extend
+> cheap), not a patch in the caller — it's on the roadmap. SNVs are unaffected.
+
+It's a **haploid, single-sample** caller (viruses, bacteria, amplicons): it does
+not model diploid genotypes and does not compete with GATK there.
+
 ### Align many sequences at once (Level 4 — multiple sequence alignment)
 
 Line up several sequences column-by-column — the basis for consensus, phylogeny
@@ -643,6 +704,9 @@ bioforge/               organised BY FUNCTION (v10.1); tests mirror it
     minimizers.py       Level 4 — canonical (w, k) minimizers (C + NumPy)
     refindex.py         Level 4 — reference minimizer index (hash-sorted lookup)
     genomemap.py        Level 4 — GenomeAligner: seed-chain-align → PAF
+  variants/
+    pileup.py           Level 9 — stacks reads on the reference: depth, coverage
+    caller.py           Level 9 — SNV/indel calling (binomial LR) → VCF 4.2
   evolution/
     predict.py          Level 5 — mutation ranking, stable lineages, backtesting
     evalkit.py          Level 6 — honest predictor judge (EvolutionBenchmark)
@@ -678,16 +742,18 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/                  mirrors the package layout (548 tests)
+tests/                  mirrors the package layout (585 tests)
   core/                 5-bit storage, streaming/columnar, errors, integrity net
   sequence/             genetic code correctness + error paths
   align/                alignment properties, MSA, SIMD kernel parity
   mapping/              minimizers, index, seed-chain-align, C parity
+  variants/             pileup, SNV/indel calling, VCF, no-false-positive guarantees
   evolution/            ranking, honest judge, reality filter, ESM-2 axis, CLI
   nanopore/             signal I/O, event detection, Viterbi basecaller
   io/                   FASTQ quality report, BGZF
   cli/                  full pipeline integration + CLI
   app/                  desktop app bridge, tested without opening a window
+  test_isolation.py     architecture guard: each tool loads without waking the others
 docs/
   architecture.md       Design rules, levels, encoding details
   api_reference.md      Code examples for every module
@@ -738,7 +804,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (548 tests)
+# Full test suite (585 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -759,6 +825,8 @@ python check.py
 | RealityCheck coordinates | Positions are alignment-column indices of *your* data, not a standard scheme (e.g. H3 numbering). The tool warns when the wildtype it expected at a position disagrees with what you passed. |
 | C engine | Ships pre-compiled in the PyPI wheels. Building from source on an unsupported platform needs GCC (`python bioforge/engine/build.py`). |
 | Banded NW (NumPy fallback) | Without the C engine, banded NW uses the full matrix with NEG_INF masking — same result, standard RAM. |
+| Variant caller — long indels | Reported **split** (a 5 bp deletion as 3+2), because the aligner's **linear** gap model prices a contiguous gap the same as a broken one. The indel is detected but its coordinates may be spread; SNVs are unaffected. Real fix: affine gap penalties in the aligner (on the roadmap). |
+| Variant caller — ploidy | Haploid / single sample (viruses, bacteria, amplicons). No diploid genotype model (0/1, 1/1), no strand-bias filter, no per-base quality integration — it does not compete with GATK on human genomes. |
 | Genome mapper — tested scale | Benchmarked on par with minimap2 on multi-core and ~1.18× behind single-threaded at *E. coli* scale with simulated reads (`tools/bench_vs_minimap2.py`). Not yet validated at human-genome scale or on real noisy data, where minimap2 may pull ahead. |
 
 ---
@@ -797,6 +865,8 @@ python check.py
 - [x] **Anti-corruption integrity net** — encode guard + property-based invariants (both alphabets) + `tools/integrity_check.py` *(v8.0)*
 - [x] **Level 7 — nanopore basecaller from scratch** (POD5/FAST5 readers · event detection · own pore-model estimation · Viterbi stay/skip · pure NumPy) — **~70 % on real R9.4** *(v9.0)*
 - [x] Nanopore: **iterative per-read rescaling + tuned transitions → ~74 %** on real R9.4 *(v9.1)*
+- [x] **Variant calling** — `pileup` + `call_variants` → VCF 4.2, binomial likelihood-ratio QUAL, honest sensitivity/precision benchmark *(v10.2)*
+- [ ] Affine gap penalties in the aligner (open/extend) so long indels stop being split — the measured root cause behind imprecise indel coordinates
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't
 - [ ] Validate the mapper at human-genome scale on real (non-simulated) reads

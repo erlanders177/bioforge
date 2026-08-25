@@ -93,6 +93,9 @@ HERRAMIENTAS = [
     ("nanoporo",   "basecall",        {"evolution", "mapping", "app", "io", "cli"}),
     ("evolución",  "rank_mutations",  {"nanopore", "mapping", "app", "io"}),
     ("mapeo",      "GenomeAligner",   {"nanopore", "evolution", "app", "io"}),
+    # el llamador de variantes NO depende del mapeador: consume cualquier objeto
+    # con los atributos de un Mapping (pato). Por eso 'mapping' está prohibido.
+    ("variantes",  "call_variants",   {"nanopore", "evolution", "mapping", "app", "io"}),
 ]
 
 
@@ -128,7 +131,22 @@ def test_herramienta_no_arrastra_dependencias_pesadas(nombre, simbolo, _):
         "Muévelo a un import perezoso dentro de la función que lo necesita.")
 
 
-# ── 3. el nanoporo, caso ejemplar: aislamiento total ─────────────────────────
+# ── 3. pereza DENTRO de una familia (el listón nuevo) ────────────────────────
+def test_familia_variants_es_perezosa_por_dentro():
+    """Pedir el pileup no debe cargar el llamador, ni al revés.
+
+    ``bioforge.variants`` es la primera familia con carga perezosa interna (su
+    ``__init__`` resuelve por PEP 562, igual que el paquete raíz). Quien solo
+    quiera medir profundidad de cobertura no tiene por qué cargar la estadística
+    de llamada de variantes. Es el patrón a copiar cuando una familia crezca.
+    """
+    subs, _ = _huella("from bioforge import pileup")
+    assert "bioforge.variants.pileup" in subs
+    assert "bioforge.variants.caller" not in subs, (
+        "pedir el pileup cargó el llamador: el __init__ de variants dejó de ser perezoso")
+
+
+# ── 4. el nanoporo, caso ejemplar: aislamiento total ─────────────────────────
 def test_nanoporo_es_autonomo():
     """El basecaller no necesita ni el core: es la referencia de aislamiento.
 
