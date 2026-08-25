@@ -319,6 +319,7 @@ la regresión para confirmar que se pone rojo.
 | `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
 | App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
 | Llamada de variantes — SNVs (v10.2) | **100% sensibilidad y 100% precisión desde 10×** (error 0.1–1%); a 5× sensib. 64-72% pero precisión sigue 100% |
+| Variantes vs **bcftools** (el estándar) | mismos alineamientos + mismos umbrales → **concordancia 100%** (40 de 40 llamadas idénticas), ambos 100% sensib./100% precisión. Nuestro llamador 0.16 s vs 4.73 s la tubería estándar |
 | Filogenia — NJ vs Biopython | **topología idéntica en 5/5** casos (6-60 taxones); matrices de distancia iguales a **1.5e-8** |
 | Filogenia — velocidad vs Biopython | **15× más rápido** en distancias · **3.8×** en NJ |
 | Filogenia — hallazgo | el `upgma()` de Biopython es en realidad **WPGMA**; nuestro `wpgma()` lo reproduce 5/5 |
@@ -359,6 +360,18 @@ bioforge/                  paquete instalable (from bioforge import ...)
                            profundidad, cobertura) — vale sola para "¿leí bastante?"
     caller.py              Variant/call_variants/write_vcf — razón de verosimilitudes
                            binomial, QUAL Phred, salida VCF 4.2
+                           **CONTRASTADO CONTRA EL ESTÁNDAR** (`tools/bench_vs_bcftools.py`, bcftools 1.22 en
+                           WSL): con los MISMOS alineamientos de minimap2 y los MISMOS umbrales,
+                           **concordancia 100%** (40/40 llamadas idénticas). ⚠ Comparar contra el
+                           bcftools por DEFECTO sería trampa: llama en diploide y sin filtrar
+                           (85.1% precisión); en igualdad (--ploidy 1 + filtro) da 100%/100%, igual
+                           que nosotros. El contraste destapó DOS cosas: (a) nuestro lector de CIGAR
+                           ignoraba en silencio los recortes blandos `S` — un SAM real de minimap2/bwa
+                           habría desplazado TODAS las bases; ya soporta el alfabeto completo
+                           (M/I/D/N/S/H/P/=/X); (b) `min_alt_count` 2→3, medido en 10 corridas
+                           (5 semillas × 2 coberturas): quita todos los falsos positivos sin perder
+                           ninguna mutación real. Además, verificación diferencial contra un ORÁCULO
+                           ingenuo (base a base) con coincidencia exacta.
                            INTEGRADA: CLI bioforge-variants + pestaña en la app
   evolution/
     predict.py             L5 — backtest, linajes estables (designate_lineages),
@@ -403,7 +416,7 @@ tools/
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
                            variants/ phylo/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
-                           (el guardián de la Regla #11)  (628 tests)
+                           (el guardián de la Regla #11)  (630 tests)
 docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
                            index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)

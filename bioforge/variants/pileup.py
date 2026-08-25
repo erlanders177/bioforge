@@ -38,7 +38,7 @@ for _i, _b in enumerate(b"ACGT"):
     _CODE[_b] = _i
     _CODE[_b + 32] = _i                      # minúsculas
 
-_CIGAR_RE = re.compile(r"(\d+)([MID])")
+_CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
 
 # Cuántas posiciones acumular antes de volcar al contador. Acota la RAM: el
 # pileup de un genoma entero no necesita tener todas las bases a la vez en una
@@ -102,11 +102,30 @@ def _walk(cigar: str, ref_start: int, query_start: int):
     """Recorre el CIGAR → tramos alineados (pos. referencia, pos. lectura, largo).
 
     Devuelve ``(bloques_M, deleciones, inserciones)``:
-      * ``bloques_M``  — lista de ``(ref_pos, read_pos, largo)`` de columnas sin hueco.
+      * ``bloques_M``  — lista de ``(ref_pos, read_pos, largo)`` de columnas alineadas.
       * ``deleciones`` — lista de ``(ref_pos, largo)``: la referencia tiene bases que
         la lectura no.
       * ``inserciones``— lista de ``(ref_pos, read_pos, largo)``: la lectura tiene
         bases de más.
+
+    Entiende el **alfabeto CIGAR completo** del estándar SAM, no solo ``M/I/D``:
+
+    ====  ==========================  ================================
+    op    significado                 avanza
+    ====  ==========================  ================================
+    M     alineado (igual o distinto)  referencia y lectura
+    = X   igual / distinto explícito   referencia y lectura
+    I     inserción en la lectura      lectura
+    S     recorte blando (soft clip)   lectura  (NO alineado: se salta)
+    D     deleción                     referencia
+    N     hueco largo (intrón)         referencia (no cuenta como deleción)
+    H P   recorte duro / relleno       nada
+    ====  ==========================  ================================
+
+    Esto importa: un BAM de ``minimap2`` o ``bwa`` trae ``S`` constantemente. Si se
+    ignorase, la posición dentro de la lectura quedaría desplazada y **todas** las
+    bases se apilarían en el sitio equivocado, en silencio. Se descubrió al montar
+    el contraste contra ``bcftools``.
 
     Es un bucle por TRAMO (unos pocos por lectura), no por base: permitido por la
     regla nº2, igual que el traceback del alineador.
@@ -115,16 +134,21 @@ def _walk(cigar: str, ref_start: int, query_start: int):
     r, q = ref_start, query_start
     for largo, op in _CIGAR_RE.findall(cigar):
         largo = int(largo)
-        if op == "M":
+        if op in "M=X":                              # alineado: avanzan los dos
             bloques.append((r, q, largo))
             r += largo
             q += largo
-        elif op == "D":                              # hueco en la lectura
-            deleciones.append((r, largo))
-            r += largo
-        else:                                        # "I": hueco en la referencia
+        elif op == "I":                              # bases de más en la lectura
             inserciones.append((r, q, largo))
             q += largo
+        elif op == "S":                              # recorte blando: ni se mira
+            q += largo
+        elif op == "D":                              # falta en la lectura
+            deleciones.append((r, largo))
+            r += largo
+        elif op == "N":                              # hueco largo: NO es una deleción
+            r += largo
+        # "H" (recorte duro) y "P" (relleno) no consumen nada
     return bloques, deleciones, inserciones
 
 

@@ -2,7 +2,7 @@
 bioforge/app/backend.py — el PUENTE entre la interfaz web y el motor BioForge.
 
 La app de escritorio es "la otra cara" del mismo motor: una capa FINA de interfaz
-sobre el paquete ``bioforge`` (que ya está probado, 628 tests). Aquí vive la lógica
+sobre el paquete ``bioforge`` (que ya está probado, 630 tests). Aquí vive la lógica
 que la interfaz (HTML/JS) invoca; la ventana en sí (PyWebview) es solo un lanzador.
 
 Todo es LOCAL y SIN SERVIDOR: los datos —el ADN del usuario— nunca salen de la

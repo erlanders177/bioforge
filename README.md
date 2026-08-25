@@ -76,6 +76,8 @@ combining them (especially the evolution front).
 | Phylogenetics — vs Biopython (the reference) | **NJ topology identical in 5/5 cases** (6–60 taxa) · distance matrices agree to **1.5e-8** (machine precision) · **15× faster** distances, **3.8× faster** NJ. *`tools/bench_vs_biopython_phylo.py`* |
 | Phylogenetics — a finding | Biopython's `upgma()` averages `(d(k,i)+d(k,j))/2` **without weighting by cluster size** — that is **WPGMA, not UPGMA**. Ours weights (Sokal & Michener 1958); we also ship `wpgma()`, which reproduces Biopython's output in 5/5 cases |
 | Phylogenetics — own proof | on an **additive** matrix NJ recovers the exact branch lengths (theoretical guarantee, in the test suite); bootstrap gives <70% support on random sequences — it does not invent genealogies |
+| Variant calling — vs **bcftools** (the reference) | On the **same minimap2 alignments** and matched thresholds: **100% concordance** — the exact same 40 calls out of 40, 100% sensitivity and 100% precision for both. BioForge's caller takes **0.16 s vs 4.73 s** for the standard pipeline. *`tools/bench_vs_bcftools.py`* |
+| Variant calling — what the comparison fixed | Connecting to real SAM exposed that our CIGAR reader silently ignored soft clips (`S`), which would misplace every base of a `bwa`/`minimap2` alignment. Now the **full SAM CIGAR alphabet** is supported. It also justified raising `min_alt_count` 2→3 (measured over 10 runs: removes every false positive, loses no true mutation) |
 | Variant calling — SNV accuracy | **100% sensitivity and 100% precision from 10× coverage** (0.1–1% read error, 5 kb genome, 25 known SNVs). At 5× sensitivity drops to 64–72% but precision stays 100% — it prefers silence over invention. *`tools/bench_variants.py`* |
 | Variant calling — noisy reads | at 5% error the default (`error_rate=0.01`) misfires; setting it to 0.05 lifts precision **71% → 100%** at 10× with no loss of sensitivity |
 | Dependencies | **NumPy** (C engine + trained ranker included, pre-compiled) |
@@ -769,7 +771,7 @@ tools/
   stress_test.py        30M-base performance benchmark
   bench_vs_biopython.py BioForge vs Biopython: time + RAM (FASTQ parse/QC/load)
 
-tests/                  mirrors the package layout (628 tests)
+tests/                  mirrors the package layout (630 tests)
   core/                 5-bit storage, streaming/columnar, errors, integrity net
   sequence/             genetic code correctness + error paths
   align/                alignment properties, MSA, SIMD kernel parity
@@ -833,7 +835,7 @@ print(C_AVAILABLE)   # True if C engine loaded, False if using NumPy fallback
 ## Running the tests
 
 ```bash
-# Full test suite (628 tests)
+# Full test suite (630 tests)
 pytest tests/ -v
 
 # Benchmarks only
@@ -896,7 +898,7 @@ python check.py
 - [x] Nanopore: **iterative per-read rescaling + tuned transitions → ~74 %** on real R9.4 *(v9.1)*
 - [x] **Variant calling** — `pileup` + `call_variants` → VCF 4.2, binomial likelihood-ratio QUAL, honest sensitivity/precision benchmark *(v10.2)*
 - [x] **Phylogenetics** — distance matrices, Neighbor-Joining, UPGMA/WPGMA, Newick, bootstrap support; validated head-to-head against Biopython *(v10.2)*
-- [ ] Head-to-head for the variant caller against `bcftools` on WSL (as done for minimap2) — no scriptable Windows reference exists, so it is honestly still unmeasured
+- [x] **Head-to-head for the variant caller against `bcftools`** (WSL) — 100% concordance on identical alignments *(v10.2)*
 - [ ] Affine gap penalties in the aligner (open/extend) so long indels stop being split — the measured root cause behind imprecise indel coordinates
 - [ ] Nanopore: keep lifting (drift term, homopolymers, trained transition/emission model); pluggable Dorado backend when present
 - [ ] Structural-accessibility axis (to separate escape from viability) — the term EVEscape has and we don't

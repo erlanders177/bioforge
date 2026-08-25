@@ -127,7 +127,7 @@ def call_variants(pile: Pileup, reference: str, *,
                   min_depth: int = 5,
                   min_af: float = 0.2,
                   min_qual: float = 20.0,
-                  min_alt_count: int = 2,
+                  min_alt_count: int = 3,
                   error_rate: float = 0.01,
                   indels: bool = True) -> list[Variant]:
     """Llama variantes (SNVs e indels) a partir de la evidencia apilada.
@@ -147,7 +147,16 @@ def call_variants(pile: Pileup, reference: str, *,
     min_qual:
         Calidad Phred mínima de la razón de verosimilitudes.
     min_alt_count:
-        Lecturas alternativas mínimas: evita llamar variantes por una sola lectura.
+        Lecturas alternativas mínimas. El valor por defecto es **3**, y no es
+        arbitrario: con 2 aparecían falsos positivos en zonas de poca cobertura
+        (2 errores coincidentes de 8 lecturas bastan para colarse). Medido en 10
+        corridas (5 semillas × 2 coberturas) del contraste contra bcftools: pasar
+        de 2 a 3 quitó **todos** los falsos positivos **sin perder ni una**
+        mutación real. Ver ``tools/bench_vs_bcftools.py``.
+
+        Compromiso: exigir 3 dificulta detectar variantes MINORITARIAS cuando hay
+        poca profundidad (al 20 % con 10 lecturas solo hay 2). Si buscas eso,
+        baja a 2 y sube la cobertura.
     error_rate:
         Tasa de error asumida del secuenciador (0.01 ≈ Q20). Súbela para nanoporo.
     indels:

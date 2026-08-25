@@ -5,7 +5,7 @@ escribir código. Todo corre en tu ordenador — **sin servidor, sin conexión**
 datos (tu ADN) nunca salen de la máquina.
 
 > "Un motor, dos caras." La app es una capa fina de interfaz sobre el paquete
-> `bioforge`, que ya está probado (628 tests). El motor no se toca.
+> `bioforge`, que ya está probado (630 tests). El motor no se toca.
 
 ## Abrirla
 
