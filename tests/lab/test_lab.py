@@ -295,3 +295,33 @@ def test_pcr_avisa_de_productos_multiples(relleno):
 def test_pcr_exige_los_dos_cebadores():
     with pytest.raises(SequenceValueError):
         pcr("ACGTACGTACGT", "", "ACGT")
+
+
+def test_los_dos_caminos_de_orf_coinciden():
+    """RED DE PARIDAD: el escaneo puro y el vectorizado deben dar lo MISMO.
+
+    ``find_orfs`` elige uno u otro según el tamaño de la entrada (Python puro por
+    defecto, NumPy solo en genomas grandes, porque cargarlo cuesta ~500 ms fijos
+    que solo compensan por encima de ~1,5 Mb). Dos caminos son dos sitios donde
+    puede aparecer un fallo, así que se exige coincidencia exacta — igual que la
+    red que protege el motor C frente al NumPy.
+    """
+    from bioforge.lab.orf import escanear_numpy, escanear_python
+
+    rng = np.random.default_rng(31)
+    for largo in (0, 1, 2, 3, 100, 999, 5000):
+        seq = "".join(rng.choice(list("ACGTN"), size=largo)) if largo else ""
+        for marco in (0, 1, 2):
+            a = escanear_python(seq, marco)
+            b = escanear_numpy(seq, marco) if seq else ([], 0)
+            assert a == b, f"difieren con largo={largo}, marco={marco}"
+
+
+def test_orf_no_carga_numpy_en_secuencias_normales():
+    """Un plásmido o un virus no deben pagar la carga de NumPy."""
+    import subprocess
+    import sys
+    code = ("import sys; from bioforge.lab.orf import find_orfs; "
+            "find_orfs('ATGGCA' * 500); print('numpy' in sys.modules)")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.stdout.strip() == "False", "find_orfs cargó NumPy sin necesitarlo"

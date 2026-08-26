@@ -311,6 +311,27 @@ herramienta nueva cumple estos cinco puntos **antes** de considerarse terminada:
 5. **Trae su benchmark honesto** desde el primer commit: contra qué se compara, qué
    mide y dónde pierde. Sin cifra medida, la herramienta no está lista (Regla #5).
 
+**NumPy solo donde se gana (v10.2).** El aislamiento no es solo qué módulos se
+cargan: también **qué dependencias**. NumPy cuesta ~500 ms fijos de carga. La regla,
+medida:
+
+> **NumPy donde hay matemática de arrays sobre datos grandes. Python puro donde es
+> lógica por elemento sobre entradas pequeñas.**
+
+- `restriction` → los códigos IUPAC son clases de caracteres de una **regex**
+  (`GTYRAC` → `GT[CT][AG]AC`); el motor `re` está en C. Resultados idénticos.
+  **767 ms → 34.5 ms** de punta a punta; pasa de empatar a **ganar 6.7×** a Biopython.
+- `primers` → la termodinámica es `math` puro. **541 ms → 24.8 ms**; pasa de
+  **perder 2.5×** contra Biopython a **ganar 3.1×**. NumPy solo entra en `pcr` con
+  tolerancia a fallos, importado DENTRO de la función.
+- `orf` → **híbrido**: NumPy solo va 2× más rápido en cálculo, así que el punto de
+  equilibrio está en ~1.5 Mb. Por debajo (plásmidos, virus) gana Python puro; por
+  encima entra NumPy. Con **red de paridad** entre ambos caminos, que ya cazó un bug
+  latente (`(len(s)-marco)//3` negativo con secuencias más cortas que el marco).
+- La jerarquía de errores se extrajo a **`core/errors.py`** (sin dependencias) y
+  `core/__init__.py` pasó a perezoso: antes, pedir una excepción cargaba NumPy entero.
+- Efecto colateral medido: la suite de tests bajó de **198 s a 67 s**.
+
 **Referencia de aislamiento total:** `nanopore` — pedir `basecall` carga 2 módulos y
 ni siquiera toca el core. Ese es el listón a copiar.
 
@@ -381,7 +402,8 @@ salieron de ahí y eran invisibles con nuestros propios datos:
 | `import bioforge` (carga perezosa, v10.1) | **4.7 ms** (antes 75 ms, 16×) · **1** submódulo vs 15 |
 | App con N archivos abiertos (v10.1) | **RAM plana** (~0.2 MB con 20; antes crecía lineal a 1.07) |
 | Llamada de variantes — SNVs (v10.2) | **100% sensibilidad y 100% precisión desde 10×** (error 0.1–1%); a 5× sensib. 64-72% pero precisión sigue 100% |
-| Laboratorio — enzimas vs Biopython/REBASE | **64/64 posiciones idénticas** |
+| Laboratorio — enzimas vs Biopython/REBASE | **64/64 posiciones idénticas** · arranque+trabajo **34.5 ms vs 232 ms** (6.7× más rápido) |
+| Laboratorio — Tm vs Biopython (velocidad) | **24.8 ms vs 77.9 ms** (3.1× más rápido). Antes perdíamos 2.5×: era NumPy cargándose para no usarse |
 | Laboratorio — ORFs vs EMBOSS getorf | **100% de acuerdo** en los dos modos (434/434 y 116/116) |
 | Laboratorio — Tm vs Biopython | **idéntica a precisión de máquina** (1.1e-13 °C, 66 cebadores) |
 | Variantes vs **bcftools** (el estándar) | mismos alineamientos + mismos umbrales → **concordancia 100%** (40 de 40 llamadas idénticas), ambos 100% sensib./100% precisión. Nuestro llamador 0.16 s vs 4.73 s la tubería estándar |

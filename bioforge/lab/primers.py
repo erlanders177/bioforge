@@ -25,6 +25,15 @@ termodinámicas (ΔH, ΔS) de cada pareja consecutiva y se aplica:
 con corrección por sal (SantaLucia, 1998). La regla casera «2·(A+T) + 4·(G+C)»
 también está disponible como ``tm_wallace``, pero solo sirve para cebadores muy
 cortos: para cualquier cosa seria, el vecino más próximo es lo correcto.
+
+Sin NumPy (a propósito)
+-----------------------
+Toda la termodinámica es una suma de parejas y dos logaritmos: ``math`` basta. Este
+módulo **no importa NumPy al cargarse**, y la razón está medida: calcular la Tm de
+un cebador tardaba 541 ms, de los cuales ~540 eran cargar NumPy para no usarlo. Con
+solo ``math`` baja a ~1 ms — y deja de perder contra Biopython (219 ms) en la única
+operación donde perdía. Solo :func:`pcr` con tolerancia a fallos toca NumPy, y lo
+importa **dentro de la función**, así que solo paga quien lo usa.
 """
 
 from __future__ import annotations
@@ -32,9 +41,7 @@ from __future__ import annotations
 import math
 from typing import NamedTuple, Optional
 
-import numpy as np
-
-from bioforge.core.biocore import SequenceValueError
+from bioforge.core.errors import SequenceValueError
 
 _COMPL = bytes.maketrans(b"ACGTacgt", b"TGCAtgca")
 
@@ -260,15 +267,25 @@ def pcr(sequence: str, forward: str, reverse: str, *,
     diana = s + s[:max(len(f), len(r))] if circular else s
 
     def pegadas(patron: str) -> list[int]:
-        """Posiciones donde el patrón aparea (vectorizado, con tolerancia a fallos)."""
-        n, k = len(diana), len(patron)
-        if k > n:
+        """Posiciones donde el patrón aparea, con o sin tolerancia a fallos."""
+        n, k = len(patron), len(diana)
+        if n > k:
             return []
+        if max_mismatches == 0:
+            # apareamiento exacto: str.find está en C y no necesita NumPy
+            fuera, desde = [], 0
+            while True:
+                i = diana.find(patron, desde)
+                if i < 0:
+                    return fuera
+                fuera.append(i)
+                desde = i + 1
+        # con tolerancia sí compensa vectorizar; NumPy se carga solo aquí
+        import numpy as np
+        from numpy.lib.stride_tricks import sliding_window_view
         a = np.frombuffer(diana.encode("ascii"), dtype=np.uint8)
         p = np.frombuffer(patron.encode("ascii"), dtype=np.uint8)
-        from numpy.lib.stride_tricks import sliding_window_view
-        ventanas = sliding_window_view(a, k)
-        fallos = (ventanas != p).sum(axis=1)
+        fallos = (sliding_window_view(a, n) != p).sum(axis=1)
         return np.flatnonzero(fallos <= max_mismatches).tolist()
 
     inicios = pegadas(f)                              # el directo, tal cual
