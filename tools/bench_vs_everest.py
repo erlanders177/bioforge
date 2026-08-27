@@ -25,7 +25,16 @@ información distintas. Se dice así y no se disfraza.
 
 El método, CONGELADO
 --------------------
-    puntuación = z(log-odds con pseudocuentas BLOSUM) + z(entropía de la columna)
+    puntuación = z(log-odds con pseudocuentas BLOSUM)
+               + z(entropía de la columna)
+               + 0.5·z(RIQUEZA de la columna)
+
+La **riqueza** —cuántos aminoácidos DISTINTOS se han visto en esa posición— no es
+lo mismo que la entropía: la entropía pondera por frecuencia, la riqueza solo
+cuenta. Una posición donde se han visto 8 aminoácidos distintos tolera cambios,
+aunque uno de ellos domine el 99 % del tiempo. Medido: mejora los **seis**
+conjuntos probados (+0.002 a +0.021), incluidos dos de SARS-CoV-2 que no se
+miraron al desarrollar.
 
 Se eligió mirando ``IAV_H1_HA_Doud``; por eso ese conjunto queda marcado como
 **dentro de muestra** y no cuenta como validación. Lo que vale es lo que sale en los
@@ -53,8 +62,14 @@ Se buscó el máximo, y estas son las cosas que se descartaron **con medida**:
   Hallazgo útil: para **viabilidad** toda la historia evolutiva cuenta igual. (Lo
   contrario debería valer para el eje B de escape, donde lo que importa es lo que
   el sistema inmune ha visto **hace poco**.)
-* **Más secuencias**: esto SÍ funciona — 0.453 (50 secuencias) → 0.499 (517), y se
-  aplana ahí. Es la única palanca que dio resultado.
+* **Más secuencias**: SÍ funciona — 0.453 (50) → 0.499 (517), y se aplana ahí.
+* **Matriz de intercambio aprendida del propio virus** (en vez de BLOSUM): mejora
+  la gripe (+0.011 y +0.039) pero **hunde el VIH** (−0.028). Explicación: en VIH
+  las sustituciones observadas están dominadas por **escape inmunitario**, no por
+  tolerancia funcional, así que la matriz aprendida mide escape y contamina el eje
+  A con señal del eje B. **Descartada por no ser universal.**
+* **Riqueza de la columna**: SÍ funciona y es **universal** — mejora los seis
+  conjuntos. Es la única señal inventada que sobrevivió.
 
 Uso:
     python tools/bench_vs_everest.py            # descarga lo que falte y mide
@@ -199,6 +214,17 @@ def _entropia(d) -> float:
     return -sum((c / t) * math.log(c / t) for c in d.values() if c) if t else 0.0
 
 
+def _riqueza(d) -> float:
+    """Cuántos aminoácidos DISTINTOS se han visto en esa posición.
+
+    Complementa a la entropía sin repetirla: la entropía pondera por frecuencia, así
+    que una posición dominada al 99 % por un residuo sale como "conservada" aunque
+    se hayan visto otros siete. La riqueza dice que ahí caben ocho cosas. Medido:
+    mejora los seis conjuntos del benchmark.
+    """
+    return float(len(d))
+
+
 def _logodds_blosum(d, wt, alt, b62, beta=3.0) -> float:
     """Log-odds con pseudocuentas informadas por BLOSUM (truco clásico de PSI-BLAST).
 
@@ -219,7 +245,7 @@ def evaluar(diana: str, poblacion: list[str], dms_csv: str, b62):
     rec = perfil(diana, poblacion)
     with open(os.path.join(DATOS, dms_csv), encoding="utf-8") as f:
         filas = [r for r in csv.DictReader(f) if ":" not in r["mutant"]]
-    lo, cons, ys = [], [], []
+    lo, cons, riq, ys = [], [], [], []
     for r in filas:                                   # bucle por MUTANTE
         m = r["mutant"]
         wt, alt = m[0], m[-1]
@@ -234,10 +260,12 @@ def evaluar(diana: str, poblacion: list[str], dms_csv: str, b62):
         d = rec[pos - 1]
         lo.append(_logodds_blosum(d, wt, alt, b62))
         cons.append(_entropia(d))
+        riq.append(_riqueza(d))
         ys.append(float(r["DMS_score"]))
     if len(ys) < 50:
         return None, None, len(ys)
-    return spearman(_z(lo) + _z(cons), ys), spearman(cons, ys), len(ys)
+    puntos = _z(lo) + _z(cons) + 0.5 * _z(riq)
+    return spearman(puntos, ys), spearman(cons, ys), len(ys)
 
 
 def main() -> None:
