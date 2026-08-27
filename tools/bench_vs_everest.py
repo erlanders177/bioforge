@@ -38,6 +38,24 @@ sacaba 0.409. Es decir: casi todo era «¿cuánto varía esta posición?» y sab
 aminoácido era aportaba 0.01. El mismo autoengaño que el histórico «AUC 0.80 que
 era mutabilidad». Por eso aquí el listón trivial se reporta SIEMPRE al lado.
 
+Techo del eje A: qué se probó y qué NO funcionó
+------------------------------------------------
+Se buscó el máximo, y estas son las cosas que se descartaron **con medida**:
+
+* **Ponderar la redundancia** (lo que hacen EVE/PSSM): 0.472 → 0.460, **empeora**.
+  Con 280 secuencias de gripe el Neff es 2.9 — el 99 % son casi-duplicados. En un
+  MSA de homólogos eso es artefacto de muestreo; en una **población**, que una
+  variante esté repetida *es la señal*: significa que domina en la naturaleza.
+* **Ejes fisicoquímicos** (hidrofobicidad, volumen): 0.472 → 0.448, **empeora**.
+* **Ajustar ``beta``**: 0.4986 → 0.5008 con beta=1. Ganancia de 0.002 eligiendo
+  sobre el conjunto de desarrollo: es sobreajuste, y no se toca.
+* **Pesar por recencia**: 0.4986 → 0.406-0.492, **empeora** a todos los plazos.
+  Hallazgo útil: para **viabilidad** toda la historia evolutiva cuenta igual. (Lo
+  contrario debería valer para el eje B de escape, donde lo que importa es lo que
+  el sistema inmune ha visto **hace poco**.)
+* **Más secuencias**: esto SÍ funciona — 0.453 (50 secuencias) → 0.499 (517), y se
+  aplana ahí. Es la única palanca que dio resultado.
+
 Uso:
     python tools/bench_vs_everest.py            # descarga lo que falte y mide
     python tools/bench_vs_everest.py --solo-descargar
@@ -67,25 +85,30 @@ DATOS = os.path.join(os.environ.get("TEMP", "."), "everest_benchmark")
 
 # (id del DMS, fichero de población, ¿se usó para elegir el método?, publicados)
 CASOS = [
-    ("IAV_H1_HA_Doud", "flu_h1_ha.fasta", True,
+    ("IAV_H1_HA_Doud", "flu_h1_ha_grande.fasta", True,
      {"PSSM": 0.3980, "EVE": 0.4907, "ESM1v": 0.5501, "EVEREST": 0.5997}),
-    ("IAV_H1_HA_Wu", "flu_h1_ha.fasta", False,
+    ("IAV_H1_HA_Wu", "flu_h1_ha_grande.fasta", False,
      {"PSSM": 0.3796, "EVE": 0.4219, "ESM1v": 0.5090, "EVEREST": 0.5151}),
-    ("IAV_H3_HA_Lee", "flu_h3_ha.fasta", False, {}),
-    ("HIV1_BF520_ENV_Haddox", "hiv_env.fasta", False,
+    ("IAV_H3_HA_Lee", "flu_h3_ha_grande.fasta", False, {}),
+    ("HIV1_BF520_ENV_Haddox", "hiv_env_grande.fasta", False,
      {"PSSM": 0.4931, "EVE": 0.4756, "ESM1v": 0.5162, "EVEREST": 0.5215}),
 ]
 
+# Cuantas MÁS secuencias distintas, mejor: medido en Doud, la correlación sube de
+# 0.453 (50 secuencias) a 0.499 (517) y ahí se aplana. Por eso se barren todos los
+# años y se quitan duplicados exactos.
 POBLACIONES = {
-    "flu_h1_ha.fasta": ('"Influenza A virus"[Organism] AND hemagglutinin[Protein Name] '
-                        'AND H1N1[All Fields] AND ("{a}"[PDAT] : "{a}"[PDAT])',
-                        range(2005, 2020, 2), 500, 600),
-    "flu_h3_ha.fasta": ('"Influenza A virus"[Organism] AND hemagglutinin[Protein Name] '
-                        'AND H3N2[All Fields] AND ("{a}"[PDAT] : "{a}"[PDAT])',
-                        range(2005, 2020, 2), 500, 600),
-    "hiv_env.fasta": ('"Human immunodeficiency virus 1"[Organism] AND '
-                      'envelope glycoprotein[Protein Name] AND ("{a}"[PDAT] : "{a}"[PDAT])',
-                      range(2006, 2020, 2), 600, 900),
+    "flu_h1_ha_grande.fasta": (
+        '"Influenza A virus"[Organism] AND hemagglutinin[Protein Name] '
+        'AND H1[All Fields] AND ("{a}"[PDAT] : "{a}"[PDAT])',
+        range(1990, 2025), 540, 580),
+    "flu_h3_ha_grande.fasta": (
+        '"Influenza A virus"[Organism] AND hemagglutinin[Protein Name] '
+        'AND H3[All Fields] AND ("{a}"[PDAT] : "{a}"[PDAT])',
+        range(1990, 2025), 540, 580),
+    "hiv_env_grande.fasta": (
+        '"Human immunodeficiency virus 1"[Organism] AND envelope glycoprotein[Protein Name] '
+        'AND ("{a}"[PDAT] : "{a}"[PDAT])', range(1995, 2025), 600, 900),
 }
 
 
@@ -155,7 +178,7 @@ def leer_fasta(path: str) -> list[str]:
     return seqs
 
 
-def perfil(diana: str, poblacion: list[str], tope: int = 280):
+def perfil(diana: str, poblacion: list[str], tope: int = 600):
     """Alinea la población CON la diana y devuelve el recuento de aa por posición."""
     aln = align_multiple([diana] + poblacion[:tope], center=0).aligned
     cols = [c for c, ch in enumerate(aln[0]) if ch != "-"]
@@ -272,6 +295,10 @@ def main() -> None:
     print("    para NUESTRO caso de uso, no una demostración de superioridad.")
     print("  · Solo 4 de los 45 conjuntos: los demás son virus sin datos poblacionales")
     print("    abundantes, que es justo donde este enfoque NO puede aplicarse.")
+    print("  · Perdemos contra ESM1v y EVEREST, que se apoyan en modelos de lenguaje")
+    print("    preentrenados con millones de proteínas. Competir ahí exigiría GPU y")
+    print("    heredar su fuga de preentrenamiento (medida aquí: -0.20). No es nuestra")
+    print("    liga por decisión, no por incapacidad.")
 
 
 if __name__ == "__main__":
