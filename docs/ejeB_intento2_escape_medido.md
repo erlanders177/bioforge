@@ -1,4 +1,13 @@
-# Eje B, intento 2 — contra escape MEDIDO (resultado positivo, pero acotado)
+# Eje B, intento 2 — contra escape MEDIDO
+
+> ## CORREGIDO POR LA RÉPLICA
+> El hallazgo central de este documento —«destino bate a distancia»— **NO
+> sobrevivió** a la réplica en cuatro familias de virus. Solo funciona en el RBD
+> de SARS-CoV-2 (+0,31); en gripe, VIH y Zika se queda en ~0,02.
+> Ver [`ejeB_replica_multivirus.md`](ejeB_replica_multivirus.md).
+>
+> **Siguen en pie:** que escape y viabilidad son ejes ortogonales, y el reparto
+> de varianza sitio/intra-sitio. Lo que cae es la sección «Pregunta 2».
 
 **Referencia:** [`preregistro_viabilidad.md`](preregistro_viabilidad.md) ·
 [`ejeB_intento1_negativo.md`](ejeB_intento1_negativo.md)
