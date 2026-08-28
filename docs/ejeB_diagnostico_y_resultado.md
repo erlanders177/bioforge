@@ -153,3 +153,29 @@ ninguna decisión. Ahí también gana.
 | **destino (hidrofilia + volumen) > disimilitud, 7/7** | **en pie, con retenidos** |
 | el cambio de carga replica | **RETIRADO** — artefacto de agregación |
 | la rotación temporal aporta | descartado (intento 1) |
+
+---
+
+## Comprobación independiente: ¿y contra el mundo real?
+
+Todo lo anterior se mide contra escape de **laboratorio**. Prueba aparte: las 22
+mutaciones de SARS-CoV-2 que **realmente se propagaron** en la pandemia
+(E484K, N501Y, L452R, T478K, Q493R…). ¿Las coloca arriba dentro de su sitio?
+
+| | percentil medio en su sitio | por encima de la mediana |
+|---|---|---|
+| nuestro COMBO | **0,56** | 11/22 |
+| término de EVEscape | 0,41 | 10/22 |
+| **el escape MEDIDO en laboratorio** | **0,44** | — |
+| azar | 0,50 | 11/22 |
+
+**El dato que importa es el tercero.** El propio escape medido en laboratorio
+tampoco ordena las mutaciones que triunfaron (0,44, por debajo del azar). No es
+un fallo de nuestro score: es que **qué mutación se impone en el mundo no lo
+decide la magnitud del escape dentro de un sitio**, sino eso multiplicado por
+fitness, por transmisibilidad y por azar epidemiológico.
+
+**Límite que queda fijado:** este trabajo predice **escape de laboratorio**, y
+predecirlo mejor **no implica** predecir qué variante se impondrá. Vale para el
+eje B de un evaluador; no convierte a la herramienta en un oráculo
+epidemiológico — ni a la nuestra ni a la de nadie.
