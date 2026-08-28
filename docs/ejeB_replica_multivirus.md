@@ -1,5 +1,15 @@
 # Réplica en cuatro familias de virus — el hallazgo NO sobrevive
 
+> ## SUPERADO — su conclusión era INCORRECTA
+> Este documento concluía que «lo que replica es el cambio de carga». **Falso.**
+> Una auditoría posterior destapó un error PROPIO de agregación: dos scripts
+> nuestros promediaban y recortaban en orden distinto, y la carga daba +0,267 o
+> −0,090 sobre los MISMOS datos según cuál se usara. Con la agregación coherente,
+> el destino (hidrofilia + volumen) gana en 7/7 y la carga se retira.
+> Ver [`ejeB_diagnostico_y_resultado.md`](ejeB_diagnostico_y_resultado.md).
+>
+> Se conserva sin borrar: el recorrido del error es parte del registro.
+
 **Reproducible con:** `python tools/bench_escape_multivirus.py`
 **Corrige a:** [`ejeB_intento2_escape_medido.md`](ejeB_intento2_escape_medido.md)
 
