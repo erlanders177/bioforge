@@ -193,6 +193,32 @@ Niveles implementados y validados:
   INTEGRADA: CLI `bioforge-lab` (enzimas/orfs/primers) + pestaña **Laboratorio** en la
   app (tres sub-pestañas) + `ejemplos/laboratorio_plasmido.fasta`.
 
+- **L12 (v10.3) — EJE B: ESCAPE A ANTICUERPOS** `bioforge/escape/`. El segundo eje del
+  evaluador de evolución, y el más disciplinado del proyecto. `chemistry.py` (la señal:
+  `score = z(hidrofilia del destino) + z(volumen del destino)`) y `verdict.py` (el
+  veredicto CALIBRADO y lo que se niega a decir). **La tesis:** EVEscape (Marks lab,
+  Nature 2023) modela el término químico como **DISIMILITUD** —cuánto te alejas del
+  original—; medimos que lo que manda son las propiedades del residuo al que **LLEGAS**.
+  **CONTRASTADO** (`tools/bench_escape_multivirus.py`) contra escape MEDIDO por deep
+  mutational scanning del laboratorio de Bloom, en **7 conjuntos y 4 familias de virus**
+  (Corona/Orthomyxo/Retro/Flavi, monoclonales y sueros): gana **7/7**, con IC limpio en
+  **6/7**, incluidos **2/2 RETENIDOS** que no intervinieron en ninguna decisión.
+  **NEGATIVO NO NEGOCIABLE, y horneado en el código:** este eje **NO predice qué variante
+  se propagará**. Medido sobre **74.065 mutaciones reales de 33 clados**: separa las que
+  se propagaron en **1.10×** frente a **0.98×** del azar — no informa (el término de
+  EVEscape sale a 0.55×, *peor* que el azar). Por eso
+  `probabilidad_de_propagacion()` existe **solo para lanzar `NotImplementedError`** y
+  explicar por qué. Lo que sí da, calibrado sobre los 7 conjuntos: `p_escape_alto`,
+  la probabilidad de estar en el cuartil superior de escape de su sitio — **22 % o 31 %
+  sobre una base del 25 %**. La curva cruda por cuartiles **no es monótona** (q3 32.2 % >
+  q4 30.6 %), lo que se lee como que *el dato no da para cuatro niveles*: se reportan
+  **DOS**, y el crudo queda expuesto en `CALIBRACION` para quien quiera comprobarlo.
+  **Aislamiento de referencia:** 3 submódulos, todos suyos, **sin NumPy** — ni siquiera
+  toca el core. Es el nuevo listón de la Regla #11.
+  ⚠ Historial: el hallazgo se afirmó, se cayó al replicar, y se recuperó tras una
+  auditoría que destapó un **error propio de agregación** (promediar-y-recortar vs
+  recortar-y-promediar daban signos opuestos). Todo en `docs/ejeB_*.md`, sin borrar nada.
+
 Motor C en `bioforge/engine/engine.c` (compilado a `engine.dll`/`.so`), cargado vía
 ctypes con fallback NumPy transparente. Documentación detallada en `docs/`.
 
@@ -381,6 +407,7 @@ salieron de ahí y eran invisibles con nuestros propios datos:
 | Variantes (L9) | **bcftools** | concordancia **100%** (40/40), 0.16 s vs 4.73 s |
 | Filogenia (L10) | **Biopython** | topología NJ **idéntica 5/5**, 15× más rápido |
 | Laboratorio (L11) | **Biopython/REBASE, EMBOSS** | enzimas 64/64 · ORFs 100% · Tm a precisión de máquina |
+| Escape / eje B (L12) | **EVEscape** (término químico) | gana **7/7** conjuntos, 4 familias, 2/2 retenidos |
 
 ---
 
@@ -410,6 +437,10 @@ salieron de ahí y eran invisibles con nuestros propios datos:
 | Filogenia — NJ vs Biopython | **topología idéntica en 5/5** casos (6-60 taxones); matrices de distancia iguales a **1.5e-8** |
 | Filogenia — velocidad vs Biopython | **15× más rápido** en distancias · **3.8×** en NJ |
 | Filogenia — hallazgo | el `upgma()` de Biopython es en realidad **WPGMA**; nuestro `wpgma()` lo reproduce 5/5 |
+| Escape (L12) vs término químico de EVEscape | **gana 7/7** conjuntos (IC limpio 6/7), 4 familias de virus, **2/2 retenidos** |
+| Escape (L12) — calibración | 22 % / 31 % sobre base 25 % (×1.45). Señal **real pero modesta**, y así se dice |
+| Escape (L12) — lo que NO hace | **no predice propagación**: 1.10× vs 0.98× del azar sobre 74.065 mutaciones reales |
+| Escape (L12) — aislamiento | **3 submódulos y CERO NumPy**; el listón nuevo de la Regla #11 |
 | Llamada de variantes — datos ruidosos | con 5% error, ajustar `error_rate=0.05` sube la precisión **71%→100%** a 10× sin perder sensibilidad |
 
 ⚠️ El resumen ejecutivo original cita "60-70%" — ese número es incorrecto.
@@ -443,6 +474,9 @@ bioforge/                  paquete instalable (from bioforge import ...)
     restriction.py         enzimas: sitios, digestión, fragmentos, gel (máscaras IUPAC)
     orf.py                 marcos abiertos de lectura en los 6 marcos
     primers.py             Tm vecino más próximo, diseño de cebadores, PCR in silico
+  escape/                  L12 (v10.3) — eje B: escape a anticuerpos (sin NumPy)
+    chemistry.py           la señal: hidrofilia + volumen del residuo DESTINO
+    verdict.py             veredicto CALIBRADO + la negativa a dar propagación
   phylo/                   L10 (v10.2) — filogenia: árboles evolutivos
     distance.py            matrices de distancia (p/JC/K2P/Poisson) por matmuls
     tree.py                Neighbor-Joining, UPGMA, WPGMA, Newick, bootstrap
@@ -508,7 +542,7 @@ tools/
   bench_vs_biopython.py    BioForge vs Biopython (tiempo + RAM)
 tests/                     EN ESPEJO del paquete: core/ sequence/ align/ mapping/
                            variants/ phylo/ evolution/ nanopore/ io/ cli/ app/ + test_isolation.py
-                           (el guardián de la Regla #11)  (683 tests)
+                           (el guardián de la Regla #11)  (712 tests)
 docs/                      documentación técnica (.md) + LA WEB pública (GitHub Pages,
                            index.html EN, es/index.html ES, style.css, sitemap, og.png)
 pyproject.toml             empaquetado (versión dinámica; incluye DLL + app en el wheel)

@@ -73,6 +73,12 @@ _register(
     "EvolutionResult", "BacktestResult", "GrowthResult", "EscapeResult",
     "FusionResult", "CladePrediction",
 )
+_register("bioforge.escape.chemistry",
+          "escape_score", "score_sitio", "percentil_en_sitio",
+          "NO_PREDICE_PROPAGACION")
+_register("bioforge.escape.verdict",
+          "EscapeVerdict", "evaluar_escape", "evaluar_escapes",
+          "probabilidad_de_propagacion")
 _register("bioforge.evolution.evalkit", "EvolutionBenchmark", "Context", "Report")
 _register("bioforge.evolution.realitycheck", "RealityCheck", "Verdict")
 _register(

@@ -106,6 +106,11 @@ HERRAMIENTAS = [
                                        "phylo", "variants", "align"}),
     ("cebadores",  "tm_nn",           {"nanopore", "evolution", "mapping", "app", "io",
                                        "phylo", "variants", "align"}),
+    # el eje B de escape es AUTÓNOMO del todo: química por mutación, sin datos,
+    # sin alinear y sin NumPy. Ni siquiera toca el core. Es el listón nuevo.
+    ("escape",     "evaluar_escape",  {"nanopore", "evolution", "mapping", "app", "io",
+                                       "phylo", "variants", "align", "lab",
+                                       "sequence", "core", "engine", "cli"}),
 ]
 
 
@@ -191,3 +196,21 @@ def test_nanoporo_es_autonomo():
     subs, _ = _huella("from bioforge import basecall")
     assert _familias(subs) == {"nanopore"}, (
         f"nanoporo dejó de ser autónomo: cargó {sorted(_familias(subs))}")
+
+
+def test_el_escape_no_carga_numpy():
+    """El eje B es química por mutación: NumPy sería medio segundo regalado.
+
+    Es la Regla #11 en su forma más estricta —"NumPy solo donde se gana"—
+    aplicada a una herramienta nueva desde el primer commit.
+    """
+    prog = textwrap.dedent("""
+        import sys
+        from bioforge import evaluar_escape
+        evaluar_escape("E484K")
+        print("numpy" in sys.modules)
+    """)
+    res = subprocess.run([sys.executable, "-c", prog], capture_output=True,
+                         text=True, encoding="utf-8", errors="replace")
+    assert res.returncode == 0, res.stderr[-800:]
+    assert res.stdout.strip() == "False", "el eje B ha empezado a cargar NumPy"
