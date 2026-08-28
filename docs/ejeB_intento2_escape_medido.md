@@ -139,3 +139,75 @@ Repetir contra escape medido en **otro virus** — mapas de escape a suero de H3
 (Lee et al. 2019) y de Env de VIH (Dingens et al.), ambos del mismo laboratorio y
 también públicos. Si «destino > disimilitud» aguanta ahí, deja de ser una
 particularidad del RBD y pasa a ser un resultado sobre el escape en general.
+
+---
+
+# Anexo — el término (2), la accesibilidad: ¿hace falta el 3D?
+
+**Reproducible con:** `python tools/bench_accesibilidad_sin_3d.py`
+
+La pregunta llegó del usuario, y era la correcta: *ellos usan 3D, pero para tener
+el 3D primero hay que montarlo bien; ¿y si vemos cómo lo hacen y lo adaptamos?*
+
+La versión afilada: **la estructura solo es una máquina para producir un número por
+residuo — cuán expuesto está.** Si ese número se obtiene de otra forma, la máquina
+sobra. Así que antes de intentar sustituirla, se midió **cuánto vale ese número**.
+
+## Cómo se midió
+
+Estructura experimental real **6M0J** (RBD de SARS-CoV-2), cadena E **sola, sin
+ACE2** — así lo ve un anticuerpo; con ACE2 pegado la interfaz saldría falsamente
+enterrada. Exposición por **Shrake-Rupley implementado aquí en NumPy puro**
+(1.542 átomos, 194 residuos), normalizada por Tien et al. 2013.
+
+**Validado contra hechos conocidos** antes de usarlo: F486 y T500 (interfaz con
+ACE2) salen expuestos (0,73); el núcleo enterrado (<0,05) son 40 residuos y son
+V/I/L/A/C/F/Y — hidrofóbicos, como debe ser.
+
+## El resultado
+
+| | rho vs escape medido |
+|---|---|
+| exposición **de la estructura real** | **+0,065** |
+| exposición estimada solo de secuencia | +0,076 |
+
+Y el contraste directo, restringido a mutaciones que **sí se expresan bien** (para
+descartar que una mutación enterrada simplemente despliegue la proteína, que en el
+ensayo se parece a escape):
+
+| | escape medio |
+|---|---|
+| residuos **enterrados** (n=271) | 0,1563 |
+| residuos **expuestos** (n=505) | 0,1771 |
+| razón | **1,13×** |
+
+> **Los residuos escondidos dentro de la proteína escapan casi igual que los de la
+> superficie.** Con la estructura experimental en la mano —el mejor caso posible,
+> ni siquiera una predicha— la accesibilidad no ordena el escape dentro del RBD.
+
+Lectura biológica: el escape no exige que el anticuerpo *toque* el residuo mutado.
+Una mutación en el núcleo reorganiza el dominio y deforma el epítopo desde dentro.
+
+## Qué significa para el proyecto
+
+**No hacía falta rendirse, pero tampoco insistir: la puerta que intentábamos abrir
+no lleva a ninguna parte.** No podemos igualar a EVEscape por *no tener* el término
+(2) — ese término, en este dominio, aporta ~0,07.
+
+Ahorra semanas de trabajo en predecir accesibilidad sin estructura, y lo dice con
+números en vez de con intuición.
+
+Se comprobó además si nuestra señal era accesibilidad disfrazada. No lo es: el
+efecto «destino hidrofílico» es **uniforme** con la exposición (+0,279 enterrados,
++0,355 intermedios, +0,270 expuestos).
+
+## Límites de esta conclusión — importantes
+
+- **Es dentro del RBD**, un dominio mayoritariamente expuesto. Sobre una proteína
+  entera, la accesibilidad sí separaría dominios enteros (núcleo vs superficie) y
+  pesaría más. **No se puede comprobar aquí** porque los mapas de Bloom son solo
+  del RBD. La afirmación se limita a ese ámbito.
+- Se midió la **accesibilidad al disolvente**, que es la forma estándar de
+  operacionalizar el término, **no la fórmula exacta** de EVEscape (que usa un
+  número de contactos ponderado y un término de orientación).
+- Un término puede valer poco por separado y aportar dentro del producto de tres.
